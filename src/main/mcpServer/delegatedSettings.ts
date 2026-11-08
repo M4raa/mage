@@ -1,6 +1,6 @@
 import { codexPermissionPreset, parseCodexPermissionPreset } from '@shared/codexPermissions';
 import type { ProviderModel } from '@shared/providers';
-import { MagePolicyError } from './errors';
+import { MageValidationError } from './errors';
 
 // Modelo, esfuerzo y modo de permisos con los que nace una sesión delegada (`mage_create_session`). Por defecto hereda los
 // de la creadora (lo que main sabe de ella, nunca lo que diga el agente); un modo pedido solo puede ser igual o más
@@ -82,8 +82,8 @@ function resolvePermissionMode(request: DelegatedSettingsRequest): string {
 function checkedRequestedMode(request: DelegatedSettingsRequest, mode: string, ceiling: number): string {
   const { targetProvider, creator } = request;
   const rank = permissionRank(targetProvider, mode);
-  if (rank === null) throw new MagePolicyError(`invalid_permission_mode: ${mode} (${targetProvider})`);
-  if (rank > ceiling) throw new MagePolicyError(`permission_mode_exceeds_creator: ${mode} (creadora: ${creator?.permissionMode ?? 'desconocido'})`);
+  if (rank === null) throw new MageValidationError(`invalid_permission_mode: ${mode} (${targetProvider})`);
+  if (rank > ceiling) throw new MageValidationError(`permission_mode_exceeds_creator: ${mode} (creadora: ${creator?.permissionMode ?? 'desconocido'})`);
   return targetProvider === 'codex' ? (canonicalCodexMode(mode) as string) : mode;
 }
 
@@ -101,11 +101,11 @@ function canonicalCodexMode(mode: string): string | null {
 
 function assertModelInCatalog(model: string, catalog: readonly ProviderModel[]): void {
   if (catalog.length === 0 || catalog.some((entry) => entry.id === model)) return;
-  throw new MagePolicyError(`invalid_model: ${model} (válidos: ${catalog.map((entry) => entry.id).join(', ')})`);
+  throw new MageValidationError(`invalid_model: ${model} (válidos: ${catalog.map((entry) => entry.id).join(', ')})`);
 }
 
 function assertEffortSupported(model: string, effort: string, catalog: readonly ProviderModel[]): void {
   const supported = catalog.find((entry) => entry.id === model)?.supportedEfforts;
   if (supported === undefined || supported.includes(effort)) return;
-  throw new MagePolicyError(`invalid_effort: ${effort} (válidos para ${model}: ${supported.join(', ')})`);
+  throw new MageValidationError(`invalid_effort: ${effort} (válidos para ${model}: ${supported.join(', ')})`);
 }

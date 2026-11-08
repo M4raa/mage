@@ -2,7 +2,7 @@ import type { ProviderModel } from '@shared/providers';
 import { describe, expect, it } from 'vitest';
 import { permissionRank, resolveDelegatedSettings } from './delegatedSettings';
 import type { SessionSettings } from './delegatedSettings';
-import { MagePolicyError } from './errors';
+import { MagePolicyError, MageValidationError } from './errors';
 
 const claude = (permissionMode?: string, model = 'sonnet', effort = 'high'): SessionSettings => ({
   provider: 'claude', model, effort, ...(permissionMode === undefined ? {} : { permissionMode }),
@@ -37,10 +37,12 @@ describe('resolveDelegatedSettings', () => {
   it('resolveDelegatedSettings_modoPedidoMasPermisivo_rechazaConMotivo', () => {
     const act = () => ask(claude('default'), 'claude', { permissionMode: 'bypassPermissions' });
     expect(act).toThrow(MagePolicyError);
+    expect(act).toThrow(MageValidationError);
     expect(act).toThrow('permission_mode_exceeds_creator: bypassPermissions (creadora: default)');
   });
 
   it('resolveDelegatedSettings_modoQueNoExisteEnElDestino_rechaza', () => {
+    expect(() => ask(claude('bypassPermissions'), 'claude', { permissionMode: 'dontAsk' })).toThrow(MageValidationError);
     expect(() => ask(claude('bypassPermissions'), 'claude', { permissionMode: 'dontAsk' })).toThrow('invalid_permission_mode: dontAsk (claude)');
     expect(() => ask(claude('bypassPermissions'), 'codex', { permissionMode: 'plan' })).toThrow('invalid_permission_mode: plan (codex)');
   });
@@ -110,6 +112,7 @@ describe('resolveDelegatedSettings', () => {
   it('resolveDelegatedSettings_modeloFueraDelCatalogo_rechazaConLosValidos', () => {
     const catalog = [{ id: 'gpt-x', label: 'X' }, { id: 'gpt-y', label: 'Y' }];
 
+    expect(() => ask(claude('plan'), 'codex', { model: 'nope' }, catalog)).toThrow(MageValidationError);
     expect(() => ask(claude('plan'), 'codex', { model: 'nope' }, catalog)).toThrow('invalid_model: nope (válidos: gpt-x, gpt-y)');
   });
 
@@ -118,6 +121,7 @@ describe('resolveDelegatedSettings', () => {
   });
 
   it('resolveDelegatedSettings_esfuerzoNoSoportadoPorElModelo_rechaza', () => {
+    expect(() => ask(claude('plan'), 'codex', { model: 'gpt-x', effort: 'max' }, [GPT_X])).toThrow(MageValidationError);
     expect(() => ask(claude('plan'), 'codex', { model: 'gpt-x', effort: 'max' }, [GPT_X])).toThrow('invalid_effort: max (válidos para gpt-x: low, high)');
   });
 

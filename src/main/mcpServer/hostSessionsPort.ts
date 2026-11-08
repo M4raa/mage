@@ -12,7 +12,7 @@ import type { HostCreateRequest } from '../host/hostProtocol';
 import { resolveDelegatedSettings } from './delegatedSettings';
 import type { DelegatedSettings, SessionSettings } from './delegatedSettings';
 import type { DelegationLog, DelegationView } from './delegationLog';
-import { MagePolicyError } from './errors';
+import { MagePolicyError, MageValidationError } from './errors';
 import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput } from './types';
 import type { CreateSessionCommand, CreationRequest, CreationTarget, MageSessionsPort, SessionMetadata } from './sessionsPort';
 
@@ -150,8 +150,8 @@ export class HostSessionsPort implements MageSessionsPort {
     try {
       return launch(request, { conversationId: this.deps.caller.conversationId, sessionId: this.deps.caller.sessionId });
     } catch (error) {
-      if (error instanceof TrustRequiredError) throw new MagePolicyError(`trust_required: ${error.cwd}`, { cause: error });
-      if (error instanceof UnknownAccountError) throw new MagePolicyError(`unknown_account: ${error.accountId}`, { cause: error });
+      if (error instanceof TrustRequiredError) throw new MageValidationError(`trust_required: ${error.cwd}`, { cause: error });
+      if (error instanceof UnknownAccountError) throw new MageValidationError(`unknown_account: ${error.accountId}`, { cause: error });
       throw launchFailed(error);
     }
   }

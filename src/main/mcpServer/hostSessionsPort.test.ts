@@ -350,6 +350,17 @@ describe('MageToolHandlers con el puerto de main', () => {
     await handlers.create({ ...input, effort: 'high', permissionMode: 'plan' });
     expect(deps.launch).toHaveBeenCalledWith(expect.objectContaining({ effort: 'high', permissionMode: 'plan' }), expect.anything());
   });
+  it('create_rechazoPorModoYReintentoMismoRequestId_crea', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), creator: { provider: 'claude', model: 'sonnet', permissionMode: 'default' } });
+    const scope = snapshotScope({ accountIds: ['acc1'], caller: { conversationId: 'caller-c', creatorChain: [] } });
+    const handlers = new MageToolHandlers({ port, scope, store: new MemoryIdempotencyStore(), now: () => AT });
+
+    await expect(handlers.create({ ...input, permissionMode: 'bypassPermissions' })).rejects.toThrow(/^permission_mode_exceeds_creator:/);
+    const created = await handlers.create({ ...input, permissionMode: 'default' });
+
+    expect(created).toEqual({ conversationId: 'child-c', state: 'running' });
+    expect(deps.launch).toHaveBeenCalledTimes(1);
+  });
   it('handlers_createFromChildAtMaxDepth_depthExceeded', async () => {
     await expect(handlersFor(['a', 'b'], 3).create(input)).rejects.toThrow('delegation_depth_exceeded');
   });

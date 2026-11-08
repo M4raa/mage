@@ -1,6 +1,9 @@
 // Únicos errores cuyos mensajes pueden cruzar la frontera MCP.
 export class MagePolicyError extends Error {}
 
+// Rechazo ANTES de crear nada (validación de la petición): el requestId no queda gastado y se puede reintentar.
+export class MageValidationError extends MagePolicyError {}
+
 export function scopeDenied(): never {
   throw new MagePolicyError('scope_denied');
 }
