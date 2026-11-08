@@ -2768,13 +2768,13 @@ const CHECKS = [
       await clearPrompt(page);
       await typeInPrompt(page, '- uno');
       await prompt.press('Shift+Enter');
-      const continued = await promptText(page);
+      const continued = await promptDocument(page);
       await page.keyboard.type('dos', { delay: PROMPT_TYPE_DELAY_MS });
       await prompt.press('Shift+Enter');
-      const second = await promptText(page);
+      const second = await promptDocument(page);
       // Tercer Shift+Enter sobre el marcador vacio que acaba de insertar: debe SALIR de la lista.
       await prompt.press('Shift+Enter');
-      const exited = await promptText(page);
+      const exited = await promptDocument(page);
       await clearPrompt(page);
       const ok = continued === '- uno\n- ' && second === '- uno\n- dos\n- ' && !exited.endsWith('- ');
       return {
@@ -3195,16 +3195,20 @@ const CHECKS = [
           permissionModeControls: document.querySelectorAll(`[aria-label^="${window.__mageDev.t('chat.permissions.mode.title').replace(/["\\]/g, '\\$&')}"]`).length,
           effortControls: document.querySelectorAll(`[aria-label="${window.__mageDev.t('prompt.effort.ariaLabel').replace(/["\\]/g, '\\$&')}"]`).length,
           modelControls: document.querySelectorAll(`[aria-label="${window.__mageDev.t('prompt.model.ariaLabel').replace(/["\\]/g, '\\$&')}"]`).length,
+          modelo: (() => { const s = window.__mageDev.store.getState(); return s.tabs.find((t) => t.id === s.activeTabId)?.model ?? null; })(),
         };
       }, NO_PERMISSION_HEAD);
+      // Un modelo de agy con sufijo de esfuerzo lo fija y oculta el control (I2, `agyModelFixesEffort`).
+      const esfuerzoFijado = typeof measured.modelo === 'string' && AGY_EFFORT_LEVELS_FUENTE.some((nivel) => measured.modelo.endsWith(`-${nivel}`));
+      const esfuerzoEsperado = esfuerzoFijado ? 0 : 1;
       const ok =
         measured.chips === 1 &&
         measured.chipText === AGY_PERMISSION_CHIP &&
         measured.emptyStateBoxes === 1 &&
         measured.permissionModeControls === 1 &&
-        measured.effortControls === 1 &&
+        measured.effortControls === esfuerzoEsperado &&
         measured.modelControls === 1;
-      return { ok, detail: `agy instalado; pestaña abierta: ${JSON.stringify(measured)}` };
+      return { ok, detail: `agy instalado; pestaña abierta: ${JSON.stringify({ ...measured, esfuerzoEsperado })}` };
     },
   },
   {
@@ -5126,7 +5130,8 @@ const CHECKS = [
   {
     // Carril Q (Q04, Q-U3): la tarjeta de permiso pendiente lleva UNA acción primaria, «Permitir siempre» como
     // secundaria y «Denegar» como texto sin borde ni fondo; la tecla que pinta cada botón es la REAL de su acción
-    // (la del catálogo o la reasignada), no un «1/2/3» fijo. No contesta el permiso: lo cancela como el CLI.
+    // (la del catálogo o la reasignada), no un «1/2/3» fijo: la tecla que pinta cada botón es la de su atajo
+    // (`aria-keyshortcuts`), sin fijar números. No contesta el permiso: lo cancela como el CLI.
     name: 'Q04: la tarjeta de permiso tiene una primaria, Denegar como texto y la tecla real',
     state: { tabs: 1 },
     async run(page) {
@@ -5144,6 +5149,7 @@ const CHECKS = [
           teclaPermitir: allow?.querySelector('[aria-hidden="true"]')?.textContent ?? null,
           atajoPermitir: allow?.getAttribute('aria-keyshortcuts') ?? null,
           teclaDenegar: deny?.querySelector('[aria-hidden="true"]')?.textContent ?? null,
+          atajoDenegar: deny?.getAttribute('aria-keyshortcuts') ?? null,
           denegarSinBorde: denyStyle !== null && denyStyle.borderTopWidth === '0px' && denyStyle.backgroundColor === 'rgba(0, 0, 0, 0)',
           barraAmbar: card === null ? null : getComputedStyle(card).borderLeftWidth,
         };
@@ -5157,8 +5163,10 @@ const CHECKS = [
         const reasignada = await measure();
         const ok =
           porDefecto.hayTarjeta && porDefecto.primarias === 1 && porDefecto.denegarSinBorde &&
-          porDefecto.teclaPermitir === '1' && porDefecto.teclaDenegar === '3' && porDefecto.barraAmbar === '3px' &&
-          reasignada.teclaPermitir !== '1' && /(Shift|⇧)\+Y$/.test(reasignada.teclaPermitir ?? '') && reasignada.atajoPermitir === reasignada.teclaPermitir;
+          porDefecto.teclaPermitir !== null && porDefecto.atajoPermitir === porDefecto.teclaPermitir &&
+          porDefecto.teclaDenegar !== null && porDefecto.atajoDenegar === porDefecto.teclaDenegar &&
+          porDefecto.teclaDenegar !== porDefecto.teclaPermitir && porDefecto.barraAmbar === '3px' &&
+          reasignada.teclaPermitir !== porDefecto.teclaPermitir && /(Shift|⇧)\+Y$/.test(reasignada.teclaPermitir ?? '') && reasignada.atajoPermitir === reasignada.teclaPermitir;
         return { ok, detail: JSON.stringify({ porDefecto, reasignada }) };
       } finally {
         await page.evaluate(() => window.__mageDev.store.setState((s) => ({ settings: { ...s.settings, keybindingOverrides: [] } })));
@@ -5543,14 +5551,14 @@ const CHECKS = [
           vineta: pintadas[0] === undefined ? null : pintadas[0].textContent,
         };
       });
-      const documento = await promptText(page);
+      const documento = await promptDocument(page);
       await clearPrompt(page);
       const ok =
         enLaLineaDelCursor.pintadaEnElCursor === 1 &&
         enLaLineaDelCursor.ocultos === 0 &&
         trasBajar.pintadas >= 1 &&
         trasBajar.vineta === '•' &&
-        (documento ?? '').includes('- uno');
+        documento.includes('- uno');
       return {
         ok,
         detail: `linea del cursor=${JSON.stringify(enLaLineaDelCursor)} tras bajar=${JSON.stringify(trasBajar)} documento=${JSON.stringify(documento)}`,
@@ -11044,13 +11052,35 @@ const CHECKS = [
     },
   },
   {
-    // Los divisores se pegan al 25, 33, 50, 67 y 75 % y Alt (o Mayús) los desactiva: el de grupos contra su
-    // contenedor y el del dock contra la ventana.
-    name: 'I2: los divisores se pegan a los imanes y con Alt no',
+    // Los divisores se pegan a los imanes que CABEN (25, 33, 50, 67 y 75 %; el tercio solo si respeta el mínimo de los
+    // dos lados, medido con la ventana tal cual y con el contenedor a ~800 px) y Alt (o Mayús) los desactiva. La vista
+    // previa del arrastre es lo que se guarda al soltar. El de grupos contra su contenedor y el del dock contra la ventana.
+    name: 'I2/I4: los divisores se pegan a los imanes que caben, la vista previa es lo guardado y con Alt no',
     async run(page) {
       const grupos = await measureGroupMagnets(page);
       const dock = await measureDockMagnets(page);
-      return { ok: grupos.pegado && grupos.libre && dock.ok, detail: JSON.stringify({ grupos, dock }) };
+      return { ok: grupos.imanesOk && grupos.libre && dock.ok, detail: JSON.stringify({ grupos, dock }) };
+    },
+  },
+  {
+    // I4 (punto 5): «Selection deleted» se anuncia (accesible) y la región en vivo del prompt se vacía después.
+    name: 'I4: la región en vivo del prompt anuncia el borrado y luego se vacía',
+    state: { tabs: 1 },
+    async run(page) {
+      const leerRegion = () => page.evaluate(() => document.querySelector('[data-prompt-editor="true"] .cm-announced')?.textContent ?? null);
+      await clearPrompt(page);
+      try {
+        await typeInPrompt(page, 'abc');
+        await page.keyboard.press('Control+a');
+        await page.keyboard.press('Backspace');
+        const inmediato = await leerRegion();
+        await page.waitForTimeout(ANUNCIO_ESPERA_MS);
+        const tras = await leerRegion();
+        const ok = inmediato !== null && inmediato.trim().length > 0 && tras === '';
+        return { ok, detail: `inmediato=${JSON.stringify(inmediato)} tras ${ANUNCIO_ESPERA_MS} ms=${JSON.stringify(tras)}` };
+      } finally {
+        await clearPrompt(page);
+      }
     },
   },
   {
@@ -11630,6 +11660,12 @@ function promptText(page) {
   });
 }
 
+// El documento del prompt (el borrador del store): lo que se envía. `promptText` lee el DOM, donde la viñeta es un widget `•`.
+async function promptDocument(page) {
+  await page.waitForTimeout(CONFIG.settleMs);
+  return page.evaluate(() => { const s = window.__mageDev.store.getState(); return s.draftByChat[s.activeTabId]?.text ?? ''; });
+}
+
 // Escribe en el editor sin pulsar Enter jamas. `click` para enfocar y `type` para que pase por el
 // mismo camino de teclado que usaria una persona (que es justo lo que hay que medir del puente).
 // Retardo entre teclas al escribir en el prompt. NO es cosmetico: el input es un `contenteditable`
@@ -11746,6 +11782,8 @@ async function soltarYMedir(page, cdp, { caja, data, original }) {
 
 // A cuántos px de un imán se suelta el divisor (dentro de la tolerancia de 8 px de `snapToMagnets`).
 const IMANES_DESPLAZAMIENTO_PX = 5;
+// Espera a que la región en vivo del prompt se vacíe: el producto lo hace a 1500 ms.
+const ANUNCIO_ESPERA_MS = 2500;
 const REDONDEO_CONTRASTE = 100;
 
 const redondear2 = (valor) => Math.round(valor * REDONDEO_CONTRASTE) / REDONDEO_CONTRASTE;
@@ -11844,13 +11882,75 @@ async function dragSeparatorBy(page, handle, deltaX, withAlt) {
   await page.waitForTimeout(CONFIG.settleMs);
 }
 
-// Divisor de grupos: dos arrastres desde su sitio, el primero a 5 px del imán del tercio y el segundo, con Alt, a 5 px del
-// medio. Restaura el estado del store al acabar.
+// Como `dragSeparatorBy` sin Alt, pero ANTES de soltar lee la vista previa (`--split-a` del contenedor, un reparto 0..1):
+// lo que el usuario ve mientras arrastra, para compararlo con lo que se guarda al soltar. Devuelve ese número (`previa`).
+async function dragSeparatorWithPreview(page, handle, deltaX, container) {
+  const box = await handle.boundingBox();
+  if (box === null) throw new Error('el separador no tiene caja (¿no está montado?)');
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + deltaX, y, { steps: 8 });
+  const previa = await container.evaluate((n) => parseFloat(n.style.getPropertyValue('--split-a')));
+  await page.mouse.up();
+  await page.waitForTimeout(CONFIG.settleMs);
+  return previa;
+}
+
+// Constantes del producto leídas de su fuente (no copiadas): si cambian, la comprobación las sigue.
+function readSourceConstant(relativePath, pattern) {
+  const match = pattern.exec(fs.readFileSync(path.join(repoRoot, relativePath), 'utf8'));
+  if (match === null) throw new Error(`no encuentro ${pattern} en ${relativePath}`);
+  return match[1];
+}
+const MIN_PANE_PX_FUENTE = Number(readSourceConstant('src/renderer/src/workbench/splitLayout.ts', /export const MIN_PANE_PX = (\d+);/));
+const MIN_PANE_FRACTION_FUENTE = Number(readSourceConstant('src/renderer/src/workbench/splitLayout.ts', /export const MIN_PANE_FRACTION = ([\d.]+);/));
+const AGY_EFFORT_LEVELS_FUENTE = readSourceConstant('src/shared/providers.ts', /export const AGY_EFFORT_LEVELS[^=]*=\s*\[([^\]]*)\]/).split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+
+// Si el imán del tercio respeta el mínimo de los dos lados (el mismo cálculo que `clampRatioForSize`), engancha.
+function thirdMagnetFits(widthPx) {
+  const minPx = widthPx >= 2 * MIN_PANE_PX_FUENTE ? MIN_PANE_PX_FUENTE : widthPx * MIN_PANE_FRACTION_FUENTE;
+  const magnet = Math.round(widthPx / 3);
+  return magnet >= minPx && widthPx - magnet >= minPx;
+}
+
+// Ancho objetivo del contenedor en la segunda medida: entre 2 × 320 y 3 × 320, donde el tercio NO cabe.
+const IMANES_ANCHO_ESTRECHO_PX = 800;
+const IMANES_ANCHO_ESTRECHO_MIN_PX = 641;
+const IMANES_ANCHO_ESTRECHO_MAX_PX = 959;
+const IMANES_TOLERANCIA_PREVIA = 0.002;
+
+// Un arrastre sin Alt a 5 px del tercio, con la ventana tal cual está: ancho del contenedor, vista previa, reparto
+// guardado y si engancha lo que el producto dice que cabe.
+async function measureThirdDrag(page, handle) {
+  const container = handle.locator('xpath=..');
+  const contenedor = await container.evaluate((n) => {
+    const r = n.getBoundingClientRect();
+    return { left: r.left, width: r.width };
+  });
+  const box = await handle.boundingBox();
+  const delta = contenedor.left + contenedor.width / 3 + IMANES_DESPLAZAMIENTO_PX - (box.x + box.width / 2);
+  const previa = await dragSeparatorWithPreview(page, handle, delta, container);
+  const guardado = await page.evaluate(() => window.__mageDev.store.getState().splitLayout.ratio ?? null);
+  return {
+    ancho: contenedor.width,
+    previa,
+    guardado,
+    imanCabe: thirdMagnetFits(contenedor.width),
+    pegado: guardado !== null && Math.abs(guardado - 1 / 3) < 0.01,
+    coincide: guardado !== null && Math.abs(previa - guardado) < IMANES_TOLERANCIA_PREVIA,
+  };
+}
+
+// Divisor de grupos: el tercio se mide dos veces (ventana tal cual y ventana estrecha donde el tercio no cabe) y con Alt,
+// a 5 px del medio, una. Restaura el estado del store y el tamaño de la ventana al acabar.
 async function measureGroupMagnets(page) {
   const original = await page.evaluate(() => {
     const s = window.__mageDev.store.getState();
     return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat };
   });
+  const viewportOriginal = page.viewportSize() ?? await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
   try {
     await openTemporaryConversation(page);
     const tabA = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
@@ -11858,26 +11958,34 @@ async function measureGroupMagnets(page) {
     await page.evaluate((a) => window.__mageDev.store.getState().movePaneTab(a, [], 'left'), tabA);
     await page.waitForTimeout(CONFIG.settleMs);
     const handle = page.locator(`[role="separator"][aria-label="${cssAttr(ui('app.splitLayout.resizeHandleLabel'))}"]`);
-    const contenedor = await handle.evaluate((n) => {
-      const r = n.parentElement.getBoundingClientRect();
-      return { left: r.left, width: r.width };
-    });
-    const readRatio = () => page.evaluate(() => window.__mageDev.store.getState().splitLayout.ratio ?? null);
     const centro = async () => {
       const box = await handle.boundingBox();
       return box.x + box.width / 2;
     };
-    await dragSeparatorBy(page, handle, contenedor.left + contenedor.width / 3 + IMANES_DESPLAZAMIENTO_PX - (await centro()), false);
-    const tercio = await readRatio();
+    const normal = await measureThirdDrag(page, handle);
+    const contenedor = await handle.evaluate((n) => {
+      const r = n.parentElement.getBoundingClientRect();
+      return { left: r.left, width: r.width };
+    });
     await dragSeparatorBy(page, handle, contenedor.left + contenedor.width / 2 + IMANES_DESPLAZAMIENTO_PX - (await centro()), true);
-    const medio = await readRatio();
+    const medio = await page.evaluate(() => window.__mageDev.store.getState().splitLayout.ratio ?? null);
+    await page.evaluate(() => window.__mageDev.store.getState().resizeSplitAt([], 0.5));
+    await page.setViewportSize({ width: Math.round(viewportOriginal.width + IMANES_ANCHO_ESTRECHO_PX - contenedor.width), height: viewportOriginal.height });
+    await page.waitForTimeout(CONFIG.settleMs * 2);
+    const estrecho = await measureThirdDrag(page, handle);
+    const estrechoValido = estrecho.ancho >= IMANES_ANCHO_ESTRECHO_MIN_PX && estrecho.ancho <= IMANES_ANCHO_ESTRECHO_MAX_PX;
+    const cuadra = (m) => m.coincide && m.pegado === m.imanCabe;
     return {
-      ratioConIman: tercio,
+      normal,
+      estrecho,
       ratioConAlt: medio,
-      pegado: tercio !== null && Math.abs(tercio - 1 / 3) < 0.01,
+      estrechoValido,
+      nota: estrechoValido ? null : `la ventana no deja el contenedor entre ${IMANES_ANCHO_ESTRECHO_MIN_PX} y ${IMANES_ANCHO_ESTRECHO_MAX_PX} px (mide ${estrecho.ancho})`,
+      imanesOk: estrechoValido && cuadra(normal) && cuadra(estrecho),
       libre: medio !== null && Math.abs(medio - 0.5) > 0.002 && Math.abs(medio - 0.5) < 0.02,
     };
   } finally {
+    await page.setViewportSize(viewportOriginal);
     await page.evaluate((s) => window.__mageDev.store.setState(s), original);
     await page.waitForTimeout(CONFIG.settleMs);
   }
@@ -13770,13 +13878,35 @@ async function measureHostTab(instance, { profile, codexHome, runDir, setClient 
   const ctx = { client, page, sessionId, tabId: adoptada.tabId };
   const primero = await answerFromHost(ctx);
   const segundo = await answerFromWindow(ctx, primero.requestId);
+  const hidratada = await measureAdoptedDuplicates(page, adoptada.tabId);
   await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), adoptada.tabId);
   const lista = await client.call('sessions.list');
   return {
+    ...hidratada,
     adoptada: adoptada.tabId !== null, activaAntes, activaDespues: adoptada.activa, pestanas: adoptada.pestanas,
     sinRobarFoco: activaAntes === '' || adoptada.activa === activaAntes,
     ...primero, ...segundo, sesionViva: lista.sessions.some((entry) => entry.sessionId === sessionId),
   };
+}
+
+// I4 (punto 6): la pestaña adoptada, activa y con el turno acabado, no repite su respuesta al hidratarse. Hasta aquí
+// estaba en segundo plano y nunca se hidrataba. Cuenta las firmas (tipo + texto) de user y agent que salen más de una vez.
+async function measureAdoptedDuplicates(page, tabId) {
+  await page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), tabId);
+  const idle = await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'idle', tabId, { timeout: CONFIG.actionTimeoutMs * 3 })
+    .then(() => true, () => false);
+  await page.waitForTimeout(CONFIG.settleMs * 3);
+  const duplicados = await page.evaluate((id) => {
+    const firmas = new Map();
+    const bloques = (window.__mageDev.store.getState().blocksByChat[id] ?? []).filter((b) => b.kind === 'user' || b.kind === 'agent');
+    for (const b of bloques) {
+      const texto = b.kind === 'agent' ? (b.runs ?? []).map((run) => run.text).join('') : b.text;
+      const firma = `${b.kind}\u0000${texto}`;
+      firmas.set(firma, (firmas.get(firma) ?? 0) + 1);
+    }
+    return { duplicados: [...firmas.values()].filter((n) => n > 1).length, bloques: bloques.length };
+  }, tabId);
+  return { idle, ...duplicados };
 }
 
 // Pasos 5 y 6: el permiso 1 se contesta por el host y la pestaña lo retira.
@@ -13801,10 +13931,11 @@ async function answerFromWindow(ctx, firstRequestId) {
   };
 }
 
-// `ok` = adoptada + sin robar el foco + permiso 1 retirado + permiso 2 resuelto + respuesta tardía rechazada + sesión viva.
+// `ok` = adoptada + sin robar el foco + permiso 1 retirado + permiso 2 resuelto + respuesta tardía rechazada + sesión viva
+// + sin respuesta duplicada al hidratar la pestaña adoptada.
 function hostTabPassed(m) {
   return m.adoptada && m.sinRobarFoco && m.reciboHost === 'accepted' && m.permiso1RetiradoEnVentana && m.segundaPeticionDistinta
-    && m.permiso2ResueltoEnHost && m.tardiaRechazada && m.sesionViva;
+    && m.permiso2ResueltoEnHost && m.tardiaRechazada && m.sesionViva && m.duplicados === 0;
 }
 
 // --- Grupo 0: el turno minimo de verdad -----------------------------------------------------------
