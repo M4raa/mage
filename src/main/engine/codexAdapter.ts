@@ -251,6 +251,11 @@ export class CodexAdapter implements ProviderAdapter {
     }
   }
 
+  // Modelo vacío = sin modelo: el CLI elige el suyo (una delegada sin modelo conocido).
+  private modelField(): { model?: string } {
+    return this.model.length === 0 ? {} : { model: this.model };
+  }
+
   // Codex fija modelo y permisos POR TURNO (`turn/start`): el cambio aplica al siguiente sin mandar nada.
   encodeSetModel(model: string): unknown {
     if (model.trim().length === 0) throw new Error(`Modelo vacio para codex: ${JSON.stringify(model)}`);
@@ -354,7 +359,7 @@ export class CodexAdapter implements ProviderAdapter {
   private afterInitialize(): MageEvent[] {
     const params = this.requireParams();
     this.outgoing.push({ jsonrpc: '2.0', method: 'initialized' });
-    const common = { cwd: params.cwd, model: this.model, approvalPolicy: this.approvalPolicy(), ...this.permissionsField() };
+    const common = { cwd: params.cwd, ...this.modelField(), approvalPolicy: this.approvalPolicy(), ...this.permissionsField() };
     const resume = params.conversationId !== undefined && params.conversationId.length > 0;
     if (resume) this.request('thread/resume', { ...common, threadId: params.conversationId }, 'thread');
     else this.request('thread/start', { ...common, ...this.instructionsField() }, 'thread');
@@ -426,7 +431,7 @@ export class CodexAdapter implements ProviderAdapter {
     // en turn/start llega como reasoning.effort=low. Thread/start no acepta este campo.
     const effort = this.effort;
     this.request('turn/start', {
-      threadId: this.threadId, input, model: this.model,
+      threadId: this.threadId, input, ...this.modelField(),
       ...(messageId === undefined ? {} : { clientUserMessageId: messageId }),
       ...(effort === null || effort.length === 0 ? {} : { effort }),
       approvalPolicy: this.approvalPolicy(), ...this.permissionsField(),

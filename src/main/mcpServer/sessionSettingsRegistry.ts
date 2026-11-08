@@ -41,7 +41,7 @@ export class SessionSettingsRegistry {
 export function settingsOfLaunch(params: { readonly provider: string; readonly model: string; readonly effort?: string; readonly permissionMode?: string }): SessionSettings {
   return {
     provider: params.provider,
-    model: params.model,
+    ...(params.model.length === 0 ? {} : { model: params.model }),
     ...(params.effort === undefined || params.effort.length === 0 ? {} : { effort: params.effort }),
     ...(params.permissionMode === undefined ? {} : { permissionMode: params.permissionMode }),
   };

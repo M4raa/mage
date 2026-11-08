@@ -118,6 +118,20 @@ describe('HostControl.createSession', () => {
     expect(() => h.control.createSession(request({ provider: 'codex', accountId: '/h/.codex' }))).toThrow('No hay modelo por defecto para codex');
   });
 
+  it('resolveHostLaunchParams_sinModeloConCliDefault_lanzaSinModelo', () => {
+    const h = harness();
+
+    const params = resolveHostLaunchParams(h.deps, request({ provider: 'codex', accountId: '/h/.codex' }), { cliDefaultModel: true });
+
+    expect(params.model).toBe('');
+  });
+
+  it('resolveHostLaunchParams_sinModeloSinOpcion_lanza', () => {
+    const h = harness();
+
+    expect(() => resolveHostLaunchParams(h.deps, request({ provider: 'codex', accountId: '/h/.codex' }))).toThrow('No hay modelo por defecto para codex');
+  });
+
   it('createSession_modeloDeLosAjustes_ganaAlDeLaCuenta', () => {
     const h = harness({ defaultModels: vi.fn(() => ({ claude: 'opus' })) });
 
