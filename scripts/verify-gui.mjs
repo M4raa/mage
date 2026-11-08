@@ -10517,6 +10517,52 @@ const CHECKS = [
     },
   },
   {
+    // V14: Escape con el popover de «/» ABIERTO lo cierra y el turno SIGUE; un segundo Escape, ya sin popover, interrumpe.
+    // Turno de verdad del runtime propio contra el servidor falso (escenario `cola`, ~4 s, sin CLI ni cuota), enviado
+    // por la acción del store (nunca Enter en el prompt). Cierra su pestaña y borra su proveedor; va justo antes de F2.2.
+    name: 'V14: Escape con el popover de / abierto lo cierra sin interrumpir; el segundo Escape interrumpe',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      try {
+        ({ tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: ESCAPE_TURN_PROVIDER, model: QUEUE_TURN_MODEL }));
+        await page.evaluate((id) => window.__mageDev.store.getState().sendMessageToTab(id, 'hola'), tabId);
+        await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'streaming', tabId, { timeout: CONFIG.actionTimeoutMs });
+        const status = () => page.evaluate((id) => window.__mageDev.store.getState().statusByChat[id], tabId);
+        const listbox = page.getByRole('listbox', { name: ui('prompt.slash.listLabel') });
+        // El runtime conecta antes los MCP de la tanda: hasta que el falso recibe la petición, un corte no tiene a quién cortar.
+        const plazo = Date.now() + CONFIG.actionTimeoutMs;
+        while (fake.stats.completions === 0 && Date.now() < plazo) await page.waitForTimeout(50);
+        const peticionesAntes = fake.stats.completions;
+        await clearPrompt(page);
+        await typeInPrompt(page, '/re');
+        await listbox.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.keyboard.press('Escape');
+        await listbox.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const trasPrimero = await status();
+        const inicio = Date.now();
+        await page.keyboard.press('Escape');
+        await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] !== 'streaming', tabId, { timeout: CONFIG.actionTimeoutMs });
+        const msHastaParar = Date.now() - inicio;
+        const respuesta = await page.evaluate((id) => (window.__mageDev.store.getState().blocksByChat[id] ?? [])
+          .filter((b) => b.kind === 'agent').map((b) => b.runs.map((r) => r.text).join('')).join(''), tabId);
+        // Cortado antes de terminar: la respuesta completa del escenario acaba en «diez».
+        const ok = peticionesAntes === 1 && trasPrimero === 'streaming' && !respuesta.includes('diez') && fake.stats.completions === 1;
+        return { ok, detail: JSON.stringify({ trasPrimero, msHastaParar, respuesta, peticionesAntes, peticionesAlFalso: fake.stats.completions }) };
+      } finally {
+        if (tabId !== null) {
+          await page.evaluate((id) => {
+            const state = window.__mageDev.store.getState();
+            state.setDraft(id, null);
+            return state.closeTab(id);
+          }, tabId);
+        }
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), ESCAPE_TURN_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
     // F2.2: la cola vive en main. Un turno del runtime propio contra el servidor falso (escenario `cola`, ~4 s,
     // sin CLI ni cuota) y, con el en marcha, tres envios por la accion del store (nunca Enter en el prompt): esperan en
     // main, quitar y editar (en la fila) van a main, y al acabar sale UNO como turno propio. Cierra su pestaña y borra su
@@ -13563,6 +13609,7 @@ async function measureTabContextMenuClamp(page) {
 
 const QUEUE_TURN_PROVIDER = { id: 'custom:vg-cola', label: 'VG cola' };
 const QUEUE_TURN_MODEL = 'fake:cola';
+const ESCAPE_TURN_PROVIDER = { id: 'custom:vg-escape', label: 'VG escape' };
 
 // Proveedor del usuario hacia el servidor falso y pestaña nueva en un borrador (confianza automatica, D4).
 // El runtime lee los proveedores del DISCO: se espera a que el guardado llegue.
