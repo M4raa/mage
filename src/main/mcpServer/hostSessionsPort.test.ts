@@ -1,5 +1,13 @@
+import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import { AgentSession, type SpawnFn } from '../engine/agentSession';
+import { CodexAdapter } from '../engine/codexAdapter';
+import { createSessionFor } from '../engine/sessionFactory';
+import { SessionManager } from '../engine/sessionManager';
+import { resolveHostLaunchParams, type HostControlDeps } from '../host/hostControl';
 import type { AnswerReceipt, ConversationSnapshot, CoordinatedState, PendingRequest, SendReceipt } from '@shared/coordination';
 import type { MageEvent, PermissionDecision, PermissionRequest } from '@shared/events';
 import type { ProviderModel } from '@shared/providers';
@@ -16,6 +24,7 @@ import { snapshotScope } from './scope';
 import type { CreateSessionCommand } from './sessionsPort';
 
 const CWD = resolve('/work/proj');
+const FAKE_CODEX = fileURLToPath(new URL('../../../scripts/fake-codex-app-server.mjs', import.meta.url));
 const REQUEST = '11111111-1111-4111-8111-111111111111';
 const AT = '2026-11-03T10:00:00.000Z';
 const QUESTION_INPUT = { questions: [{ question: '¿Rojo o azul?', header: 'Color', options: [{ label: 'Rojo', description: '' }], multiSelect: false }] };
@@ -164,6 +173,38 @@ describe('HostSessionsPort.createSession', () => {
     await port.createSession(command({ target: { projectId: 'p1', accountId: 'acc2', provider: 'codex', cwd: CWD } }));
 
     expect(vi.mocked(deps.launch).mock.calls[0]?.[0]).not.toHaveProperty('model');
+  });
+  // Hasta 0.1.4 `resolveLaunchParams` rechazaba el modelo vacío y la hija nunca nacía (`launch_failed`). Cadena real:
+  // puerto MCP -> resolveHostLaunchParams -> SessionManager -> CodexAdapter -> app-server falso.
+  it('createSession_codexSinModeloContraElAppServerFalso_laHijaNaceSinModelo', async () => {
+    // Arrange
+    const sent: string[] = [];
+    const tap: SpawnFn = (cmd, args, options) => {
+      const proc = spawn(cmd, args, options);
+      const write = proc.stdin.write.bind(proc.stdin) as (chunk: string) => boolean;
+      proc.stdin.write = ((chunk: string) => { sent.push(chunk); return write(chunk); }) as typeof proc.stdin.write;
+      return proc;
+    };
+    const adapter = new CodexAdapter({ spawnCommand: (args) => ({ command: process.execPath, args: [FAKE_CODEX, ...args], env: { MAGE_FAKE_CODEX_SCENARIO: 'approval' } }), resolveAccount: () => null });
+    const manager = new SessionManager(
+      (provider, base) => createSessionFor(provider, base, { buildAdapter: () => adapter, buildRuntime: () => { throw new Error('sin runtime'); }, createAgentSession: (agentDeps) => new AgentSession({ ...agentDeps, spawn: tap }) }),
+      { homedir: tmpdir(), fileExists: () => false, listHome: () => [], resolveShared: () => ({ mcpServers: [], settingsFragment: null, claudeAiConnectors: false }) },
+    );
+    const host = { listAccounts: () => [{ configDir: 'acc2', providerId: 'codex', defaultModel: null }], defaultModels: () => ({}), isTrusted: () => true } as unknown as HostControlDeps;
+    const launch: HostSessionsPortDeps['launch'] = (request) => manager.create(resolveHostLaunchParams(host, { ...request, cwd: tmpdir() }, { cliDefaultModel: true }), () => undefined);
+    const { port } = setup({ snapshot: snap('child-c'), catalog: [], launch });
+    const threadStart = () => sent.map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> }).find((m) => m.method === 'thread/start');
+
+    try {
+      // Act
+      await port.createSession(command({ target: { projectId: 'p1', accountId: 'acc2', provider: 'codex', cwd: CWD } }));
+      await vi.waitFor(() => expect(threadStart()).toBeDefined(), { timeout: 10_000 });
+
+      // Assert
+      expect(threadStart()?.params).not.toHaveProperty('model');
+    } finally {
+      manager.stopAll();
+    }
   });
   it('createSession_modeloFueraDelCatalogo_rechazaSinLanzar', async () => {
     const { port, deps } = setup({ snapshot: snap('child-c'), catalog: [{ id: 'sonnet', label: 'Sonnet' }] });

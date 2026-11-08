@@ -35,7 +35,10 @@ export function resolveLaunchParams(
   resume = false,
 ): LaunchParams {
   const model = params.model.trim();
-  if (model.length === 0) throw new Error('El modelo no puede estar vacio');
+  // Solo Codex arranca sin modelo (una delegada sin modelo conocido): su adapter lo omite y elige el app-server.
+  if (model.length === 0 && params.provider !== 'codex') {
+    throw new Error(`El modelo no puede estar vacio (proveedor ${params.provider}): ${JSON.stringify(params.model)}`);
+  }
 
   // El runtime propio (P-032) no corre bajo ninguna cuenta de Claude: sin cuenta, no se busca una.
   const accountDir = params.accountDir.trim() || (runsOnMageRuntime(params.provider) ? '' : resolveDefaultAccountDir(deps));
