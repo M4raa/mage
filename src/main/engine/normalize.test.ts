@@ -202,6 +202,18 @@ describe('normalizeRawEvent: el turno', () => {
       usage: { inputTokens: 9, outputTokens: 2, totalTokens: 11, cacheReadTokens: 0, cacheCreationTokens: 0 } } }]);
   });
 
+  it('normalizeResult_conSessionId_llevaConversationId', () => {
+    const [event] = normalizeRawEvent({ type: 'result', subtype: 'success', session_id: 'c1', total_cost_usd: 0.01 });
+
+    expect(event?.kind === 'result' && event.result.conversationId).toBe('c1');
+  });
+
+  it('normalizeResult_sinSessionId_sinConversationId', () => {
+    const [event] = normalizeRawEvent({ type: 'result', subtype: 'success', total_cost_usd: 0.01 });
+
+    expect(event?.kind === 'result' && 'conversationId' in event.result).toBe(false);
+  });
+
   // TTL de la caché que pidió el CLI (medido en 2.1.314 y sin cambios en 2.1.318, desglose `usage.cache_creation`).
   const ttlOf = (cacheCreation?: Record<string, number>): number | null | undefined => {
     const usage = { input_tokens: 1, output_tokens: 1, ...(cacheCreation === undefined ? {} : { cache_creation: cacheCreation }) };

@@ -502,6 +502,7 @@ function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
         } }),
         ...(costMicroUsd === null ? {} : { costMicroUsd }),
         ...(origin === undefined ? {} : { origin }),
+        ...(parsed.session_id === undefined ? {} : { conversationId: parsed.session_id }),
       },
     },
   ];

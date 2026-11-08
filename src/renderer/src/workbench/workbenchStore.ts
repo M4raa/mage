@@ -3174,7 +3174,8 @@ function asAccountProvider(id: string): AccountProviderId {
 }
 
 function lastTurnUsagePatch(state: WorkbenchState, tabId: string, usage: TurnUsage | undefined): Partial<WorkbenchState> {
-  if (usage === undefined) return {};
+  // Un `result` sin tokens (comando local, directo absorbido) no es el último turno: se conserva el anterior.
+  if (usage === undefined || usage.totalTokens === 0) return {};
   return { lastTurnUsageByChat: { ...state.lastTurnUsageByChat, [tabId]: usage } };
 }
 

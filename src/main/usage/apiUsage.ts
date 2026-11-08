@@ -49,6 +49,23 @@ export function addApiTurn(previous: ApiUsageSnapshot | null, turn: ApiUsageAmou
   };
 }
 
+// Coste del turno a partir del acumulado de la conversación. Sin acumulado previo, o si bajó (conversación nueva tras
+// `/clear`), el acumulado ES el coste del turno.
+export function turnCostMicroUsd(previousCumulative: number | undefined, cumulative: number): number {
+  if (previousCumulative === undefined || cumulative < previousCumulative) return cumulative;
+  return cumulative - previousCumulative;
+}
+
+// Un `result` sin tokens no es un turno de la API (comando local, directo ya absorbido): no cambia el último turno ni el
+// recuento; si trae coste nuevo, solo lo suma a los totales para no perderlo.
+export function addApiResult(previous: ApiUsageSnapshot | null, turn: ApiUsageAmounts, nowMs: number): ApiUsageSnapshot | null {
+  if (turn.totalTokens > 0) return addApiTurn(previous, turn, nowMs);
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error(`Fecha de uso API invalida: ${nowMs}`);
+  if (turn.costMicroUsd === 0) return previous;
+  if (previous === null) return { turns: 0, totals: turn, lastTurn: turn, updatedAtMs: nowMs };
+  return { ...previous, totals: { ...previous.totals, costMicroUsd: sumSafe(previous.totals.costMicroUsd, turn.costMicroUsd) }, updatedAtMs: nowMs };
+}
+
 function sumSafe(a: number, b: number): number {
   const sum = a + b;
   if (!Number.isSafeInteger(sum) || sum < 0) throw new Error(`Acumulado de uso API fuera de rango: ${a} + ${b}`);
