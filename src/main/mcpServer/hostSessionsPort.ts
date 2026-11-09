@@ -26,7 +26,7 @@ const CANCELLABLE_STATES: ReadonlySet<string> = new Set(['working', 'permission_
 
 export interface HostSessionsPortDeps {
   readonly caller: { readonly sessionId: string; readonly conversationId: string; readonly accountId: string };
-  readonly log: Pick<DelegationLog, 'watch' | 'get' | 'list' | 'messagesAfter' | 'recordInstruction' | 'recordQuestion' | 'settleQuestion'>;
+  readonly log: Pick<DelegationLog, 'watch' | 'get' | 'list' | 'messagesAfter' | 'readMessages' | 'recordInstruction' | 'recordQuestion' | 'settleQuestion'>;
   readonly index: Pick<ConversationIndexStore, 'recordDelegation'>;
   readonly coordinator: Pick<SessionCoordinator, 'subscribe' | 'snapshot' | 'send' | 'interrupt' | 'answerPermission' | 'announce'>;
   // Cuentas de Claude y Codex de Mage (M-U4: también las de API).
@@ -93,7 +93,7 @@ export class HostSessionsPort implements MageSessionsPort {
 
   async readResult(input: { conversationId: string; afterSeq: number }): Promise<readonly PublicMessage[]> {
     this.descendant(input.conversationId);
-    return this.deps.log.messagesAfter(input.conversationId, input.afterSeq);
+    return this.deps.log.readMessages(input.conversationId, input.afterSeq);
   }
 
   async send(input: SendInput): Promise<SendOutput> {

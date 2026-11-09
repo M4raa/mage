@@ -89,6 +89,22 @@ describe('DelegationLog', () => {
     emit(result, snap('idle'));
     expect(sent).toEqual([{ sessionId: 'parent', text: sessionResultMessage({ title: 't', conversationId: 'conv-child', text: 'hola 7' }) }]);
   });
+  it('watch_creadoraYaLeyoLaRespuesta_noLeMandaElAviso', () => {
+    const { log, emit, sent } = setup();
+    log.watch(CHILD);
+    emit({ kind: 'assistant_text', text: 'hola 7' }, snap('running'));
+    expect(log.readMessages('conv-child', 0)).toEqual([{ seq: 1, role: 'assistant', text: 'hola 7' }]);
+    emit(result, snap('idle'));
+    expect(sent).toEqual([]);
+  });
+  it('watch_creadoraLeyoAntesDeLaRespuesta_siLeMandaElAviso', () => {
+    const { log, emit, sent } = setup();
+    log.watch(CHILD);
+    log.readMessages('conv-child', 0);
+    emit({ kind: 'assistant_text', text: 'hola 7' }, snap('running'));
+    emit(result, snap('idle'));
+    expect(sent).toHaveLength(1);
+  });
   it('watch_creadoraCerrada_noEntregaNada', () => {
     const { log, emit, sent } = setup({ creatorAlive: false });
     log.watch(CHILD);
