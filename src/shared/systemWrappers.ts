@@ -11,6 +11,8 @@
 //   - `<system-reminder>…`: contexto inyectado (casi siempre `isMeta`).
 //   - `<scheduled-task name="n" file="…">…</scheduled-task>`: una tarea programada.
 //   - `<task-notification>…<summary>…</summary>…`: el aviso de una tarea en segundo plano.
+//   - `<mage-session-result name="t" id="c">…</mage-session-result>`: lo escribe MAGE (P-038 V13), no el CLI: la respuesta
+//     de una sesión creada con mage_create_session, entregada a su creadora como mensaje.
 // Tolerante: lo que no reconoce, o un envoltorio sin su etiqueta de cierre, es `plain`.
 
 export type SystemWrapper =
@@ -20,6 +22,7 @@ export type SystemWrapper =
   | { readonly kind: 'caveat' }
   | { readonly kind: 'reminder' }
   | { readonly kind: 'scheduled-task'; readonly name: string; readonly body: string }
+  | { readonly kind: 'mage-session-result'; readonly name: string; readonly conversationId: string; readonly body: string }
   | {
       readonly kind: 'task-notification';
       readonly summary: string;
@@ -43,6 +46,7 @@ export function classifySystemWrapper(text: string): SystemWrapper {
   if (output !== null) return { kind: 'command-output', output: output.trim() };
   if (trimmed.startsWith('<command-name>') || trimmed.startsWith('<command-message>')) return commandFrom(trimmed);
   if (trimmed.startsWith('<scheduled-task')) return scheduledTaskFrom(trimmed);
+  if (trimmed.startsWith(`<${SESSION_RESULT_TAG}`)) return sessionResultFrom(trimmed);
   if (isWrapped(trimmed, 'task-notification')) return taskNotificationFrom(trimmed);
   return PLAIN;
 }
@@ -84,6 +88,28 @@ function scheduledTaskFrom(text: string): SystemWrapper {
   if (match === null) return PLAIN;
   const name = NAME_ATTRIBUTE.exec(match[1] ?? '')?.[1]?.trim() ?? '';
   return { kind: 'scheduled-task', name, body: (match[2] ?? '').trim() };
+}
+
+const SESSION_RESULT_TAG = 'mage-session-result';
+const SESSION_RESULT = /^<mage-session-result\b([^>]*)>([\s\S]*)<\/mage-session-result>$/;
+const ID_ATTRIBUTE = /\bid="([^"]*)"/;
+
+function sessionResultFrom(text: string): SystemWrapper {
+  const match = SESSION_RESULT.exec(text);
+  if (match === null) return PLAIN;
+  const attributes = match[1] ?? '';
+  const name = NAME_ATTRIBUTE.exec(attributes)?.[1]?.trim() ?? '';
+  const conversationId = ID_ATTRIBUTE.exec(attributes)?.[1]?.trim() ?? '';
+  return { kind: 'mage-session-result', name, conversationId, body: (match[2] ?? '').trim() };
+}
+
+// El mensaje que Mage entrega a la creadora con la respuesta de una de sus sesiones (P-038 V13). Las comillas del
+// título y una etiqueta de cierre dentro de la respuesta se neutralizan: el envoltorio tiene que poder leerse siempre.
+export function sessionResultMessage(input: { readonly title: string; readonly conversationId: string; readonly text: string }): string {
+  if (input.conversationId.trim().length === 0) throw new Error(`conversationId vacio para el aviso de resultado: ${JSON.stringify(input.conversationId)}`);
+  const title = input.title.replace(/"/g, '″');
+  const body = input.text.split(`</${SESSION_RESULT_TAG}>`).join(`</ ${SESSION_RESULT_TAG}>`);
+  return `<${SESSION_RESULT_TAG} name="${title}" id="${input.conversationId}">\n${body}\n</${SESSION_RESULT_TAG}>`;
 }
 
 // El texto ENTERO es `<tag>…</tag>`.

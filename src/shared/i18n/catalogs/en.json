@@ -586,6 +586,8 @@
   "chat.scheduledTask.label": "Scheduled task:",
   "chat.scheduledTask.note": "Scheduled tasks are launched by the Claude desktop app; Mage only displays them.",
   "chat.scheduledTask.unnamed": "unnamed",
+  "chat.sessionResult.label": "Reply from session",
+  "chat.sessionResult.unnamed": "untitled",
   "chat.status.done": "Reply completed.",
   "chat.status.error": "An error occurred in the conversation.",
   "chat.status.needsPermission": "The agent needs a permission.",

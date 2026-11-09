@@ -18,7 +18,7 @@ export const CREATE_SESSION_DESCRIPTION = 'Crea una sesión delegada que trabaja
 export const SESSIONS_INSTRUCTIONS = [
   'Esta conversación corre dentro de Mage.',
   'Cuando el usuario pida sesiones, conversaciones o chats NUEVOS (o «subsesiones»), créalos con mage_create_session: cada uno es una conversación independiente que el usuario ve como pestaña en Mage. Para eso no uses subagentes (Agent/Task) ni lances el CLI desde la consola (claude -p, codex exec).',
-  'Una sesión creada trabaja sola y Mage no te avisa al terminar: consulta mage_get_status hasta que su estado sea done (o waiting_answer si te pregunta algo) y entonces lee su respuesta con mage_read_result. Con mage_send le mandas otro mensaje y con mage_cancel paras su turno. mage_list_sessions lista las que hay.',
+  'Una sesión creada trabaja sola. Cuando acaba un turno, Mage te entrega su respuesta como un mensaje <mage-session-result name="…" id="…">: no consultes en bucle; termina tu turno y sigue cuando llegue (si lanzaste varias, espera a tener todas las que necesitas). Si te pregunta algo con mage_ask_creator, contesta con mage_send. mage_get_status y mage_read_result sirven para mirar una en cualquier momento; mage_cancel para su turno y mage_list_sessions lista las que hay.',
 ].join('\n');
 
 export const BROWSER_INSTRUCTIONS = 'Cuando el usuario hable del navegador de Mage (el navegador integrado o el panel Navegador), usa las herramientas mage_browser_* (navigate, read_dom, click, type, screenshot, back, close): la página se ve en el panel Navegador de esta conversación. No uses otros navegadores (Playwright, Chrome) para eso.';

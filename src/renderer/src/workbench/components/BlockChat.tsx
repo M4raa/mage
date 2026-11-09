@@ -885,6 +885,7 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
   // En directo el comando llega tal cual se tecleo (P-028): mismo chip que al reabrir.
   if (block.attachments.length === 0 && isSlashCommandText(block.text)) return <CommandChip command={block.text.trim()} />;
   if (wrapper.kind === 'scheduled-task') return <ScheduledTaskCard id={block.id} name={wrapper.name} body={wrapper.body} />;
+  if (wrapper.kind === 'mage-session-result') return <SessionResultCard id={block.id} name={wrapper.name} body={wrapper.body} />;
   const copiedImage = firstImageOf(block.attachments);
   return (
     <div className="flex justify-end">
@@ -996,6 +997,27 @@ function ScheduledTaskCard({ id, name, body }: { readonly id: string; readonly n
           {t('chat.scheduledTask.note')}
         </p>
         <div className="mt-[6px] whitespace-pre-wrap break-words text-mg-muted">{body}</div>
+      </details>
+    </div>
+  );
+}
+
+// P-038 V13: la respuesta de una sesión creada con mage_create_session, que Mage entrega a esta conversación como mensaje.
+// No la escribió el usuario: tarjeta plegada con el nombre de la sesión, como las tareas programadas.
+function SessionResultCard({ id, name, body }: { readonly id: string; readonly name: string; readonly body: string }): React.JSX.Element {
+  const t = useT();
+  const { isExpanded, setExpanded } = useExpandedRows();
+  return (
+    <div className="flex justify-end">
+      <details
+        data-session-result="true"
+        open={isExpanded(`${id}:result`)}
+        onToggle={(event) => setExpanded(`${id}:result`, event.currentTarget.open)}
+        className="max-w-[80%] min-w-0 rounded-[9px] border border-mg-border-subtle bg-mg-block p-[6px_11px] text-[11.5px]">
+        <summary className="cursor-pointer text-mg-sec">
+          {t('chat.sessionResult.label')} <span className="font-semibold text-mg-text">{name.length > 0 ? name : t('chat.sessionResult.unnamed')}</span>
+        </summary>
+        <div className="mt-[6px] whitespace-pre-wrap break-words text-mg-body2">{body}</div>
       </details>
     </div>
   );

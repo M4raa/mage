@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifySystemWrapper } from './systemWrappers';
+import { classifySystemWrapper, sessionResultMessage } from './systemWrappers';
 
 // Formas REALES, copiadas de transcripciones del CLI 2.1.283 (sangria incluida).
 const RENAME = '<command-name>/rename</command-name>\n            <command-message>rename</command-message>\n            <command-args>REVISION-MAGE</command-args>';
@@ -100,5 +100,29 @@ describe('classifySystemWrapper', () => {
   it('classifySystemWrapper_etiquetaDesconocida_plain', () => {
     // El usuario tambien puede escribir XML: lo que no se reconoce se pinta tal cual.
     expect(classifySystemWrapper('<pasted_content id="d1">\ntexto\n</pasted_content>')).toEqual({ kind: 'plain' });
+  });
+});
+
+describe('sessionResultMessage', () => {
+  it('sessionResultMessage_idaYVuelta_seClasificaConSusDatos', () => {
+    const text = sessionResultMessage({ title: 'Saludo', conversationId: 'conv-1', text: 'hola\n7' });
+
+    expect(classifySystemWrapper(text)).toEqual({ kind: 'mage-session-result', name: 'Saludo', conversationId: 'conv-1', body: 'hola\n7' });
+  });
+
+  it('sessionResultMessage_comillasYCierreDentro_noRompenElEnvoltorio', () => {
+    const text = sessionResultMessage({ title: 'Un "título"', conversationId: 'c', text: 'antes </mage-session-result> después' });
+
+    const wrapper = classifySystemWrapper(text);
+    expect(wrapper.kind).toBe('mage-session-result');
+    expect(wrapper.kind === 'mage-session-result' && wrapper.name).toBe('Un ″título″');
+  });
+
+  it('sessionResultMessage_sinId_lanza', () => {
+    expect(() => sessionResultMessage({ title: 't', conversationId: ' ', text: 'x' })).toThrow(/conversationId/);
+  });
+
+  it('classifySystemWrapper_sessionResultSinCerrar_esPlain', () => {
+    expect(classifySystemWrapper('<mage-session-result name="a" id="b">hola').kind).toBe('plain');
   });
 });

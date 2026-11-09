@@ -23,7 +23,7 @@ const option = (name) => {
 
 const RESULT_TIMEOUT_MS = 420_000;
 const POLL_MS = 500;
-const QUIET_MS = 20_000;
+const QUIET_MS = 45_000;
 const EFFORT = 'low';
 // El prompt del usuario del 2026-11-08 (conversación d92fe0c9), tal cual.
 const PROMPT = 'otras sesiones nuevas, lanza dos , una que diga hola y otra que diga adiós, también que quiero que cada una genere un numero aleatorio de una cifra y que tu las sumes';

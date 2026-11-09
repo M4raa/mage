@@ -588,6 +588,8 @@ export interface MessageValues {
   readonly "chat.scheduledTask.label": never;
   readonly "chat.scheduledTask.note": never;
   readonly "chat.scheduledTask.unnamed": never;
+  readonly "chat.sessionResult.label": never;
+  readonly "chat.sessionResult.unnamed": never;
   readonly "chat.status.done": never;
   readonly "chat.status.error": never;
   readonly "chat.status.needsPermission": never;

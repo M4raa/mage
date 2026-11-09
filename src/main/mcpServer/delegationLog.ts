@@ -1,4 +1,5 @@
 import { parseAskUserQuestion } from '@shared/askUserQuestion';
+import { sessionResultMessage } from '@shared/systemWrappers';
 import type { ConversationSnapshot } from '@shared/coordination';
 import type { MageEvent } from '@shared/events';
 import type { SequencedSessionEvent, SessionCoordinator } from '../coordination/sessionCoordinator';
@@ -37,7 +38,7 @@ export interface DelegationView {
   readonly closed: boolean;
 }
 export interface DelegationLogDeps {
-  readonly coordinator: Pick<SessionCoordinator, 'subscribe' | 'snapshot' | 'announce' | 'ownerOf'>;
+  readonly coordinator: Pick<SessionCoordinator, 'subscribe' | 'snapshot' | 'announce' | 'ownerOf' | 'send'>;
   readonly now: () => number;
 }
 interface Entry {
@@ -175,6 +176,16 @@ export class DelegationLog {
     const text = entry.lastAssistant.slice(0, MAX_ANNOUNCED_TEXT_CHARS);
     entry.lastAssistant = null;
     this.announceToCreator(entry, { kind: 'delegation_message', fromId: entry.child.conversationId, toId: entry.child.creatorConversationId, messageKind: 'result', text });
+    this.deliverToCreator(entry, text);
+  }
+
+  // P-038 V13: la respuesta de la delegada le llega a la creadora como MENSAJE (a la cola si está trabajando; si no,
+  // abre turno), así continúa sola en vez de quedarse «esperando» hasta que el usuario escriba. Con la creadora
+  // cerrada no hay a quién.
+  private deliverToCreator(entry: Entry, text: string): void {
+    const { coordinator } = this.deps;
+    if (coordinator.ownerOf(entry.child.creatorSessionId) === undefined) return;
+    coordinator.send({ sessionId: entry.child.creatorSessionId, text: sessionResultMessage({ title: entry.child.title, conversationId: entry.child.conversationId, text }) });
   }
 
   private onClosed(entry: Entry): void {

@@ -500,6 +500,8 @@
   "chat.scheduledTask.label": { "description": "Cabecera de la tarjeta de una tarea programada. Le sigue el nombre de la tarea en negrita.", "usage": "src/renderer/src/workbench/components/BlockChat.tsx:690" },
   "chat.scheduledTask.note": { "description": "Nota dentro de la tarjeta de una tarea programada. «Claude» y «Mage» no se traducen.", "usage": "src/renderer/src/workbench/components/BlockChat.tsx:693" },
   "chat.scheduledTask.unnamed": { "description": "Nombre de una tarea programada que no tiene nombre.", "usage": "src/renderer/src/workbench/components/BlockChat.tsx:690" },
+  "chat.sessionResult.label": { "description": "Encabezado de la tarjeta con la respuesta de una sesión que esta conversación creó (le sigue su nombre en negrita).", "usage": "src/renderer/src/workbench/components/BlockChat.tsx:1010", "maxLength": 30 },
+  "chat.sessionResult.unnamed": { "description": "Nombre en la tarjeta de respuesta cuando la sesión creada no tiene título.", "usage": "src/renderer/src/workbench/components/BlockChat.tsx:1010", "maxLength": 20 },
   "chat.status.done": { "description": "Anuncio para lectores de pantalla: el turno terminó. No se ve.", "usage": "src/renderer/src/workbench/components/BlockChat.tsx:128" },
   "chat.status.error": { "description": "Anuncio para lectores de pantalla: el turno acabó en error. No se ve.", "usage": "src/renderer/src/workbench/components/BlockChat.tsx:126" },
   "chat.status.needsPermission": { "description": "Anuncio para lectores de pantalla: el turno espera un permiso. No se ve.", "usage": "src/renderer/src/workbench/components/BlockChat.tsx:124" },
