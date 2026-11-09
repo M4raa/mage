@@ -1937,6 +1937,8 @@
   "tabs.menu.unpin": { "description": "Opción del menú contextual de una pestaña ya anclada: la desancla.", "usage": "src/renderer/src/workbench/components/TabContextMenu.tsx:124", "maxLength": 24 },
   "tabs.releaseNotes.closeLabel": { "description": "Nombre accesible del botón ✕ de la pestaña de novedades.", "usage": "src/renderer/src/workbench/components/TabBar.tsx:286" },
   "tabs.releaseNotes.title": { "description": "Título de la pestaña de novedades de la versión (no es una conversación).", "usage": "src/renderer/src/workbench/components/TabBar.tsx:277", "maxLength": 20 },
+  "tabs.subline.context": { "description": "Sublínea bajo las pestañas: parte de la ventana de contexto del modelo que ya ocupa la conversación. {pct} es un entero de 0 a 100.", "usage": "src/renderer/src/workbench/components/TabSubline.tsx:60", "maxLength": 20, "variables": {"pct":"number"} },
+  "tabs.subline.contextTip": { "description": "Tooltip del % de contexto de la sublínea.", "usage": "src/renderer/src/workbench/components/TabSubline.tsx:60" },
   "tabs.untitled": { "description": "Título de una conversación que aún no tiene ninguno (pestaña, lista lateral, notificaciones, widget).", "usage": "src/renderer/src/workbench/conversationTitle.ts:23", "maxLength": 30 },
   "tray.debugWindow": { "description": "Menú de la bandeja, solo en desarrollo. El atajo no se traduce.", "usage": "src/main/index.ts:2399", "maxLength": 40 },
   "tray.jumpList.accounts": { "description": "Categoría de la jump list.", "usage": "src/main/os/jumpList.ts:116", "maxLength": 30 },

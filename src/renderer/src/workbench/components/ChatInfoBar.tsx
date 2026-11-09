@@ -1,10 +1,8 @@
 import { useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import { creatorTabOf } from '../adoptSession';
 import { usePaneTabId } from '../paneContext';
-import { privacyChip } from '../chatInfoView';
 import { CHIP_CLASS } from './GitChips';
 import { PrBar } from './PrBar';
 import { reportActionError } from '../notificationStore';
@@ -19,7 +17,7 @@ import { useT } from '../../i18n/uiLanguage';
 // falta ver de un vistazo, sin ejecutar nada.
 //
 // La carpeta y la rama (Q-U11) viven ahora en la sublinea bajo las pestañas (`TabSubline`); aqui quedan la
-// privacidad, «Encargada por…» y el PR. Los refrescos de git y de PR siguen aqui: se lanzan con la pestaña.
+// «Encargada por…» y el PR (la privacidad subió a la sublínea, P-038 V3). Los refrescos de git y de PR siguen aqui: se lanzan con la pestaña.
 export function ChatInfoBar(): React.JSX.Element | null {
   const tabId = usePaneTabId();
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
@@ -45,23 +43,11 @@ export function ChatInfoBar(): React.JSX.Element | null {
 
   // Sin pestaña no hay nada que contar, y una fila vacia solo roba alto al hilo.
   if (tab === undefined) return null;
-  const privacy = privacyChip(tab.privacy);
-
   return (
-    <div className="mb-[6px] flex flex-wrap items-center gap-[6px] text-[10.5px] text-mg-muted">
+    <div className="mb-[6px] flex flex-wrap empty:hidden items-center gap-[6px] text-[10.5px] text-mg-muted">
       <CreatorChip tabId={tabId} />
       <AwaitingCreatorChip tabId={tabId} />
       <PrBar tabId={tabId} />
-      {/* Informativa: NO es un boton (nada ocurre al pulsarla, y un boton que no hace nada es una promesa
-          rota). El dato largo va en el tooltip y en el nombre accesible. */}
-      <span
-        data-tip={privacy.title}
-        aria-label={privacy.title}
-        className="inline-flex min-w-0 max-w-[280px] cursor-help items-center gap-[5px] rounded-full border border-mg-border-subtle px-[8px] py-[2px]"
-      >
-        <Icon name={privacy.icon} size={12} />
-        <span className="truncate">{privacy.label}</span>
-      </span>
     </div>
   );
 }

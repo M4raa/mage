@@ -2275,6 +2275,8 @@
   "tabs.monogram.tip": "{provider} · {account}",
   "tabs.releaseNotes.closeLabel": "Close the What's new tab",
   "tabs.releaseNotes.title": "What's new",
+  "tabs.subline.context": "{pct}% context",
+  "tabs.subline.contextTip": "How much of the model's context window this conversation already uses (reported by the CLI after each turn)",
   "tabs.untitled": "New chat",
   "tasks.deliverable.missing": "Does not exist",
   "tasks.deliverable.noPreview": "No preview for this file type.",

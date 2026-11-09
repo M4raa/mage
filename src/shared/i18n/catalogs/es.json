@@ -2275,6 +2275,8 @@
   "tabs.monogram.tip": "{provider} · {account}",
   "tabs.releaseNotes.closeLabel": "Cerrar pestaña Novedades",
   "tabs.releaseNotes.title": "Novedades",
+  "tabs.subline.context": "{pct} % de contexto",
+  "tabs.subline.contextTip": "Ventana de contexto del modelo que ya ocupa esta conversación (lo informa el CLI tras cada turno)",
   "tabs.untitled": "Nuevo chat",
   "tasks.deliverable.missing": "No existe",
   "tasks.deliverable.noPreview": "Sin vista previa para este tipo de fichero.",

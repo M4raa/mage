@@ -2277,6 +2277,8 @@ export interface MessageValues {
   readonly "tabs.monogram.tip": { readonly "account": string | number; readonly "provider": string | number };
   readonly "tabs.releaseNotes.closeLabel": never;
   readonly "tabs.releaseNotes.title": never;
+  readonly "tabs.subline.context": { readonly "pct": string | number };
+  readonly "tabs.subline.contextTip": never;
   readonly "tabs.untitled": never;
   readonly "tasks.deliverable.missing": never;
   readonly "tasks.deliverable.noPreview": never;

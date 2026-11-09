@@ -262,3 +262,10 @@ export function resolveContext(usage: ContextUsage | undefined, estimate: Contex
 export function currentContextTokens(points: readonly ContextSizePoint[]): number {
   return points.length === 0 ? 0 : (points[points.length - 1]?.contextTokens ?? 0);
 }
+
+// % de la ventana ocupado para la sublínea de la pestaña (P-038 V3): entero en [0,100], o null si el CLI aún no
+// lo ha dado o no sabe el tamaño de la ventana.
+export function contextPctOf(usage: ContextUsage | undefined): number | null {
+  if (usage === undefined || usage.maxTokens <= 0 || !Number.isFinite(usage.percentage)) return null;
+  return Math.min(100, Math.max(0, Math.round(usage.percentage)));
+}
