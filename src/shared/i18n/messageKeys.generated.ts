@@ -1702,10 +1702,12 @@ export interface MessageValues {
   readonly "prompt.question.ariaLabel": { readonly "question": string | number };
   readonly "prompt.question.counter": { readonly "step": string | number; readonly "total": string | number };
   readonly "prompt.question.dismiss": never;
-  readonly "prompt.question.nextAria": never;
   readonly "prompt.question.other": never;
-  readonly "prompt.question.prevAria": never;
+  readonly "prompt.question.otherPlaceholder": never;
+  readonly "prompt.question.pickMany": never;
+  readonly "prompt.question.pickOne": never;
   readonly "prompt.question.skip": never;
+  readonly "prompt.question.stepsAria": never;
   readonly "prompt.question.submit": never;
   readonly "prompt.queue.editField": never;
   readonly "prompt.queue.editInline": never;
