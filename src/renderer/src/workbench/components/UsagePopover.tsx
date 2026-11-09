@@ -20,7 +20,7 @@ export function UsagePopover(): React.JSX.Element {
   return (
     <div
       data-usage-popover="true"
-      className="flex w-[260px] flex-col gap-2 rounded-[9px] border border-mg-border-pop bg-mg-popover p-[11px_12px] text-[10.5px] mg-shadow-pop"
+      className="flex max-h-[min(70vh,560px)] w-[260px] flex-col gap-2 overflow-y-auto rounded-[9px] border border-mg-border-pop bg-mg-popover p-[11px_12px] text-[10.5px] mg-shadow-pop"
     >
       <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">{t('usage.popover.title')}</div>
       {accounts.map((a) => (

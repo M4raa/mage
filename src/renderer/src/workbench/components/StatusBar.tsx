@@ -160,7 +160,9 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
             : t('app.statusBar.apiUsage', { tokens: formatInteger(apiUsage.totals.totalTokens), cost: formatMicroUsd(apiUsage.totals.costMicroUsd, activeFormatLocale()) }))
             : t('app.statusBar.windows', { fiveHour: fiveHour.pct, weekly: weekly.pct, reset: fiveHour.label })}
         </span>
-        <div className="pointer-events-none absolute bottom-[calc(100%_+_8px)] left-0 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+        {/* `pb-[8px]` y no un `bottom` desplazado: el hueco entre el resumen y el popover es parte de la zona de hover, y
+            el ratón puede entrar a desplazar la lista (P-038: con muchas cuentas se cortaba y no se llegaba a ella). */}
+        <div className="pointer-events-none absolute bottom-full left-0 pb-[8px] opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
           <UsagePopover />
         </div>
       </div>
