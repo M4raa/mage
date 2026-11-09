@@ -2,6 +2,7 @@
 // El preload expone estos canales como `window.mage.*`; si cambia una firma, el compilador
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
+import type { UsageHistory } from './usageHistory';
 import type { BrowserBounds, BrowserEntryState, BrowserPenCapture, BrowserPenResult, BrowserPenStroke } from './browser';
 import type { ConversationLockParams, ConversationLockRef, ConversationLockStatus } from './conversationLock';
 import type { ResolvedUiLanguage } from './i18n/language';
@@ -176,6 +177,8 @@ export const IpcChannel = {
   PermissionModesList: 'engine:permissionModes',
   DialogPickDirectory: 'dialog:pickDirectory',
   UsageGet: 'usage:get',
+  // «Cuentas y consumo» (P-038 V11): consumo por días y cuentas, leído de las transcripciones.
+  UsageHistoryGet: 'usage:history',
   StatusGet: 'status:get',
   // Version de la app (la del package.json empaquetado). Constante durante toda la vida del proceso.
   AppVersionGet: 'app:version',
@@ -1147,6 +1150,8 @@ export interface MageApi {
   // Uso de una cuenta (por configDir). Devuelve datos agregados SEGUROS (sin token). Cacheado en main.
   // null = la cuenta aún no tiene datos de uso (Codex: llegan con su primer turno); no es un error.
   getUsage(configDir: string): Promise<UsageInfo | null>;
+  // Consumo por días de los últimos 30 días, por cuenta (P-038 V11). Solo agregados.
+  getUsageHistory(): Promise<UsageHistory>;
   // Estado del servicio de Claude (global, no por cuenta). Cacheado en main.
   getStatus(): Promise<StatusInfo>;
   // Version de Mage, para pintarla en la barra de estado. No cambia en caliente.

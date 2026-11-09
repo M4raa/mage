@@ -186,6 +186,7 @@ const api: MageApi = {
   },
   readThinking: (sessionId) => ipcRenderer.invoke(IpcChannel.ThinkingRead, sessionId),
   getUsage: (configDir: string) => ipcRenderer.invoke(IpcChannel.UsageGet, configDir),
+  getUsageHistory: () => ipcRenderer.invoke(IpcChannel.UsageHistoryGet),
   getStatus: () => ipcRenderer.invoke(IpcChannel.StatusGet),
   getAppVersion: () => ipcRenderer.invoke(IpcChannel.AppVersionGet),
   getUiLanguage: () => ipcRenderer.invoke(IpcChannel.UiLanguageGet),

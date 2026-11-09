@@ -232,6 +232,9 @@ import { OpenWithService } from './os/openWithService';
 import { buildJumpListCategories, parseJumpListArgs } from './os/jumpList';
 import { UsageService } from './usage/usageService';
 import { ApiUsageStore } from './usage/apiUsageStore';
+import { UsageHistoryService, type TranscriptRoot } from './usage/usageHistoryService';
+import { listTranscripts, parseUsageHistoryCache, readRange } from './usage/usageHistoryFs';
+import type { UsageInfo } from '@shared/usage';
 import { StatusService } from './status/statusService';
 import { claudeUserAgent } from './os/claudeVersion';
 import { LogBus } from './debug/logBus';
@@ -1472,6 +1475,54 @@ const apiUsageStore = new ApiUsageStore({
   now: () => Date.now(),
 });
 const statusService = new StatusService({ fetch, now: () => Date.now() });
+
+// «Cuentas y consumo» (P-038 V11). Caché en userData: por transcripción, hasta qué byte se leyó y lo que sumaba.
+const USAGE_HISTORY_FILE = 'usage-history.json';
+const usageHistoryService = new UsageHistoryService({
+  roots: usageHistoryRoots,
+  listTranscripts,
+  readRange,
+  loadCache: () => {
+    const path = join(app.getPath('userData'), USAGE_HISTORY_FILE);
+    return parseUsageHistoryCache(existsSync(path) ? readFileSync(path, 'utf8') : null, (message, data) => mainLog('warn', message, data));
+  },
+  saveCache: (cache) => writeAtomic(fileSystemDeps(), join(app.getPath('userData'), USAGE_HISTORY_FILE), JSON.stringify(cache)),
+  accountIds: () => listAllAccounts().map((account) => account.configDir),
+  accountOf: (sessionId) => {
+    const prefs = getConversationIndexStore().loadPrefs(sessionId);
+    return prefs?.hostOwnerAccountId ?? prefs?.accountId;
+  },
+  now: () => Date.now(),
+  offsetMinutes: () => -new Date().getTimezoneOffset(),
+  log: (level, message, data) => mainLog(level, message, data),
+});
+
+// Los `projects/` de Claude: el pozo común (las cuentas lo comparten enlazado: se resuelve para no contarlo dos veces) y
+// el perfil privado de cada cuenta, cuyas conversaciones son de esa cuenta.
+function usageHistoryRoots(): readonly TranscriptRoot[] {
+  const seen = new Set<string>();
+  const roots: TranscriptRoot[] = [];
+  const add = (dir: string, ownerAccountId?: string): void => {
+    if (!existsSync(dir)) return;
+    const key = canonicalPath(dir).toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    roots.push(ownerAccountId === undefined ? { dir } : { dir, ownerAccountId });
+  };
+  for (const account of listAllAccounts()) {
+    if (account.providerId !== 'claude') continue;
+    add(join(account.configDir, 'projects'));
+    add(join(account.configDir, PRIVATE_PROFILE_DIR_NAME, 'projects'), account.configDir);
+  }
+  return roots;
+}
+
+// Foto de las ventanas de la suscripción para el histórico. Una ventana a 0 sin hora de reset es «sin dato».
+function recordUsageWindows(accountId: string, info: UsageInfo | null): void {
+  if (info === null) return;
+  const pctOf = (window: UsageInfo['fiveHour']): number | null => (window.resetsAt === null && window.utilization === 0 ? null : window.utilization);
+  usageHistoryService.recordWindows(accountId, { fiveHourMax: pctOf(info.fiveHour), sevenDayMax: pctOf(info.sevenDay) });
+}
 
 // Mercado de temas Open VSX (M3): busca/trae temas de color de VS Code. Solo lee datos de tema
 // (colores); nunca ejecuta codigo de la extension. La red va en main (CSP del renderer 'self').
@@ -3370,6 +3421,27 @@ function registerAccountsIpc2(): void {
   });
 }
 
+// Uso de una cuenta para `UsageGet`, con la foto de sus ventanas para «Cuentas y consumo» (P-038 V11).
+async function usageOfAccount(configDir: string): Promise<UsageInfo | null> {
+  if (getProviderAccounts().find('claude', configDir)?.authKind === 'api-key') {
+    const apiUsage = apiUsageStore.get(configDir);
+    return { fiveHour: { utilization: 0, resetsAt: null }, sevenDay: { utilization: 0, resetsAt: null },
+      limits: [], apiCreditsMinor: null, fetchedAt: Date.now(), ...(apiUsage === null ? {} : { apiUsage }) };
+  }
+  // Una cuenta de Codex no tiene endpoint de uso de Mage: lo que trajo su sesion (grupo E).
+  if (getProviderAccounts().find('codex', configDir) !== null) {
+    const stream = usageService.getStreamUsage(configDir);
+    recordUsageWindows(configDir, stream);
+    return stream;
+  }
+  if (!isManagedAccountConfigDir(configDir)) {
+    throw new Error(`Cuenta no valida para consultar uso: ${configDir}`);
+  }
+  const info = await usageService.getUsage(configDir);
+  recordUsageWindows(configDir, info);
+  return info;
+}
+
 function registerDialogIpc1(): void {
   // Selector de carpeta de proyecto (cwd de una pestana). Devuelve null si el usuario cancela.
   ipcMain.handle(IpcChannel.DialogPickDirectory, async (): Promise<string | null> => {
@@ -3382,19 +3454,8 @@ function registerDialogIpc1(): void {
   // Whitelisting IPC (auditoria de seguridad, 2026-08-10): sin esto, un configDir arbitrario haria que
   // main leyera .credentials.json de CUALQUIER ruta y usara ese token contra la API de uso — mismo
   // patron que ConversationsList/AccountsDelete.
-  ipcMain.handle(IpcChannel.UsageGet, (_e, configDir: string) => {
-    if (getProviderAccounts().find('claude', configDir)?.authKind === 'api-key') {
-      const apiUsage = apiUsageStore.get(configDir);
-      return { fiveHour: { utilization: 0, resetsAt: null }, sevenDay: { utilization: 0, resetsAt: null },
-        limits: [], apiCreditsMinor: null, fetchedAt: Date.now(), ...(apiUsage === null ? {} : { apiUsage }) };
-    }
-    // Una cuenta de Codex no tiene endpoint de uso de Mage: lo que trajo su sesion (grupo E).
-    if (getProviderAccounts().find('codex', configDir) !== null) return usageService.getStreamUsage(configDir);
-    if (!isManagedAccountConfigDir(configDir)) {
-      throw new Error(`Cuenta no valida para consultar uso: ${configDir}`);
-    }
-    return usageService.getUsage(configDir);
-  });
+  ipcMain.handle(IpcChannel.UsageGet, (_e, configDir: string) => usageOfAccount(configDir));
+  ipcMain.handle(IpcChannel.UsageHistoryGet, () => usageHistoryService.history());
   ipcMain.handle(IpcChannel.StatusGet, () => statusService.getStatus());
   // `app.getVersion()` lee el package.json de la app EMPAQUETADA, que es la version que el usuario
   // tiene instalada — no la del arbol de fuentes.
