@@ -43,6 +43,11 @@ const ROW_SELECTED = 'border-mg-focus bg-mg-sel text-mg-sel-ink';
 const ROW_HIGHLIGHTED = 'border-mg-border-emph';
 const ROW_IDLE = 'border-transparent hover:bg-mg-hover';
 
+// Respuestas a medias por pregunta pendiente (P-038): el dock se desmonta al cambiar de chat y su estado local se
+// perdía. Se guarda por `requestId` y se borra al contestar o cerrar.
+// ponytail: una pregunta que el CLI retira sin contestarse deja su entrada (unos bytes); si molestara, limpiar en `permission_cancelled`.
+const SAVED_FLOWS = new Map<string, QuestionFlowState>();
+
 export function QuestionDock(): React.JSX.Element {
   const tabId = usePaneTabId();
   const block = useWorkbenchStore((s) => pendingQuestionBlock(headPermission(s, tabId)?.requestId, s.blocksByChat[tabId]));
@@ -74,7 +79,10 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
   const answerPermissionFor = useWorkbenchStore((s) => s.answerPermissionFor);
   // La respuesta va de camino a main: el dock queda quieto hasta que `permission_resolved` lo cierre.
   const sending = useWorkbenchStore((s) => isPermissionSending(s, tabId, block.requestId));
-  const [state, setState] = useState<QuestionFlowState>(() => initialFlow(block.questions));
+  const [state, setState] = useState<QuestionFlowState>(() => SAVED_FLOWS.get(block.requestId) ?? initialFlow(block.questions));
+  useEffect(() => {
+    SAVED_FLOWS.set(block.requestId, state);
+  }, [block.requestId, state]);
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const question = block.questions[state.step] ?? block.questions[0];
@@ -96,6 +104,7 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
   const submitWith = (answered: QuestionFlowState): void => {
     try {
       answerQuestion(block.requestId, toAnswers(answered, block.questions));
+      SAVED_FLOWS.delete(block.requestId);
     } catch (err) {
       setError(err instanceof Error ? describeError(err) : String(err));
     }
@@ -109,7 +118,10 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
   const run = (action: FlowKeyAction): void => {
     setError(null);
     if (action.type === 'focus-other') focusOther();
-    else if (action.type === 'close') answerPermissionFor(tabId, { behavior: 'deny', message: DENY_MESSAGE }, block.requestId);
+    else if (action.type === 'close') {
+      SAVED_FLOWS.delete(block.requestId);
+      answerPermissionFor(tabId, { behavior: 'deny', message: DENY_MESSAGE }, block.requestId);
+    }
     else if (action.type === 'submit') submitWith(state);
     else setState((current) => applyAction(current, action, question));
   };
