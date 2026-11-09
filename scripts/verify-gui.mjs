@@ -893,7 +893,9 @@ const CHECKS = [
     state: { settingsSection: ui('mcp.section.tabsAria') },
     async run(page, { userDataDir }) {
       const dialogo = page.locator('[data-mcp-server-dialog]');
-      await page.getByRole('button', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
+      // P-038 V12: Editar vive en el «⋯» de la fila.
+      await page.getByRole('button', { name: ui('mcp.row.moreActions', { name: SEEDED_MCP_HTTP }), exact: true }).click();
+      await page.getByRole('menuitem', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
       await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const enmascarado = await page.evaluate(
         (secreto) => !document.documentElement.outerHTML.includes(secreto) && [...document.querySelectorAll('input')].every((i) => !i.value.includes(secreto)),
@@ -902,7 +904,9 @@ const CHECKS = [
       await page.keyboard.press('Escape');
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const configuracionAbierta = (await page.locator('[data-mcp-section]').count()) === 1;
-      await page.getByRole('button', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
+      // P-038 V12: Editar vive en el «⋯» de la fila.
+      await page.getByRole('button', { name: ui('mcp.row.moreActions', { name: SEEDED_MCP_HTTP }), exact: true }).click();
+      await page.getByRole('menuitem', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
       await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await dialogo.getByRole('button', { name: ui('chat.files.save'), exact: true }).click();
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
@@ -969,6 +973,47 @@ const CHECKS = [
       const sigueSuBoton = (await fila.getByRole('button', { name: etiqueta, exact: true }).count()) > 0;
       const ok = estadoAntes.includes(ui('mcp.status.needsAuth')) && antes >= 1 && vioAutenticando && texto.includes(ui('mcp.auth.connected')) && despues === antes - 1 && !sigueSuBoton;
       return { ok, detail: `estadoAntes=«${estadoAntes}» botones ${antes}→${despues} autenticando=${vioAutenticando} mensaje=«${texto}»` };
+    },
+  },
+  {
+    // P-038 V12: las tres pestañas con la MISMA fila (punto de estado, etiquetas del mismo tamaño, acciones en «⋯»), sin
+    // tablas, la explicación plegada tras «ⓘ» y el MCP de Mage arriba como tarjeta con su interruptor.
+    name: 'P-038 V12: MCP y conectores homogéneo, con el MCP de Mage arriba',
+    state: { settingsSection: ui('mcp.section.tabsAria') },
+    async run(page) {
+      if ((await page.locator(MODAL).count()) === 0) await openSettingsDialog(page);
+      if ((await page.locator('[data-mcp-section]').count()) === 0) await openSection(page, uiRegExp('mcp.section.tabsAria'));
+      const porPestaña = {};
+      for (const tab of ['servers', 'connectors', 'extensions']) {
+        await page.locator(`[data-mcp-tab="${tab}"]`).click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        porPestaña[tab] = await page.evaluate(() => {
+          const section = document.querySelector('[data-mcp-section]');
+          const rows = [...section.querySelectorAll('[role="tabpanel"] [data-mcp-tone]')];
+          const chips = [...section.querySelectorAll('[role="tabpanel"] [data-mcp-tone] + div span.rounded-\\[4px\\]')];
+          return {
+            tablas: section.querySelectorAll('table').length,
+            filas: rows.length,
+            tamañosDeEtiqueta: [...new Set(chips.map((chip) => getComputedStyle(chip).fontSize))],
+          };
+        });
+      }
+      const arriba = await page.evaluate(() => {
+        const section = document.querySelector('[data-mcp-section]');
+        const card = section.querySelector('[data-setting="mage-mcp-enabled"]');
+        const tablist = section.querySelector('[role="tablist"]');
+        return {
+          tarjetaAntesDePestañas: card !== null && tablist !== null && Boolean(card.compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING),
+          interruptor: card?.querySelector('input[type="checkbox"]') !== null,
+        };
+      });
+      await page.locator('[data-mcp-tab="servers"]').click();
+      const textoPlegado = (await page.locator('[data-mcp-section] [role="tabpanel"]').textContent())?.includes(ui('mcp.servers.intro.commons')) ?? true;
+      const ok =
+        arriba.tarjetaAntesDePestañas && arriba.interruptor && !textoPlegado &&
+        Object.values(porPestaña).every((p) => p.tablas === 0 && p.tamañosDeEtiqueta.length <= 1) &&
+        porPestaña.servers.filas > 0 && porPestaña.connectors.filas > 0;
+      return { ok, detail: JSON.stringify({ arriba, textoPlegado, porPestaña }) };
     },
   },
   {
@@ -1065,7 +1110,8 @@ const CHECKS = [
       const importada = page.locator(`[data-mcp-extension="${SEEDED_DESKTOP_EXTENSION}"]`);
       await importada.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const copiada = fs.existsSync(path.join(userDataDir, 'extensions', SEEDED_DESKTOP_EXTENSION, 'manifest.json'));
-      await importada.getByRole('button', { name: uiStartsWith('mcp.extensions.uninstallAria') }).click();
+      await importada.locator('[data-mcp-row-menu]').click();
+      await page.getByRole('menuitem', { name: uiStartsWith('mcp.extensions.uninstallAria') }).click();
       await importada.getByRole('button', { name: ui('mcp.extensions.confirmUninstall'), exact: true }).click();
       await importada.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const limpia = !fs.existsSync(path.join(userDataDir, 'extensions', SEEDED_DESKTOP_EXTENSION));
@@ -8405,11 +8451,355 @@ const CHECKS = [
       await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-other-keyboard');
       await waitForDockReady(page, '[data-question-dock="true"]');
       const dock = page.locator('[data-question-dock="true"]'); await dock.focus();
-      for (let i = 0; i < ASK_USER_QUESTION_INPUT.questions[0].options.length; i++) await page.keyboard.press('ArrowDown');
+      // P-038 V5: sin resaltado al abrir; la primera ↓ marca la opción 1, así que «Otra cosa» está a options.length + 1.
+      for (let i = 0; i <= ASK_USER_QUESTION_INPUT.questions[0].options.length; i++) await page.keyboard.press('ArrowDown');
       const other = await dock.getByRole('textbox', { name: ui('prompt.question.other') }).evaluate(element => element === document.activeElement);
       await page.keyboard.press('ArrowUp');
       const back = await dock.evaluate(element => element === document.activeElement);
       return { ok: other && back, detail: JSON.stringify({ otherFocused: other, backToOptions: back }) };
+    },
+  },
+  // --- P-038: parches de la 0.1.5 (lista del usuario del 2026-11-09) ---------------------------------------------
+  {
+    name: 'P-038 V5: preguntas con pasos clicables, «Otra cosa» como fila y nada resaltado al abrir',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const base = ASK_USER_QUESTION_INPUT.questions[0];
+      const tres = { questions: [base, { ...base, question: '¿Cuáles valen?', header: 'Varias', multiSelect: true }, { ...base, question: '¿Y el borde?', header: 'Borde' }] };
+      await injectPermissionRequest(page, tres, 'vg-p038-ask');
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      const alAbrir = await page.evaluate(() => {
+        const dock = document.querySelector('[data-question-dock="true"]');
+        const opciones = [...dock.querySelectorAll('[role="radio"]')];
+        return {
+          pasos: dock.querySelectorAll('[data-question-step-tab]').length,
+          resaltadas: opciones.filter((o) => o.className.includes('border-mg-border-emph') || o.className.includes('border-mg-focus')).length,
+          marcadas: opciones.filter((o) => o.getAttribute('aria-checked') === 'true').length,
+          circulos: dock.querySelectorAll('[data-choice-mark="radio"]').length,
+          otraEnLaLista: dock.querySelector('[role="radiogroup"] [data-question-other]') !== null,
+          tipo: dock.querySelector('[data-question-kind]')?.getAttribute('data-question-kind') ?? null,
+        };
+      });
+      await page.locator('[data-question-step-tab="1"]').click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const enLaSegunda = await page.evaluate(() => {
+        const dock = document.querySelector('[data-question-dock="true"]');
+        return {
+          paso: dock.getAttribute('data-question-step'),
+          casillas: dock.querySelectorAll('[data-choice-mark="checkbox"]').length,
+          tipo: dock.querySelector('[data-question-kind]')?.getAttribute('data-question-kind') ?? null,
+        };
+      });
+      const responder = page.locator('[data-question-dock="true"]').getByRole('button', { name: ui('prompt.question.submit'), exact: true });
+      const responderActivo = await responder.isEnabled();
+      await cancelInjectedPermission(page, 'vg-p038-ask');
+      const ok =
+        alAbrir.pasos === 3 && alAbrir.resaltadas === 0 && alAbrir.marcadas === 0 && alAbrir.circulos === 3 && alAbrir.otraEnLaLista && alAbrir.tipo === 'single' &&
+        enLaSegunda.paso === '1' && enLaSegunda.casillas === 3 && enLaSegunda.tipo === 'multi' && responderActivo;
+      return { ok, detail: JSON.stringify({ alAbrir, enLaSegunda, responderActivo }) };
+    },
+  },
+  {
+    name: 'P-038 V2: el dock de tareas en segundo plano aparece con la lista del CLI y se va al vaciarse',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const enviar = (tasks) => page.evaluate((list) => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        dev.store.setState((state) => dev.reduceEvent(state, tabId, { kind: 'background_tasks', tasks: list }));
+      }, tasks);
+      await enviar([{ taskId: 'vg-b1', type: 'local_bash', description: 'Sleep 8 seconds then echo hecho' }]);
+      const dock = page.locator('[data-tasks-dock="true"]');
+      await dock.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const resumen = (await page.locator('[data-tasks-dock-summary]').textContent())?.trim() ?? '';
+      await page.locator('[data-tasks-dock-summary]').click();
+      const filas = await page.locator('[data-tasks-dock-row]').count();
+      await enviar([]);
+      const fuera = await dock.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const ok = resumen.startsWith(uiPlural('chat.tasks.summary', { count: 1 })) && resumen.includes('Sleep 8 seconds') && filas === 1 && fuera;
+      return { ok, detail: JSON.stringify({ resumen, filas, fuera }) };
+    },
+  },
+  {
+    name: 'P-038 V3: «Compartido» y el % de contexto van en la sublínea, no encima del input',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await page.evaluate(() => {
+        const store = window.__mageDev.store;
+        const tabId = store.getState().activeTabId;
+        store.setState((s) => ({ contextUsageByChat: { ...s.contextUsageByChat, [tabId]: { totalTokens: 84_800, maxTokens: 200_000, percentage: 42.4, categories: [] } } }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const medido = await page.evaluate((textos) => {
+        const pane = document.querySelector(`[data-pane-tab-id="${window.__mageDev.store.getState().activeTabId}"]`);
+        const sublinea = pane?.querySelector('[data-tab-subline]');
+        const compartidos = [...(pane?.querySelectorAll('span') ?? [])].filter((n) => n.children.length === 0 && n.textContent?.trim() === textos.shared);
+        return {
+          privacidad: sublinea?.querySelector('[data-tab-subline-privacy]')?.getAttribute('data-tab-subline-privacy') ?? null,
+          contexto: sublinea?.querySelector('[data-tab-subline-context]')?.textContent?.trim() ?? null,
+          compartidosFueraDeLaSublinea: compartidos.filter((n) => !sublinea?.contains(n)).length,
+        };
+      }, { shared: ui('chat.info.shared') });
+      const ok = medido.privacidad === 'shared' && medido.contexto === ui('tabs.subline.context', { pct: 42 }) && medido.compartidosFueraDeLaSublinea === 0;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    name: 'P-038 V4: la ✕ de una pestaña inactiva sale al pasar el ratón; la de la activa, siempre',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await openTemporaryConversation(page);
+      const ids = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { activa: s.activeTabId, inactiva: s.tabs.find((t) => t.id !== s.activeTabId)?.id ?? null };
+      });
+      const visibilidad = (id) => page.evaluate((tabId) => {
+        const boton = document.querySelector(`[role="tab"][data-tab-id="${tabId}"] button`);
+        return boton === null ? null : getComputedStyle(boton).visibility;
+      }, id);
+      await page.mouse.move(2, 2);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const antes = { activa: await visibilidad(ids.activa), inactiva: await visibilidad(ids.inactiva) };
+      const pestana = page.locator(`[role="tab"][data-tab-id="${ids.inactiva}"]`);
+      const caja = await pestana.boundingBox();
+      // Tres puntos: la letra del proveedor (lleva tooltip), el título y el hueco de la ✕.
+      const puntos = { letra: caja.x + 20, titulo: caja.x + caja.width / 2, cruz: caja.x + caja.width - 16 };
+      const porPunto = {};
+      for (const [nombre, x] of Object.entries(puntos)) {
+        await page.mouse.move(2, 2);
+        await page.waitForTimeout(CONFIG.settleMs);
+        await page.mouse.move(x, caja.y + caja.height / 2, { steps: 4 });
+        await page.waitForTimeout(CONFIG.settleMs * 2);
+        porPunto[nombre] = await visibilidad(ids.inactiva);
+      }
+      const conHover = Object.values(porPunto).every((v) => v === "visible") ? "visible" : JSON.stringify(porPunto);
+      const diagnostico = await page.evaluate(({ tabId, x, y }) => {
+        const tab = document.querySelector(`[role="tab"][data-tab-id="${tabId}"]`);
+        const bajo = document.elementFromPoint(x, y);
+        return { hoverMedia: matchMedia('(hover: hover)').matches, tabHover: tab?.matches(':hover') ?? null, bajo: bajo === null ? null : `${bajo.tagName}.${String(bajo.className).slice(0, 60)}`, dentro: tab?.contains(bajo) ?? null };
+      }, { tabId: ids.inactiva, x: caja.x + caja.width / 2, y: caja.y + caja.height / 2 });
+      const ok = antes.activa === 'visible' && antes.inactiva === 'hidden' && conHover === 'visible';
+      return { ok, detail: JSON.stringify({ ...ids, antes, conHover, diagnostico }) };
+    },
+  },
+  {
+    name: 'P-038: hay aire entre los mensajes del hilo',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await hydrateBlocks(page, [
+        { kind: 'user', id: 'vg-aire-1', text: 'Primera pregunta', time: '12:00', attachments: [] },
+        { kind: 'agent', id: 'vg-aire-2', runs: [{ code: false, text: 'Primera respuesta del agente.' }], streaming: false },
+        { kind: 'user', id: 'vg-aire-3', text: 'Segunda pregunta', time: '12:01', attachments: [] },
+        { kind: 'agent', id: 'vg-aire-4', runs: [{ code: false, text: 'Segunda respuesta del agente.' }], streaming: false },
+      ]);
+      await page.waitForFunction(() => document.querySelectorAll(`[data-pane-tab-id="${window.__mageDev.store.getState().activeTabId}"] [data-chat-row]`).length === 4, null, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      const medido = await page.evaluate(() => {
+        const pane = document.querySelector(`[data-pane-tab-id="${window.__mageDev.store.getState().activeTabId}"]`);
+        const contenido = [...pane.querySelectorAll('[data-chat-row]')].map((fila) => {
+          // El contenido de la fila, sin la barra flotante de copiar (absoluta, asoma 10 px por arriba).
+          const hijos = [fila.firstElementChild].filter((n) => n !== null && n.getBoundingClientRect().height > 0);
+          const tops = hijos.map((n) => n.getBoundingClientRect().top);
+          const bottoms = hijos.map((n) => n.getBoundingClientRect().bottom);
+          return { top: Math.min(...tops), bottom: Math.max(...bottoms), padding: getComputedStyle(fila).paddingBottom };
+        });
+        return { filas: contenido.length, huecos: contenido.slice(1).map((c, i) => Math.round(c.top - contenido[i].bottom)), padding: contenido.map((c) => c.padding) };
+      });
+      const ok = medido.filas === 4 && medido.huecos.every((h) => h >= 10);
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    name: 'P-038: la rueda hacia arriba suelta el final aunque siga llegando texto',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await hydrateBlocks(page, Array.from({ length: 30 }, (_, i) => ({ kind: 'user', id: `vg-iman-${i}`, text: `Fila ${i}\n${'Contenido largo de prueba. '.repeat(20)}`, time: '12:00', attachments: [] })));
+      const scroller = page.locator('[data-pane-tab-id] [data-chat-scroller]').first();
+      await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const caja = await scroller.boundingBox();
+      await page.mouse.move(caja.x + caja.width / 2, caja.y + caja.height / 2);
+      // Un golpe CORTO de rueda: antes quedaba dentro del margen de 80 px y el texto nuevo lo devolvía abajo.
+      await page.mouse.wheel(0, -40);
+      await page.waitForTimeout(CONFIG.settleMs);
+      await page.evaluate(() => {
+        const store = window.__mageDev.store;
+        const tabId = store.getState().activeTabId;
+        store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [tabId]: [...s.blocksByChat[tabId], { kind: 'agent', id: 'vg-iman-nuevo', runs: [{ code: false, text: 'Texto que llega. '.repeat(60) }], streaming: true }] } }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const distancia = await scroller.evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
+      // Y al volver al final, vuelve a seguirlo.
+      await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+      await page.evaluate(() => {
+        const store = window.__mageDev.store;
+        const tabId = store.getState().activeTabId;
+        store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [tabId]: [...s.blocksByChat[tabId], { kind: 'agent', id: 'vg-iman-otro', runs: [{ code: false, text: 'Más texto. '.repeat(60) }], streaming: true }] } }));
+      });
+      const repegado = await page
+        .waitForFunction(() => { const el = document.querySelector('[data-pane-tab-id] [data-chat-scroller]'); return el !== null && el.scrollHeight - el.scrollTop - el.clientHeight <= 3; }, null, { timeout: CONFIG.actionTimeoutMs })
+        .then(() => true, () => false);
+      const ok = distancia > 100 && repegado;
+      return { ok, detail: JSON.stringify({ distancia, repegado }) };
+    },
+  },
+  {
+    name: 'P-038: el popover de uso con muchas cuentas cabe, tiene scroll y se puede entrar en él',
+    async run(page) {
+      const previo = await page.evaluate(() => ({ accounts: window.__mageDev.store.getState().accounts }));
+      try {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const base = store.getState().accounts[0];
+          store.setState({ accounts: [...store.getState().accounts, ...Array.from({ length: 24 }, (_, i) => ({ ...base, id: `vg-uso-${i}`, alias: `Cuenta ${i}`, name: `Cuenta ${i}` }))] });
+        });
+        const disparador = page.locator('span[tabindex="0"]', { hasText: statusBarWindowsRegExp() }).first();
+        if ((await disparador.count()) === 0) return { ok: false, detail: 'sin indicador de uso en la barra' };
+        await disparador.hover();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const pop = page.locator('[data-usage-popover="true"]');
+        const caja = await pop.boundingBox();
+        // Del disparador al popover sin salir de la zona de hover, y una vuelta de rueda dentro.
+        await page.mouse.move(caja.x + caja.width / 2, caja.y + caja.height - 4, { steps: 6 });
+        await page.mouse.wheel(0, 400);
+        await page.waitForTimeout(CONFIG.settleMs);
+        const medido = await pop.evaluate((node) => ({
+          alto: Math.round(node.getBoundingClientRect().height),
+          ventana: window.innerHeight,
+          desplazado: Math.round(node.scrollTop),
+          visible: getComputedStyle(node.parentElement).opacity === '1',
+          dentroDeLaVentana: node.getBoundingClientRect().top >= 0,
+        }));
+        await page.mouse.move(0, 0);
+        const ok = medido.alto <= medido.ventana * 0.7 + 1 && medido.dentroDeLaVentana && medido.desplazado > 0 && medido.visible;
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      }
+    },
+  },
+  {
+    name: 'P-038: los popovers de / y @ salen encima de su carácter, no en el borde de la fila',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const prompt = page.getByRole('textbox', { name: ui('prompt.editor.ariaLabel'), exact: true });
+      const medir = (selector) => page.evaluate((sel) => {
+        const pop = document.querySelector(sel);
+        const fila = document.querySelector('[data-prompt-editor="true"]')?.closest('.relative');
+        return pop === null || fila === null ? null : Math.round(pop.getBoundingClientRect().left - fila.getBoundingClientRect().left);
+      }, selector);
+      await prompt.click();
+      await page.keyboard.type('una frase bastante larga antes /');
+      const slash = page.locator(`[role="listbox"][aria-label="${cssAttr(ui('prompt.slash.listLabel'))}"]`);
+      const slashVisible = await slash.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const slashLeft = await medir(`[role="listbox"][aria-label="${cssAttr(ui('prompt.slash.listLabel'))}"]`);
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+a');
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type('mira este fichero, por favor: @');
+      const mention = page.locator('[data-mention-popover="true"]');
+      const mentionVisible = await mention.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const mentionLeft = await medir('[data-mention-popover="true"]');
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+a');
+      await page.keyboard.press('Backspace');
+      // Con texto delante, el carácter cae bastante a la derecha del borde: el popover tiene que ir con él.
+      const ok = slashVisible && mentionVisible && slashLeft !== null && slashLeft > 100 && mentionLeft !== null && mentionLeft > 100;
+      return { ok, detail: JSON.stringify({ slashVisible, slashLeft, mentionVisible, mentionLeft }) };
+    },
+  },
+  {
+    name: 'P-038: las respuestas a medias de una pregunta sobreviven a cambiar de chat',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const conPregunta = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-p038-persist');
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      await page.locator('[data-question-dock="true"] [role="radio"]').nth(1).click();
+      await openTemporaryConversation(page);
+      await page.locator(`[role="tab"][data-tab-id="${conPregunta}"]`).click();
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      const segunda = await page.locator('[data-question-dock="true"] [role="radio"]').nth(1).getAttribute('aria-checked');
+      await cancelInjectedPermission(page, 'vg-p038-persist');
+      return { ok: segunda === 'true', detail: JSON.stringify({ segundaMarcadaTrasVolver: segunda }) };
+    },
+  },
+  {
+    // P-038 V11/V16: «Cuentas y consumo» se abre al pulsar el resumen de uso; gráfico con una barra por día (30 y 7),
+    // una tarjeta por cuenta, renombrar cambia el alias y ocultar la saca de la barra de cuentas. Deja todo como estaba.
+    name: 'P-038 V11: «Cuentas y consumo» con gráfico por días, tarjetas, renombrar y ocultar',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { aliasByAccount: s.settings.aliasByAccount, hiddenAccounts: s.settings.hiddenAccounts, cuentas: s.accounts.map((a) => a.id), activa: s.activeAccountId };
+      });
+      try {
+        await page.locator('[data-usage-summary]').first().click();
+        const dialogo = page.locator('[data-accounts-usage]');
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialogo.locator('[data-accounts-usage-chart]').waitFor({ state: 'visible', timeout: 60_000 });
+        const barras30 = await dialogo.locator('[data-accounts-usage-chart] [data-day]').count();
+        await dialogo.getByRole('radio', { name: ui('accountsUsage.period', { days: 7 }) }).click();
+        const barras7 = await dialogo.locator('[data-accounts-usage-chart] [data-day]').count();
+        const tarjetas = await dialogo.locator('[data-account-card]').count();
+        const otra = previo.cuentas.find((id) => id !== previo.activa) ?? null;
+        let renombrada = null;
+        let ocultaFuera = null;
+        if (otra !== null) {
+          const tarjeta = dialogo.locator(`[data-account-card="${cssAttr(otra)}"]`);
+          await tarjeta.getByRole('button', { name: ui('accountsUsage.rename'), exact: true }).click();
+          const campo = tarjeta.locator('input[maxlength]');
+          await campo.fill('VG renombrada');
+          await campo.press('Enter');
+          renombrada = await page.evaluate((id) => window.__mageDev.store.getState().accounts.find((a) => a.id === id)?.alias ?? null, otra);
+          await tarjeta.getByRole('button', { name: ui('accountsUsage.hide'), exact: true }).click();
+          await page.keyboard.press('Escape');
+          await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+          ocultaFuera = await page.evaluate((id) => !document.querySelector('[data-account-switcher]')?.innerHTML.includes(id) && window.__mageDev.store.getState().settings.hiddenAccounts.includes(id), otra);
+        }
+        const ok = barras30 === 30 && barras7 === 7 && tarjetas === previo.cuentas.length && (otra === null || (renombrada === 'VG renombrada' && ocultaFuera === true));
+        return { ok, detail: JSON.stringify({ barras30, barras7, tarjetas, cuentas: previo.cuentas.length, renombrada, ocultaFuera }) };
+      } finally {
+        await page.evaluate((estado) => {
+          const store = window.__mageDev.store;
+          for (const id of store.getState().settings.hiddenAccounts) if (!estado.hiddenAccounts.includes(id)) store.getState().setAccountHidden(id, false);
+          for (const id of estado.cuentas) store.getState().renameAccount(id, estado.aliasByAccount[id] ?? null);
+          store.getState().closeAccountsUsage();
+        }, previo);
+      }
+    },
+  },
+  {
+    name: 'P-038 V6: el lateral enseña 10 proyectos y «Mostrar más»; el scratch de otro perfil no es proyecto',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { allConversationHistory: s.allConversationHistory, settings: s.settings, loadConversationHistory: s.loadConversationHistory };
+      });
+      try {
+        const raizLocal = await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const s = store.getState();
+          const filas = Array.from({ length: 12 }, (_, i) => ({
+            accountId: s.activeAccountId,
+            item: { configDir: '', title: `vg38 ${i}`, privacy: 'shared', sizeBytes: 1, isScheduled: false, sessionId: `vg38-p${i}`, cwd: `C:\\vg38\\proyecto-${String(i).padStart(2, '0')}`, updatedAtMs: Date.now() - i * 1000 },
+          }));
+          // La raíz local entera (`%LOCALAPPDATA%\mage`): un chat sin carpeta de OTRO perfil cuelga de `<hash>\mage-scratch`.
+          const raiz = s.scratchRoots[1] ?? '';
+          filas.push({ accountId: s.activeAccountId, item: { configDir: '', title: 'vg38 scratch ajeno', privacy: 'shared', sizeBytes: 1, isScheduled: false, sessionId: 'vg38-ajeno', cwd: `${raiz}\\0123456789abcdef\\mage-scratch\\4f1c2d3e-0000-4000-8000-000000000038`, updatedAtMs: Date.now() } });
+          store.setState({ loadConversationHistory: async () => undefined, allConversationHistory: filas, settings: { ...s.settings, chatProjects: [] } });
+          return raiz;
+        });
+        await page.waitForTimeout(CONFIG.settleMs * 2);
+        const medido = await page.evaluate(() => {
+          const claves = [...document.querySelectorAll('[data-project-key]')].map((n) => n.getAttribute('data-project-key'));
+          return { proyectos: claves.filter((k) => k.includes('vg38')).length, ajenoComoProyecto: claves.some((k) => k.includes('4f1c2d3e')), sinProyecto: document.querySelector('[data-sidebar-group="unassigned"]')?.textContent?.includes('vg38 scratch ajeno') ?? false };
+        });
+        const masProyectos = await page.locator('[data-chat-sidebar] button', { hasText: ui('sidebar.section.showMore', { count: 2 }) }).count();
+        const ok = raizLocal.length > 0 && medido.proyectos === 10 && !medido.ajenoComoProyecto && medido.sinProyecto && masProyectos >= 1;
+        return { ok, detail: JSON.stringify({ raizLocal, ...medido, masProyectos }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      }
     },
   },
   ...(process.argv.some(arg => arg.startsWith('--trust-stage=')) ? [{
@@ -10883,6 +11273,54 @@ const CHECKS = [
         await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), BROWSER_TURN_PROVIDER.id);
         await fake.close();
         await pageServer.close();
+      }
+    },
+  },
+  {
+    // P-038: «escribo https://google.com/ en el navegador y no pinta nada». La página es una vista NATIVA (no sale en
+    // la captura del DOM): se mide el estado que informa main y la captura de la propia vista que usa la pluma.
+    // Necesita red: sin ella, el detalle lo dice y no se da por fallo de Mage.
+    name: 'P-038: el navegador abre una web externa y la vista pinta',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      try {
+        ({ tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: BROWSER_TURN_PROVIDER, model: QUEUE_TURN_MODEL }));
+        const sessionId = await page.evaluate((id) => window.__mageDev.store.getState().ensureSession(id), tabId);
+        await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('browser'));
+        await page.locator('[data-browser-panel]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const address = page.locator('[data-browser-address]');
+        await address.fill('https://google.com/');
+        await address.press('Enter');
+        const conTitulo = await page.waitForFunction((sid) => (window.__mageBrowserDev.getState().states[sid]?.title ?? '').length > 0, sessionId, { polling: 100, timeout: 20_000 }).then(() => true, () => false);
+        const estado = await page.evaluate((sid) => window.__mageBrowserDev.getState().states[sid] ?? null, sessionId);
+        const hueco = await page.evaluate(() => { const r = document.querySelector('[data-browser-host]')?.getBoundingClientRect(); return r === undefined ? null : { w: Math.round(r.width), h: Math.round(r.height) }; });
+        const error = await page.locator('[data-browser-panel] [role="alert"]').textContent({ timeout: 500 }).catch(() => null);
+        let captura = null;
+        if (estado !== null) {
+          await page.locator('[data-browser-pen-button]').click();
+          const img = page.locator('[data-browser-pen] img');
+          await img.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          captura = await img.evaluate(async (node) => {
+            await node.decode();
+            const canvas = document.createElement('canvas');
+            canvas.width = node.naturalWidth; canvas.height = node.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(node, 0, 0);
+            const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const colores = new Set();
+            for (let i = 0; i < data.length; i += 4 * 97) colores.add(`${data[i]},${data[i + 1]},${data[i + 2]}`);
+            return { w: canvas.width, h: canvas.height, colores: colores.size };
+          });
+          await page.keyboard.press('Escape');
+        }
+        // El hueco donde main coloca la vista: con 0 px de alto la página cargaba pero no se veía.
+        const ok = conTitulo && hueco !== null && hueco.h > 100 && captura !== null && captura.w > 0 && captura.colores > 8;
+        return { ok, detail: JSON.stringify({ conTitulo, estado: estado === null ? null : { url: estado.url, title: estado.title, loading: estado.loading }, hueco, error, captura }) };
+      } finally {
+        if (tabId !== null) await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), BROWSER_TURN_PROVIDER.id);
+        await fake.close();
       }
     },
   },
