@@ -131,6 +131,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   // widgetEnabled opcional en disco: ficheros antiguos (sin la clave) o valores invalidos caen a
   // false via .catch (widget apagado por defecto, opt-in).
   widgetEnabled: z.boolean().catch(false),
+  // Igual que el widget: sin la clave (ficheros anteriores a la 0.1.5) o con basura, apagado.
+  mageMcpEnabled: z.boolean().catch(false),
   // Igual de tolerante: un fichero de una version anterior no la trae, y un valor fuera de rango (o
   // basura) no puede dejar la app ilegible -> se acota al rango util y, si no hay nada, opaca.
   backgroundOpacity: z.number().min(50).max(100).catch(100),

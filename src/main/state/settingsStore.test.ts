@@ -14,6 +14,7 @@ const VALID: AppSettings = {
   separatorContrast: 'normal',
   dockDefaultsVersion: 0,
   widgetEnabled: true,
+  mageMcpEnabled: true,
   backgroundOpacity: 80,
   importedThemes: [{ id: 'ovsx:acme.dark', label: 'Acme Dark', type: 'dark', tokens: { '--color-mg-window': '#101010' } }],
   activeThemeId: 'ovsx:acme.dark',
@@ -279,6 +280,16 @@ describe('SettingsStore.load', () => {
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ version: 1, notificationRules: [], theme: 'dark' }) }));
 
     expect(store.load().widgetEnabled).toBe(false);
+  });
+
+  it('load_sinMageMcpEnabled_caeAFalse', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ version: 1, notificationRules: [], theme: 'dark' }) }));
+
+    expect(store.load().mageMcpEnabled).toBe(false);
+  });
+
+  it('load_mageMcpEnabledValido_seConserva', () => {
+    expect(new SettingsStore(deps({ readFile: () => JSON.stringify(VALID) })).load().mageMcpEnabled).toBe(true);
   });
 
   it('load_widgetEnabledValido_seConserva', () => {

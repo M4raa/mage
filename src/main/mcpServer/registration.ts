@@ -1,5 +1,7 @@
 import { join } from 'node:path';
 import { MAGE_MCP_SERVER_NAME } from './registrationStatus';
+import { MAGE_MCP_CALLER_ENV } from '../host/mcpCallers';
+import type { ResolvedStdioServer } from '../config/mcpResolved';
 
 // Cómo lanza un CLI (Claude o Codex) el servidor MCP de Mage: `mage mcp` hablando con el host de ESTE perfil.
 export interface MageMcpLaunch {
@@ -45,3 +47,24 @@ export function codexAddArgs(launch: MageMcpLaunch): readonly string[] {
 
 export const CLAUDE_REMOVE_ARGS = ['mcp', 'remove', MAGE_MCP_SERVER_NAME, '--scope', 'user'] as const;
 export const CODEX_REMOVE_ARGS = ['mcp', 'remove', MAGE_MCP_SERVER_NAME] as const;
+
+// P-038 V7: con el MCP de Mage ACTIVADO, cada conversación de Claude o Codex lo recibe al lanzarse por el mismo
+// camino que los demás MCP comunes (`--mcp-config` en Claude, `-c mcp_servers.*` en Codex), también las privadas
+// y las de cuentas creadas después, sin tocar el `.claude.json` ni el `config.toml` de nadie. La credencial
+// de la sesión va en su `env`: los traductores la entregan por el entorno, nunca en un fichero ni en la línea
+// de comandos.
+export function mageMcpServer(launch: MageMcpLaunch, credential: string): ResolvedStdioServer {
+  if (credential.trim().length === 0) throw new Error(`Credencial vacia para el MCP de Mage: ${JSON.stringify(credential)}`);
+  return {
+    name: MAGE_MCP_SERVER_NAME,
+    source: 'common',
+    onlyIn: null,
+    extra: {},
+    secrets: {},
+    transport: 'stdio',
+    command: launch.command,
+    args: launch.args,
+    env: { ...launch.env, [MAGE_MCP_CALLER_ENV]: credential },
+    cwd: null,
+  };
+}

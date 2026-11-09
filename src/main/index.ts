@@ -8,7 +8,7 @@ import { readOnlyLockMessage } from '@shared/conversationLock';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { McpCallers } from './host/mcpCallers';
 import { codexHomeHasMageServer } from './mcpServer/registrationStatus';
-import { mageMcpLaunch } from './mcpServer/registration';
+import { mageMcpLaunch, mageMcpServer } from './mcpServer/registration';
 import { McpRegistrationService, type McpRegistrationDeps } from './mcpServer/registrationService';
 import { DelegationLog } from './mcpServer/delegationLog';
 import { HostSessionsPort } from './mcpServer/hostSessionsPort';
@@ -602,12 +602,28 @@ function loadSharedLaunch(provider: string, accountDir: string, sessionId: strin
   const shared = getMcpServices().sharedMcp();
   for (const warning of shared.warnings) mainLog('warn', warning);
   const settingsCommon = getSharedConfigService().loadSettingsCommon(settingsCommonPath());
+  const settings = getSettingsStore().load();
+  const caller = mageCallerFor(provider, accountDir, sessionId);
+  const servers = withLibraryServers(selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }), family, account);
   return {
-    mcpServers: withLibraryServers(selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }), family, account),
+    mcpServers: withMageServer(servers, settings.mageMcpEnabled, caller.mageCaller),
     settingsFragment: family === 'claude' ? withTaskDirectories(buildSettingsFragment(settingsCommon), launchingTaskExtras) : buildSettingsFragment(settingsCommon),
-    claudeAiConnectors: !getSettingsStore().load().claudeAiConnectorsOff.includes(account),
-    ...mageCallerFor(provider, accountDir, sessionId),
+    claudeAiConnectors: !settings.claudeAiConnectorsOff.includes(account),
+    // Inyectado, el servidor ya lleva la credencial en su `env`: el `env_vars` aparte de Codex lo pisaría.
+    ...(settings.mageMcpEnabled && caller.mageCaller !== undefined ? { mageCaller: { ...caller.mageCaller, forwardToCodexMcp: false } } : caller),
   };
+}
+
+// P-038 V7: el MCP de Mage por el mismo camino que los demás MCP comunes. Solo con sesión (hay credencial) y solo
+// Claude y Codex (D-M6); con el mismo nombre que uno común, gana el de Mage (es el que sabe hablar con este host).
+function withMageServer(servers: readonly ResolvedMcpServer[], enabled: boolean, caller: SharedLaunchConfig['mageCaller']): readonly ResolvedMcpServer[] {
+  if (!enabled || caller === undefined) return servers;
+  const launch = mageMcpLaunch({
+    isPackaged: app.isPackaged, execPath: process.execPath, resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(), appImage: process.env['APPIMAGE'], userDataDir: app.getPath('userData'),
+  });
+  const mage = mageMcpServer(launch, caller.credential);
+  return [...servers.filter((server) => server.name !== mage.name), mage];
 }
 
 // Degradación registrada a propósito: un library.json corrupto no impide lanzar ninguna sesión

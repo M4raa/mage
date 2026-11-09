@@ -1916,6 +1916,8 @@
   "settings.library.intro": "Skills, MCP servers and plugins for your Claude and Codex accounts. Nothing is installed by default, and nothing is installed before you see what it adds.",
   "settings.mcpServer.depthHelp": "How many levels of sessions can create other sessions; cycles are always rejected.",
   "settings.mcpServer.depthLabel": "Maximum delegation depth",
+  "settings.mcpServer.enabledHelp": "Claude and Codex conversations you open or reopen from now on can create and follow other sessions and use Mage's browser. Private ones too. Conversations already open don't change until you reopen them.",
+  "settings.mcpServer.enabledLabel": "Turn on Mage's MCP in conversations",
   "settings.mcpServer.failed": "Could not change the registration in {account}: {detail}",
   "settings.mcpServer.intro": "Registers the Mage MCP server in your Claude and Codex accounts so Mage sessions can create and follow other sessions.",
   "settings.mcpServer.notRegistered": "Not registered",

@@ -495,6 +495,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setAccountAccent: (accountId: string, colorIndex: number | undefined) => void;
   // Conectores de claude.ai de una cuenta (C3-f): aplica a las sesiones que se abran despues.
   setClaudeAiConnectorsEnabled: (accountId: string, enabled: boolean) => void;
+  // MCP de Mage en todas las conversaciones (P-038 V7): aplica a las que se lancen o reabran después.
+  setMageMcpEnabled: (enabled: boolean) => void;
   // Comando de agy permitido, denegado o quitado (null). Se guarda al momento: agy lee sus reglas al lanzar.
   setAgyCommandVerdict: (command: string, verdict: AgyCommandVerdict | null) => void;
   // Carpetas extra que Mage enlaza en el perfil de agy (relativas a la casa del usuario).

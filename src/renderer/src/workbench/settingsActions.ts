@@ -35,6 +35,7 @@ export type SettingsActionName =
   | 'setUiLanguage'
   | 'setAccountAccent'
   | 'setClaudeAiConnectorsEnabled'
+  | 'setMageMcpEnabled'
   | 'setAgyCommandVerdict'
   | 'setAgyLinkedPaths'
   | 'setDefaultProvider'
@@ -161,6 +162,12 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
         return { settings: { ...s.settings, claudeAiConnectorsOff: enabled ? rest : [...rest, accountId] } };
       });
       deps.persistSettings();
+    },
+
+    // Se guarda YA: main lee el ajuste en cada lanzamiento, y la siguiente conversación ya debe tenerlo.
+    setMageMcpEnabled: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, mageMcpEnabled: enabled } }));
+      deps.persistSettingsNow();
     },
 
     setAgyCommandVerdict: (command, verdict) => {

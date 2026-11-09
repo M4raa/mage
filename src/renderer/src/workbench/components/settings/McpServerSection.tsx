@@ -31,6 +31,23 @@ function DepthSelector(): React.JSX.Element {
   );
 }
 
+// P-038 V7: el interruptor que de verdad decide si las conversaciones de Mage tienen el MCP de Mage. Encendido,
+// cada conversación de Claude o Codex que se lance o se reabra lo recibe (privadas incluidas); las ya abiertas no.
+function MageMcpToggle(): React.JSX.Element {
+  const t = useT();
+  const enabled = useWorkbenchStore((s) => s.settings.mageMcpEnabled);
+  const setMageMcpEnabled = useWorkbenchStore((s) => s.setMageMcpEnabled);
+  return (
+    <label data-setting="mage-mcp-enabled" className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
+      <input type="checkbox" className="mt-[2px]" checked={enabled} onChange={(e) => setMageMcpEnabled(e.target.checked)} />
+      <span>
+        <span className="font-semibold">{t('settings.mcpServer.enabledLabel')}</span>
+        <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t('settings.mcpServer.enabledHelp')}</span>
+      </span>
+    </label>
+  );
+}
+
 // H4 y U10: registrar el servidor MCP de Mage en las cuentas de Claude y Codex, y la profundidad de delegación.
 export function McpServerSection(): React.JSX.Element {
   const t = useT();
@@ -39,6 +56,7 @@ export function McpServerSection(): React.JSX.Element {
   return (
     <div data-setting="mcp-server" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
       <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.sections.mcpServer.title')}</span>
+      <MageMcpToggle />
       <span className="text-[10.5px] leading-[1.45] text-mg-ter">{t('settings.mcpServer.intro')}</span>
       <span className="text-[10.5px] leading-[1.45] text-mg-ter">{t('settings.mcpServer.onlyFromMage')}</span>
       <ul role="status" className="flex flex-col gap-[3px] text-[11.5px] text-mg-body">

@@ -116,6 +116,9 @@ export interface AppSettings {
   readonly dockDefaultsVersion: number;
   // Widget flotante always-on-top (M3): si esta activo, se abre al arrancar. Default false (opt-in).
   readonly widgetEnabled: boolean;
+  // MCP de Mage (P-038 V7): activado, TODA conversación de Claude o Codex nueva o reabierta lo recibe al lanzarse
+  // (también las privadas). Default false (opt-in).
+  readonly mageMcpEnabled: boolean;
   // Opacidad de los FONDOS de la app, 50..100 (%). 100 = opaco, como siempre. Por debajo, las
   // superficies (ventana, rail, paneles, bloques) se pintan con alfa para dejar ver lo que hay detras
   // — en Windows 11, el material acrilico que activa el proceso main. El suelo es 50 A PROPOSITO:
@@ -287,6 +290,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   separatorContrast: 'normal',
   dockDefaultsVersion: 0,
   widgetEnabled: false,
+  mageMcpEnabled: false,
   backgroundOpacity: 100,
   importedThemes: [],
   activeThemeId: null,

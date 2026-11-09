@@ -1918,6 +1918,8 @@ export interface MessageValues {
   readonly "settings.library.intro": never;
   readonly "settings.mcpServer.depthHelp": never;
   readonly "settings.mcpServer.depthLabel": never;
+  readonly "settings.mcpServer.enabledHelp": never;
+  readonly "settings.mcpServer.enabledLabel": never;
   readonly "settings.mcpServer.failed": { readonly "account": string | number; readonly "detail": string | number };
   readonly "settings.mcpServer.intro": never;
   readonly "settings.mcpServer.notRegistered": never;

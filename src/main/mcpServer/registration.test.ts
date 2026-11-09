@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { join } from 'node:path';
-import { claudeAddArgs, codexAddArgs, mageMcpLaunch, type MageMcpLaunch, type MageMcpLaunchInput } from './registration';
+import { claudeAddArgs, codexAddArgs, mageMcpLaunch, mageMcpServer, type MageMcpLaunch, type MageMcpLaunchInput } from './registration';
+import { toClaudeMcpConfig, toCodexOverrides } from '../config/mcpProviderTranslate';
 
 const BASE: MageMcpLaunchInput = {
   isPackaged: true,
@@ -54,5 +55,34 @@ describe('add args', () => {
     const bare: MageMcpLaunch = { command: 'x', args: ['y'], env: {} };
     expect(claudeAddArgs(bare)).not.toContain('-e');
     expect(codexAddArgs(bare)).toEqual(['mcp', 'add', 'mage', '--', 'x', 'y']);
+  });
+});
+
+describe('mageMcpServer', () => {
+  const launch: MageMcpLaunch = { command: 'C:/Mage/Mage.exe', args: ['C:/Mage/resources/cli/mage.mjs', 'mcp', '--user-data-dir', 'C:/perfil'], env: { ELECTRON_RUN_AS_NODE: '1' } };
+
+  it('mageMcpServer_credencial_vaEnElEnvDelServidor', () => {
+    const server = mageMcpServer(launch, 'cred-123');
+
+    expect(server).toMatchObject({ name: 'mage', transport: 'stdio', command: launch.command, args: launch.args, env: { ELECTRON_RUN_AS_NODE: '1', MAGE_MCP_CALLER: 'cred-123' } });
+  });
+
+  it('mageMcpServer_claude_elFicheroNoLlevaLaCredencial', () => {
+    const translated = toClaudeMcpConfig([mageMcpServer(launch, 'cred-123')]);
+
+    expect(JSON.stringify(translated.config)).not.toContain('cred-123');
+    expect(Object.values(translated.env)).toContain('cred-123');
+  });
+
+  it('mageMcpServer_codex_laCredencialSoloEnElEntorno', () => {
+    const overrides = toCodexOverrides([mageMcpServer(launch, 'cred-123')]);
+
+    expect(overrides.args.join(' ')).not.toContain('cred-123');
+    expect(overrides.args).toContain('mcp_servers.mage.env_vars=["ELECTRON_RUN_AS_NODE","MAGE_MCP_CALLER"]');
+    expect(overrides.env).toMatchObject({ MAGE_MCP_CALLER: 'cred-123' });
+  });
+
+  it('mageMcpServer_credencialVacia_lanza', () => {
+    expect(() => mageMcpServer(launch, ' ')).toThrow(/vacia/);
   });
 });
