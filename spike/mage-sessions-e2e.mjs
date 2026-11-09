@@ -3,7 +3,7 @@
 // EMPAQUETAR ya abierto con `--user-data-dir <perfil>` (cliente del host, `kind: 'terminal'`), se crea UNA sesión de Claude, se
 // le manda el prompt LITERAL del usuario y se mide qué herramientas elige, cuántas sesiones crea con `mage_create_session` y el
 // texto final. Se contesta `allow` a todo permiso (para ver la conducta natural) y se anota cada uno.
-//   node spike/mage-sessions-e2e.mjs --user-data-dir <dir> --claude-account <configDir> --cwd <carpeta> --out <fichero.json> [--claude-model <id>]
+//   node spike/mage-sessions-e2e.mjs --user-data-dir <dir> --claude-account <configDir> --cwd <carpeta> --out <fichero.json> [--claude-model <id>] [--prompt <texto>]
 // Consume: el turno de la creadora (haiku por defecto, esfuerzo low) más el de cada sesión hija. Medido contra: protocolo del host 1.7.
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -26,8 +26,10 @@ const POLL_MS = 500;
 const QUIET_MS = 45_000;
 const EFFORT = 'low';
 // El prompt del usuario del 2026-11-08 (conversación d92fe0c9), tal cual.
-const PROMPT = 'otras sesiones nuevas, lanza dos , una que diga hola y otra que diga adiós, también que quiero que cada una genere un numero aleatorio de una cifra y que tu las sumes';
+const DEFAULT_PROMPT = 'otras sesiones nuevas, lanza dos , una que diga hola y otra que diga adiós, también que quiero que cada una genere un numero aleatorio de una cifra y que tu las sumes';
 
+// `--prompt <texto>`: otro escenario con el mismo registro de herramientas (p. ej. el navegador).
+const PROMPT = option('prompt') ?? DEFAULT_PROMPT;
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const connectSocket = (address) => new Promise((resolve, reject) => {
   const socket = net.createConnection(address);
