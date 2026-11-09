@@ -16,7 +16,7 @@ import { displayTitle } from '../conversationTitle';
 import { accountToOpenWith, sidebarRowId, type SidebarRow } from '../sidebarModel';
 import { SidebarHeader } from './sidebar/SidebarHeader';
 import { SidebarRowItem } from './sidebar/SidebarRowItem';
-import { FlatGroup, ProjectGroupView, SectionLabel } from './sidebar/SidebarGroups';
+import { FlatGroup, PROJECTS_COLLAPSED_LIMIT, ProjectGroupView, RowList, SectionLabel } from './sidebar/SidebarGroups';
 import { useSidebarModel } from './sidebar/useSidebarModel';
 import { TasksSection } from '../tasks/TasksSection';
 
@@ -139,7 +139,7 @@ export function ChatSidebar(): React.JSX.Element {
             {groups.projects.length > 0 && <SectionLabel text={t('sidebar.projects.title')} hint={`${groups.projects.length}`} />}
             {editingProject !== null && <ProjectEditor project={editingProject === 'new' ? null : editingProject}
               onSave={async (project) => { await actions.saveChatProject(project); setEditingProject(null); }} onCancel={() => setEditingProject(null)} />}
-            {groups.projects.filter((group) => !filter.archived || group.rows.length > 0).map((group) => {
+            <RowList rows={groups.projects.filter((group) => !filter.archived || group.rows.length > 0)} unlimited={view.filterActive} collapsed={PROJECTS_COLLAPSED_LIMIT} renderRow={(group) => {
               const userProject = group.projectId === null ? undefined : projects.find((p) => p.id === group.projectId);
               return (
                 <ProjectGroupView
@@ -157,7 +157,7 @@ export function ChatSidebar(): React.JSX.Element {
                   onRemove={userProject === undefined ? null : () => actions.deleteChatProject(userProject.id)}
                 />
               );
-            })}
+            }} />
             {!filter.archived && (
               <button onClick={() => setEditingProject('new')} aria-label={t('sidebar.projects.create')} className="mx-[2px] mt-[2px] rounded-[6px] p-[4px_9px] text-left text-[11px] text-mg-icon hover:bg-mg-hover hover:text-mg-body">
                 ＋ {t('sidebar.projects.create')}

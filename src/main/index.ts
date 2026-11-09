@@ -2721,11 +2721,21 @@ function existsDirs(paths: unknown): readonly boolean[] {
 
 // Raiz de los directorios de borrador. Un solo sitio: si la calculan dos, un dia divergen y la fila de
 // informacion deja de reconocer el scratchpad sin que nada falle.
-function scratchRoot(): string {
+function scratchPaths(): Parameters<typeof localScratchRoot>[0] {
   const paths = { platform: process.platform, home: homedir(), userData: app.getPath('userData'), temp: app.getPath('temp'), env: process.env };
-  return localScratchRoot(scratchWorkspacePaths(paths, decideTestHome({ env: process.env, isPackaged: app.isPackaged })));
+  return scratchWorkspacePaths(paths, decideTestHome({ env: process.env, isPackaged: app.isPackaged }));
 }
-function scratchRoots(): readonly string[] { return [scratchRoot(), join(app.getPath('temp'), 'mage-scratch'), join(app.getPath('userData'), 'mage-scratch')].map(root => canonicalPath(root)); }
+function scratchRoot(): string {
+  return localScratchRoot(scratchPaths());
+}
+// La raiz local ENTERA cuenta como borrador: cada perfil (instalada, `pnpm dev`, verify:gui) tiene su
+// `<hash>/mage-scratch`, y un chat sin carpeta de OTRO perfil salia en el lateral como proyecto con nombre de uuid.
+// Cada raiz va tal cual Y canonizada: el temporal de Windows puede venir en forma 8.3 (`DMARAT~1`) y las
+// conversaciones guardan la ruta con la que se lanzaron, no la canonica.
+function scratchRoots(): readonly string[] {
+  const raw = [scratchRoot(), localMageRoot(scratchPaths()), join(app.getPath('temp'), 'mage-scratch'), join(app.getPath('userData'), 'mage-scratch')];
+  return [...new Set([...raw.map(root => canonicalPath(root)), ...raw])];
+}
 
 // Barrido de scratchpads (auditoria B.4.2). La POLITICA la elige el usuario y por defecto es 'never':
 // esto borra ficheros de su disco, asi que no puede pasar sin que lo haya pedido. Quien decide QUE

@@ -10,6 +10,8 @@ import { useT } from '../../../i18n/uiLanguage';
 // cada pulsación: se revela DE 10 EN 10, no todo de golpe (feedback GUI A1).
 export const COLLAPSED_LIMIT = 5;
 export const REVEAL_STEP = 10;
+// Proyectos visibles antes de «mostrar más» (P-038 V6): por fecha, el último tocado primero.
+export const PROJECTS_COLLAPSED_LIMIT = 10;
 
 export function SectionLabel({ text, hint }: { readonly text: string; readonly hint?: string }): React.JSX.Element {
   return (
@@ -20,31 +22,33 @@ export function SectionLabel({ text, hint }: { readonly text: string; readonly h
   );
 }
 
-interface RowListProps {
-  readonly rows: readonly SidebarRow[];
-  readonly renderRow: (row: SidebarRow) => React.ReactNode;
+interface RowListProps<T = SidebarRow> {
+  readonly rows: readonly T[];
+  readonly renderRow: (row: T) => React.ReactNode;
   // Sin tope: con un filtro o una búsqueda activos (la lista ya viene reducida) o en las fijadas.
   readonly unlimited: boolean;
+  // Cuántas se ven plegada (5 conversaciones por grupo; 10 proyectos).
+  readonly collapsed?: number;
 }
 
-// Filas con el tope de 5 y «Mostrar N más» de 10 en 10.
-export function RowList({ rows, renderRow, unlimited }: RowListProps): React.JSX.Element {
+// Filas con el tope (5 por defecto) y «Mostrar N más» de 10 en 10. Sirve también para la lista de proyectos.
+export function RowList<T>({ rows, renderRow, unlimited, collapsed = COLLAPSED_LIMIT }: RowListProps<T>): React.JSX.Element {
   const t = useT();
-  const [limit, setLimit] = useState(COLLAPSED_LIMIT);
+  const [limit, setLimit] = useState(collapsed);
   const visible = unlimited ? rows : rows.slice(0, limit);
   const hidden = rows.length - visible.length;
   const moreClass = 'mx-[2px] mt-[2px] rounded-[6px] p-[4px_9px] text-left text-[11px] text-mg-icon transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body';
   return (
     <>
-      {visible.map(renderRow)}
+      {visible.map((row) => renderRow(row))}
       {/* data-volatile-text: «Mostrar N más» depende del historial REAL; verify:gui --dump-dom-text no lo vuelca */}
       {!unlimited && hidden > 0 && (
         <button onClick={() => setLimit((current) => current + REVEAL_STEP)} data-volatile-text="true" className={moreClass}>
           {t('sidebar.section.showMore', { count: Math.min(hidden, REVEAL_STEP) })} <span className="text-mg-muted">{t('sidebar.section.remaining', { count: hidden })}</span>
         </button>
       )}
-      {!unlimited && limit > COLLAPSED_LIMIT && (
-        <button onClick={() => setLimit(COLLAPSED_LIMIT)} data-volatile-text="true" className={moreClass}>
+      {!unlimited && limit > collapsed && (
+        <button onClick={() => setLimit(collapsed)} data-volatile-text="true" className={moreClass}>
           {t('sidebar.section.showLess')}
         </button>
       )}
