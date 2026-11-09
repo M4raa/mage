@@ -72,6 +72,9 @@
   --color-mg-danger-strong-hover: #6a3838;
 
   /* Aviso ambar (skin de contexto medio) */
+  /* El color de aviso «a secas» (punto, borde y texto de una etiqueta de aviso). Faltaba: ocho sitios usaban
+     `text-mg-warn`/`border-mg-warn`/`bg-mg-warn` y se pintaban sin color (P-038; p. ej. la etiqueta «Factura API»). */
+  --color-mg-warn: #e0c98a;
   --color-mg-warn-text: #e0c98a;
   --color-mg-warn-border: #5a5030;
   --color-mg-warn-bg: #242017;
@@ -203,6 +206,7 @@
   --color-mg-danger-strong-hover: #b42318;
 
   /* Aviso ambar */
+  --color-mg-warn: #92610a;
   --color-mg-warn-text: #92610a;
   --color-mg-warn-border: #f0d9a0;
   --color-mg-warn-bg: #fef8ec;
