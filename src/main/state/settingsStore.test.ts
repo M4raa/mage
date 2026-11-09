@@ -35,6 +35,8 @@ const VALID: AppSettings = {
   uiScale: 110,
   defaultProvider: 'claude',
   accentByAccount: { 'C:/Users/u/.claude-p': 3 },
+  aliasByAccount: { 'C:/cuentas/.claude-p': 'Personal' },
+  hiddenAccounts: ['C:/cuentas/.claude-x'],
   claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
   artifactEnabled: true,
   ghNoticeDismissed: true,

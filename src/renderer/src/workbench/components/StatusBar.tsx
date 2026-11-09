@@ -114,6 +114,7 @@ function AppVersion(): React.JSX.Element | null {
 }
 
 function AccountStatus({ account, provider }: { readonly account: Account; readonly provider: string }): React.JSX.Element {
+  const openAccountsUsage = useWorkbenchStore((s) => s.openAccountsUsage);
   const t = useT();
   const { fiveHour, weekly } = account.usage;
   // Peso de la conversación de la pestaña activa (sale de la fila del lateral): primitivo, así que solo repinta si cambia.
@@ -149,10 +150,16 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
           tiene lockout, asi que pasar el raton varias veces no dispara peticiones de mas. */}
       <div className="group relative" onMouseEnter={refreshAll} onFocus={refreshAll}>
         {/* data-volatile-text: uso y estado del servicio REALES de la cuenta; verify:gui --dump-dom-text no los vuelca */}
+        {/* P-038 V11: pulsarlo abre «Cuentas y consumo» (el hover sigue con el popover rápido). */}
         <span
           data-volatile-text="true"
+          data-usage-summary="true"
           tabIndex={0}
-          className="cursor-default border-b border-dotted border-mg-idle"
+          role="button"
+          data-tip={t('accountsUsage.openAria')}
+          onClick={openAccountsUsage}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAccountsUsage(); } }}
+          className="cursor-pointer border-b border-dotted border-mg-idle hover:text-mg-body"
           style={severity !== 'ok' ? { color: SEVERITY_COLOR[severity] } : undefined}
         >
           {severity !== 'ok' && <Icon name={severity === 'critical' ? 'error' : 'warning'} size={12} className="mr-[4px]" />}

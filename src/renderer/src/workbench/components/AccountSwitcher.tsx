@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { useWorkbenchStore } from '../workbenchStore';
+import { visibleAccounts } from '../accountView';
 import type { Account } from '../types';
 import { loginDot, loginLabel } from './accountBadge';
 import { AccountMenu, DeleteAccountDialog } from './AccountMenu';
@@ -18,8 +19,11 @@ import { useT } from '../../i18n/uiLanguage';
 // `no-drag` en el contenedor: la cabecera es region de arrastre de ventana y sin esto el clic se lo
 // come el arrastre. Vale para todos los hijos, asi que no se repite por boton.
 export function AccountSwitcher({ orientation }: { readonly orientation: 'horizontal' | 'vertical' }): React.JSX.Element | null {
-  const accounts = useWorkbenchStore((s) => s.accounts);
+  const allAccounts = useWorkbenchStore((s) => s.accounts);
   const activeAccountId = useWorkbenchStore((s) => s.activeAccountId);
+  const hidden = useWorkbenchStore((s) => s.settings.hiddenAccounts);
+  // Las ocultas no salen aquí (P-038 V16); se reactivan desde «Cuentas y consumo».
+  const accounts = useMemo(() => visibleAccounts(allAccounts, hidden, activeAccountId), [allAccounts, hidden, activeAccountId]);
   // Con una conversacion abierta de otra cuenta no basta con cambiar la activa (P-026 2.7).
   const requestAccountSwitch = useWorkbenchStore((s) => s.requestAccountSwitch);
   const openAddAccount = useWorkbenchStore((s) => s.openAddAccount);

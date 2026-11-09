@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountInfo } from '@shared/accounts';
-import { aliasFromConfigDir, applyAccentOverrides, assignMissingAccents, providerBadge, providerLabel, toAccountView } from './accountView';
+import { aliasFromConfigDir, applyAccentOverrides, applyAccountOverrides, assignMissingAccents, providerBadge, providerLabel, toAccountView, visibleAccounts } from './accountView';
 
 function info(overrides: Partial<AccountInfo>): AccountInfo {
   return {
@@ -180,5 +180,26 @@ describe('aliasFromConfigDir', () => {
 
   it('aliasFromConfigDir_vacio_vacio', () => {
     expect(aliasFromConfigDir('')).toBe('');
+  });
+});
+
+describe('applyAccountOverrides y visibleAccounts (P-038 V16)', () => {
+  const info = (configDir: string, name: string) => ({ configDir, name, isMain: false, providerId: 'claude', authKind: 'subscription', email: null, org: null, loginStatus: 'ok' }) as unknown as Parameters<typeof toAccountView>[0];
+
+  it('applyAccountOverrides_conAliasYSinEl_ponYVuelveAlDeLaCarpeta', () => {
+    const accounts = [toAccountView(info('A', '.claude-a')), toAccountView(info('B', '.claude-b'))];
+
+    const renamed = applyAccountOverrides(accounts, { accentByAccount: {}, aliasByAccount: { A: 'Trabajo' } });
+    const restored = applyAccountOverrides(renamed, { accentByAccount: {}, aliasByAccount: {} });
+
+    expect(renamed.map((a) => a.alias)).toEqual(['Trabajo', 'claude-b']);
+    expect(restored.map((a) => a.alias)).toEqual(['claude-a', 'claude-b']);
+  });
+
+  it('visibleAccounts_ocultas_fueraSalvoLaActiva', () => {
+    const accounts = [toAccountView(info('A', '.a')), toAccountView(info('B', '.b')), toAccountView(info('C', '.c'))];
+
+    expect(visibleAccounts(accounts, ['B', 'C'], 'C').map((a) => a.id)).toEqual(['A', 'C']);
+    expect(visibleAccounts(accounts, [], 'A')).toBe(accounts);
   });
 });

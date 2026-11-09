@@ -22,6 +22,7 @@ import {
   SEPARATOR_CONTRASTS,
   UI_SCALE_MAX,
   UI_SCALE_MIN,
+  ACCOUNT_ALIAS_MAX,
 } from '@shared/settings';
 import { UI_LANGUAGE_PREFERENCES } from '@shared/i18n/language';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
@@ -184,6 +185,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   // Color por cuenta (PERS-3). Ausente o invalido -> {}: las cuentas vuelven al color de su posicion,
   // que es lo de antes de existir el campo.
   accentByAccount: z.record(z.string(), z.number().int().min(0).max(ACCOUNT_ACCENT_COUNT - 1)).catch({}),
+  aliasByAccount: z.record(z.string(), z.string().trim().min(1).max(ACCOUNT_ALIAS_MAX)).catch({}),
+  hiddenAccounts: z.array(z.string().min(1)).catch([]),
   // Conectores de claude.ai apagados por cuenta. Ausente o basura -> [] (encendidos, como antes de existir).
   claudeAiConnectorsOff: z.array(z.string().min(1)).catch([]),
   // D5: Artifact. Ausente o basura -> false: el lado que no publica nada.

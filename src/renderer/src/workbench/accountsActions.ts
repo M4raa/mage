@@ -47,7 +47,7 @@ export function createAccountsActions(deps: AccountsDeps): AccountsActions {
         // toAccountView repone el placeholder de uso; re-fusionamos el uso real ya conocido para no
         // parpadear a 0% mientras se re-descubren las cuentas (el placeholder solo queda si no hay dato).
         const accounts = infos.map((infoItem) => {
-          const view = toAccountView(infoItem, s.settings.accentByAccount[infoItem.configDir]);
+          const view = toAccountView(infoItem, s.settings.accentByAccount[infoItem.configDir], s.settings.aliasByAccount[infoItem.configDir]);
           const info = s.usageByAccount[view.id];
           return info === null || info === undefined ? view : { ...view, usage: toUsageWindows(info, Date.now()) };
         });

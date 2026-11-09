@@ -14,7 +14,7 @@ import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc'
 import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
 import type { AgyUsageSnapshot, UsageInfo } from '@shared/usage';
 import type { StatusInfo } from '@shared/status';
-import { aliasFromConfigDir, applyAccentOverrides } from './accountView';
+import { aliasFromConfigDir, applyAccountOverrides } from './accountView';
 import { nextIndexForArrow } from './a11y/keyboardNav';
 import { canChangeCwd } from './cwdChange';
 import {
@@ -187,6 +187,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   addAccountOpen: boolean; // dialogo de alta de cuenta (crear + login) abierto
   handoffOpen: boolean; // modal de prompt handoff (preview + copiar / nuevo chat) abierto
   settingsOpen: boolean; // pantalla de Configuracion de la app (M2.3) abierta
+  accountsUsageOpen: boolean; // pantalla «Cuentas y consumo» (P-038 V11) abierta
   // Seccion con la que se abre Configuracion (P-028, 41: «Añadir cuenta» del gateway lleva a
   // «Proveedores y modelos»). null = la de siempre. La valida SettingsView contra su lista.
   settingsSection: string | null;
@@ -451,6 +452,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   openHandoff: () => void;
   closeHandoff: () => void;
   openSettings: (section?: string) => void;
+  openAccountsUsage: () => void;
+  closeAccountsUsage: () => void;
   closeSettings: () => void;
   // Abre (o enfoca) la pseudo-pestaña de novedades en `version`, o en la instalada sin argumento.
   openReleaseNotes: (version?: string) => void;
@@ -495,6 +498,9 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setAccountAccent: (accountId: string, colorIndex: number | undefined) => void;
   // Conectores de claude.ai de una cuenta (C3-f): aplica a las sesiones que se abran despues.
   setClaudeAiConnectorsEnabled: (accountId: string, enabled: boolean) => void;
+  // Nombre propio de una cuenta (null = el de su carpeta) y ocultarla o no (P-038 V16).
+  renameAccount: (accountId: string, alias: string | null) => void;
+  setAccountHidden: (accountId: string, hidden: boolean) => void;
   // MCP de Mage en todas las conversaciones (P-038 V7): aplica a las que se lancen o reabran después.
   setMageMcpEnabled: (enabled: boolean) => void;
   // Comando de agy permitido, denegado o quitado (null). Se guarda al momento: agy lee sus reglas al lanzar.
@@ -1486,6 +1492,7 @@ export function createWorkbenchStore(mage: MageClient) {
     handoffOpen: false,
     accountSwitchPrompt: null,
     settingsOpen: false,
+    accountsUsageOpen: false,
     settingsSection: null,
     releaseNotesVersion: null,
     appVersion: '',
@@ -1978,7 +1985,7 @@ export function createWorkbenchStore(mage: MageClient) {
       const settingsLoaded = mage.loadSettings().then((settings) => {
         applyThemeFromSettings(settings, systemPrefersDark());
         mage.setUiScale(settings.uiScale);
-        set((s) => ({ settings, settingsLoaded: true, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
+        set((s) => ({ settings, settingsLoaded: true, accounts: applyAccountOverrides(s.accounts, settings) }));
       });
       settingsLoaded.catch((err: unknown) => console.warn('No se pudo cargar la configuracion:', describeError(err)));
       // Novedades: DESPUES de restaurar el workspace (si no, restaurar reescribe `splitLayout` y se come
@@ -2001,7 +2008,7 @@ export function createWorkbenchStore(mage: MageClient) {
       mage.onSettingsChanged((settings) => {
         applyThemeFromSettings(settings, systemPrefersDark());
         mage.setUiScale(settings.uiScale);
-        set((s) => ({ settings, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
+        set((s) => ({ settings, accounts: applyAccountOverrides(s.accounts, settings) }));
       });
 
       // Una pestaña que llega de otra ventana (la arrastraste fuera, o la mandaste por el menu). Se
@@ -2549,6 +2556,8 @@ export function createWorkbenchStore(mage: MageClient) {
     closeHandoff: () => set({ handoffOpen: false }),
     openSettings: (section) => set({ settingsOpen: true, settingsSection: section ?? null }),
     closeSettings: () => set({ settingsOpen: false }),
+    openAccountsUsage: () => set({ accountsUsageOpen: true }),
+    closeAccountsUsage: () => set({ accountsUsageOpen: false }),
 
     openReleaseNotes: (version) => {
       set({ releaseNotesVersion: version ?? null });

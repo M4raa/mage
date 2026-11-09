@@ -14,7 +14,8 @@ import {
   type KeepAliveSettings,
 } from '@shared/settings';
 import { setAgyCommandVerdict } from '@shared/agyRules';
-import { applyAccentOverrides } from './accountView';
+import { applyAccentOverrides, applyAccountOverrides } from './accountView';
+import { ACCOUNT_ALIAS_MAX } from '@shared/settings';
 import { effortSettingKey } from './models';
 import { applyBackgroundOpacity, applyThemeFromSettings, systemPrefersDark } from './theme';
 import type { WorkbenchState } from './workbenchStore';
@@ -36,6 +37,8 @@ export type SettingsActionName =
   | 'setAccountAccent'
   | 'setClaudeAiConnectorsEnabled'
   | 'setMageMcpEnabled'
+  | 'renameAccount'
+  | 'setAccountHidden'
   | 'setAgyCommandVerdict'
   | 'setAgyLinkedPaths'
   | 'setDefaultProvider'
@@ -168,6 +171,26 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
     setMageMcpEnabled: (enabled) => {
       set((s) => ({ settings: { ...s.settings, mageMcpEnabled: enabled } }));
       deps.persistSettingsNow();
+    },
+
+    renameAccount: (accountId, alias) => {
+      const name = alias?.trim() ?? '';
+      if (name.length > ACCOUNT_ALIAS_MAX) throw new Error(`Alias demasiado largo (${name.length} > ${ACCOUNT_ALIAS_MAX}): ${JSON.stringify(name)}`);
+      set((s) => {
+        const { [accountId]: _previo, ...rest } = s.settings.aliasByAccount;
+        const aliasByAccount = name.length === 0 ? rest : { ...rest, [accountId]: name };
+        const settings = { ...s.settings, aliasByAccount };
+        return { settings, accounts: applyAccountOverrides(s.accounts, settings) };
+      });
+      deps.persistSettings();
+    },
+
+    setAccountHidden: (accountId, hidden) => {
+      set((s) => {
+        const rest = s.settings.hiddenAccounts.filter((id) => id !== accountId);
+        return { settings: { ...s.settings, hiddenAccounts: hidden ? [...rest, accountId] : rest } };
+      });
+      deps.persistSettings();
     },
 
     setAgyCommandVerdict: (command, verdict) => {
