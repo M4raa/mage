@@ -68,3 +68,22 @@ export function mageMcpServer(launch: MageMcpLaunch, credential: string): Resolv
     cwd: null,
   };
 }
+
+// P-038 V14: las herramientas de Mage que solo LEEN no piden permiso (consultar sesiones, leer su respuesta, leer o
+// capturar la página). Crear, mandar, cancelar, navegar, pulsar y escribir siguen preguntando. Formato de regla del
+// CLI de Claude para una herramienta MCP: `mcp__<servidor>__<herramienta>`.
+export const MAGE_READ_ONLY_TOOLS = ['mage_list_sessions', 'mage_get_status', 'mage_read_result', 'mage_browser_read_dom', 'mage_browser_screenshot'] as const;
+
+type SettingsFragment = Readonly<Record<string, unknown>>;
+
+export function withMageReadOnlyAllow(fragment: SettingsFragment | null): SettingsFragment {
+  const base = fragment ?? {};
+  const permissions = isRecord(base.permissions) ? base.permissions : {};
+  const current = Array.isArray(permissions.allow) ? permissions.allow.filter((rule): rule is string => typeof rule === 'string') : [];
+  const rules = MAGE_READ_ONLY_TOOLS.map((tool) => `mcp__${MAGE_MCP_SERVER_NAME}__${tool}`);
+  return { ...base, permissions: { ...permissions, allow: [...new Set([...current, ...rules])] } };
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

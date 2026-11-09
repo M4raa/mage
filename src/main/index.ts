@@ -8,7 +8,7 @@ import { readOnlyLockMessage } from '@shared/conversationLock';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { McpCallers } from './host/mcpCallers';
 import { codexHomeHasMageServer } from './mcpServer/registrationStatus';
-import { mageMcpLaunch, mageMcpServer } from './mcpServer/registration';
+import { mageMcpLaunch, mageMcpServer, withMageReadOnlyAllow } from './mcpServer/registration';
 import { McpRegistrationService, type McpRegistrationDeps } from './mcpServer/registrationService';
 import { DelegationLog } from './mcpServer/delegationLog';
 import { HostSessionsPort } from './mcpServer/hostSessionsPort';
@@ -607,11 +607,16 @@ function loadSharedLaunch(provider: string, accountDir: string, sessionId: strin
   const servers = withLibraryServers(selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }), family, account);
   return {
     mcpServers: withMageServer(servers, settings.mageMcpEnabled, caller.mageCaller),
-    settingsFragment: family === 'claude' ? withTaskDirectories(buildSettingsFragment(settingsCommon), launchingTaskExtras) : buildSettingsFragment(settingsCommon),
+    settingsFragment: family === 'claude' ? claudeSettingsFragment(withTaskDirectories(buildSettingsFragment(settingsCommon), launchingTaskExtras), settings.mageMcpEnabled && caller.mageCaller !== undefined) : buildSettingsFragment(settingsCommon),
     claudeAiConnectors: !settings.claudeAiConnectorsOff.includes(account),
     // Inyectado, el servidor ya lleva la credencial en su `env`: el `env_vars` aparte de Codex lo pisaría.
     ...(settings.mageMcpEnabled && caller.mageCaller !== undefined ? { mageCaller: { ...caller.mageCaller, forwardToCodexMcp: false } } : caller),
   };
+}
+
+// P-038 V14: con el MCP de Mage cargado, sus herramientas de solo lectura no piden permiso.
+function claudeSettingsFragment(fragment: Readonly<Record<string, unknown>> | null, mageLoaded: boolean): Readonly<Record<string, unknown>> | null {
+  return mageLoaded ? withMageReadOnlyAllow(fragment) : fragment;
 }
 
 // P-038 V7: el MCP de Mage por el mismo camino que los demás MCP comunes. Solo con sesión (hay credencial) y solo
