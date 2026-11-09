@@ -24,9 +24,6 @@ export interface McpConnectorDeps {
   readonly log: (level: 'info' | 'warn', message: string, data?: unknown) => void;
 }
 
-// Apagadas en esta versión: en la app real el clic, la escritura y la captura del agente no hacen efecto. El código
-// se queda para arreglarlas; mientras, ninguna conexión recibe el navegador y el servidor expone solo las siete de sesiones.
-export const AGENT_BROWSER_TOOLS_ENABLED = false;
 
 interface Binding { readonly port: MageSessionsPort; readonly scope: ConnectionScope; readonly browser: BrowserToolsPort | undefined }
 
@@ -63,5 +60,5 @@ function bindingFor(deps: McpConnectorDeps, credential: string | null): Binding 
     deps.log('info', 'Cliente MCP sin sesión de Mage: sus herramientas se rechazan');
     return { port: new ExternalSessionsPort(), scope: { accountIds }, browser: undefined };
   }
-  return { port: created.port, scope: { accountIds, caller: { conversationId: created.conversationId, creatorChain: deps.creatorChainOf(created.conversationId) } }, browser: AGENT_BROWSER_TOOLS_ENABLED ? deps.browserFor?.(callerSessionId) : undefined };
+  return { port: created.port, scope: { accountIds, caller: { conversationId: created.conversationId, creatorChain: deps.creatorChainOf(created.conversationId) } }, browser: deps.browserFor?.(callerSessionId) };
 }
