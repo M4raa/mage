@@ -14,6 +14,7 @@ import { McpConnectorsTab } from './McpConnectorsTab';
 import { McpExtensionsTab } from './McpExtensionsTab';
 import { McpScopeDialog, OwnedByBadge, ProviderPills } from './McpScopeDialog';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS } from './mcpStyles';
+import { InfoNote, MageMcpCard, McpRow, MetaChip, RowMenu, type RowMenuItem } from './McpRow';
 import { t, useT } from '../../../i18n/uiLanguage';
 import { describeError } from '../../describeError';
 
@@ -26,8 +27,6 @@ import { describeError } from '../../describeError';
 //
 // 0.1.2 (grupo C): tres pestañas como Claude Desktop — Servidores (los MCP, con quien los carga),
 // Conectores (lo de cada proveedor y cuenta) y Extensiones (.mcpb de Mage).
-
-const ICON_BUTTON_CLASS = 'rounded-[5px] p-[3px] text-mg-muted hover:bg-mg-hover hover:text-mg-body disabled:opacity-40';
 
 type DialogState =
   | { readonly kind: 'none' }
@@ -67,6 +66,7 @@ export function McpSection(): React.JSX.Element {
 
   return (
     <div data-mcp-section="true" className="relative flex min-h-0 flex-1 flex-col gap-[12px] overflow-y-auto p-[14px_16px]">
+      <MageMcpCard />
       <div role="tablist" aria-label={t('mcp.section.tabsAria')} onKeyDown={(e) => moveTab(e, tab, setTab)} className="flex gap-[4px] border-b border-mg-border-subtle">
         {TABS.map((item) => (
           <button
@@ -122,10 +122,10 @@ function ServersTab({ statuses }: { readonly statuses: ReturnType<typeof mergeLi
 
   return (
     <>
-      <p className="text-[11px] leading-[1.5] text-mg-sec">
+      <InfoNote>
         {t('mcp.servers.intro.start')} <strong>{t('mcp.servers.intro.commons')}</strong> {t('mcp.servers.intro.addedTo')}{' '}
         <strong>{t('mcp.servers.intro.all')}</strong> {t('mcp.servers.intro.end')}
-      </p>
+      </InfoNote>
       <McpToolbar query={query} onQuery={setQuery} onAdd={() => setDialog({ kind: 'edit', row: null })} onImport={() => setDialog({ kind: 'import' })} />
       <McpNotices onImport={() => setDialog({ kind: 'import' })} />
       {loadError !== null && (
@@ -282,57 +282,42 @@ function McpTable({ rows, onEdit, onScope }: { readonly rows: readonly McpTableR
   if (inventory === null) return <p className="text-[11px] text-mg-muted">{t('mcp.common.loading')}</p>;
   if (rows.length === 0) return <p className="text-[11px] text-mg-muted">{t('mcp.servers.empty')}</p>;
   return (
-    <table className="w-full border-collapse text-left text-[11px]" aria-label={t('mcp.servers.tableAria')}>
-      <thead>
-        <tr className="border-b border-mg-border-subtle text-[9.5px] uppercase tracking-[.06em] text-mg-ter">
-          <th className="py-[5px] pr-[8px] font-semibold">{t('mcp.servers.column.name')}</th>
-          <th className="py-[5px] pr-[8px] font-semibold">{t('mcp.servers.column.type')}</th>
-          <th className="py-[5px] pr-[8px] font-semibold">{t('mcp.servers.column.providers')}</th>
-          <th className="py-[5px] pr-[8px] font-semibold">{t('mcp.servers.column.accounts')}</th>
-          <th className="py-[5px] pr-[8px] font-semibold">{t('mcp.servers.column.status')}</th>
-          <th className="py-[5px] font-semibold">
-            <span className="sr-only">{t('mcp.servers.column.actions')}</span>
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => (
-          <McpTableRowView key={row.key} row={row} onEdit={onEdit} onScope={onScope} />
-        ))}
-      </tbody>
-    </table>
+    <div role="list" aria-label={t('mcp.servers.tableAria')} className="flex flex-col border-t border-mg-border-subtle">
+      {rows.map((row) => (
+        <McpTableRowView key={row.key} row={row} onEdit={onEdit} onScope={onScope} />
+      ))}
+    </div>
   );
 }
 
+// P-038 V12: una fila como las de las otras pestañas. Tipo, origen, «Solo X», proveedores y cuentas van en la misma
+// línea de etiquetas, todas del mismo tamaño.
 function McpTableRowView({ row, onEdit, onScope }: { readonly row: McpTableRow } & RowHandlers): React.JSX.Element {
   const accountsLabel = useAccountsLabel(row.accounts);
   const t = useT();
+  const meta = (
+    <>
+      {row.typeLabel !== '—' && <MetaChip>{row.typeLabel}</MetaChip>}
+      {row.badges.map((badge) => (
+        <OriginBadge key={`${badge.kind}:${badge.label}`} badge={badge} />
+      ))}
+      {row.ownedBy !== null && <OwnedByBadge family={row.ownedBy} />}
+      <ProviderPills providers={row.providers} testId={row.name} />
+      {accountsLabel !== '—' && <MetaChip>{accountsLabel}</MetaChip>}
+      {row.inventory?.exportedToAgy === true && <MetaChip>{t('mcp.servers.agyCopy')}</MetaChip>}
+      {row.inventory?.onlyIn != null && <MetaChip>{t('mcp.servers.onlyInPicked')}</MetaChip>}
+    </>
+  );
+  const status = (
+    <>
+      <span data-mcp-status="true">{row.statusLabel}</span>
+      <McpAuthActions serverName={row.cliName} accountDirs={row.needsAuth} />
+    </>
+  );
   return (
-    <tr data-mcp-row={row.name} className="border-b border-mg-border-subtle align-top">
-      <td className="py-[6px] pr-[8px] font-medium text-mg-body">{row.name}</td>
-      <td className="py-[6px] pr-[8px]">
-        <div className="flex flex-wrap items-center gap-[4px]">
-          <span className="text-mg-body2">{row.typeLabel}</span>
-          {row.badges.map((badge) => (
-            <OriginBadge key={`${badge.kind}:${badge.label}`} badge={badge} />
-          ))}
-          {row.ownedBy !== null && <OwnedByBadge family={row.ownedBy} />}
-        </div>
-      </td>
-      <td className="py-[6px] pr-[8px]">
-        <ProviderPills providers={row.providers} testId={row.name} />
-        {row.inventory?.exportedToAgy === true && <span className="block text-[9.5px] text-mg-muted">{t('mcp.servers.agyCopy')}</span>}
-        {row.inventory?.onlyIn != null && <span className="block text-[9.5px] text-mg-muted">{t('mcp.servers.onlyInPicked')}</span>}
-      </td>
-      <td className="py-[6px] pr-[8px] text-mg-sec">{accountsLabel}</td>
-      <td className="py-[6px] pr-[8px] text-mg-sec">
-        <span data-mcp-status="true">{row.statusLabel}</span>
-        <McpAuthActions serverName={row.cliName} accountDirs={row.needsAuth} />
-      </td>
-      <td className="py-[6px]">
-        <RowActions row={row} onEdit={onEdit} onScope={onScope} />
-      </td>
-    </tr>
+    <div role="listitem">
+      <McpRow name={row.name} meta={meta} status={status} tone={row.tone} actions={<RowActions row={row} onEdit={onEdit} onScope={onScope} />} dataAttrs={{ 'data-mcp-row': row.name }} />
+    </div>
   );
 }
 
@@ -399,8 +384,7 @@ function buttonText(label: string, alias: string, accounts: number): string {
 }
 
 export function OriginBadge({ badge }: { readonly badge: McpBadge }): React.JSX.Element {
-  const skin = badge.kind === 'common' ? 'bg-mg-sel text-mg-sel-ink' : 'bg-mg-hover text-mg-body2';
-  return <span className={`rounded-[4px] px-[5px] py-[1px] text-[9px] font-semibold ${skin}`}>{badge.label}</span>;
+  return <MetaChip>{badge.label}</MetaChip>;
 }
 
 function RowActions({ row, onEdit, onScope }: { readonly row: McpTableRow } & RowHandlers): React.JSX.Element | null {
@@ -421,32 +405,26 @@ function CommonActions({ row, onEdit, onScope }: { readonly row: McpInventoryRow
       .then((result) => setError(result.status === 'stale' ? renderLocalized(t, result.message) : null))
       .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
+  const items: readonly RowMenuItem[] = [
+    { label: t('mcp.servers.editTip'), ariaLabel: t('mcp.servers.editAria', { name: row.name }), onSelect: onEdit },
+    { label: t('mcp.servers.scopeTip'), ariaLabel: t('mcp.servers.scopeAria', { name: row.name }), onSelect: onScope },
+    {
+      label: row.disabled ? t('mcp.servers.enableTip') : t('mcp.servers.disableTip'),
+      ariaLabel: row.disabled ? t('mcp.servers.enableAria', { name: row.name }) : t('mcp.servers.disableAria', { name: row.name }),
+      onSelect: () => run({ op: 'setDisabled', name: row.name, disabled: !row.disabled }),
+    },
+    { label: t('mcp.servers.removeTip'), ariaLabel: t('mcp.servers.removeAria', { name: row.name }), onSelect: () => setConfirmRemove(true), danger: true },
+  ];
   return (
     <div className="flex flex-col items-end gap-[3px]">
-      <div className="flex items-center justify-end gap-[2px]">
-        <button onClick={onEdit} aria-label={t('mcp.servers.editAria', { name: row.name })} data-tip={t('mcp.servers.editTip')} className={ICON_BUTTON_CLASS}>
-          <Icon name="pencil" />
-        </button>
-        <button onClick={onScope} aria-label={t('mcp.servers.scopeAria', { name: row.name })} data-tip={t('mcp.servers.scopeTip')} className={ICON_BUTTON_CLASS}>
-          <Icon name="user" />
-        </button>
-        <button
-          onClick={() => run({ op: 'setDisabled', name: row.name, disabled: !row.disabled })}
-          aria-label={row.disabled ? t('mcp.servers.enableAria', { name: row.name }) : t('mcp.servers.disableAria', { name: row.name })}
-          data-tip={row.disabled ? t('mcp.servers.enableTip') : t('mcp.servers.disableTip')}
-          className={ICON_BUTTON_CLASS}
-        >
-          <Icon name={row.disabled ? 'eyeOff' : 'eye'} />
-        </button>
-        {confirmRemove ? (
-          <button onClick={() => run({ op: 'remove', name: row.name })} className={`${BUTTON_CLASS} text-mg-danger`}>
-            {t('mcp.servers.confirmRemove')}
-          </button>
-        ) : (
-          <button onClick={() => setConfirmRemove(true)} aria-label={t('mcp.servers.removeAria', { name: row.name })} data-tip={t('mcp.servers.removeTip')} className={ICON_BUTTON_CLASS}>
-            <Icon name="trash" />
-          </button>
+      <div className="flex items-center justify-end gap-[4px]">
+        {confirmRemove && (
+          <>
+            <button onClick={() => setConfirmRemove(false)} className={BUTTON_CLASS}>{t('mcp.row.cancel')}</button>
+            <button onClick={() => run({ op: 'remove', name: row.name })} className={`${BUTTON_CLASS} text-mg-danger`}>{t('mcp.servers.confirmRemove')}</button>
+          </>
         )}
+        <RowMenu label={t('mcp.row.moreActions', { name: row.name })} items={items} />
       </div>
       {error !== null && (
         <span role="alert" className="max-w-[240px] text-right text-[10px] text-mg-danger">
@@ -469,21 +447,13 @@ function ForeignActions({ row }: { readonly row: McpInventoryRow }): React.JSX.E
       .then((result) => setMessage(result.status === 'stale' ? renderLocalized(t, result.message) : null))
       .catch((err: unknown) => setMessage(err instanceof Error ? describeError(err) : String(err)));
   };
+  const items: readonly RowMenuItem[] = [
+    { label: t('mcp.servers.copyTip'), ariaLabel: t('mcp.servers.copyAria', { name: row.name }), onSelect: copy },
+    { label: t('mcp.row.reveal'), ariaLabel: t('mcp.servers.revealAria', { name: row.name }), onSelect: () => void window.mage.revealFile(origin.path) },
+  ];
   return (
     <div className="flex flex-col items-end gap-[3px]">
-      <div className="flex items-center justify-end gap-[2px]">
-        <button
-          onClick={copy}
-          aria-label={t('mcp.servers.copyAria', { name: row.name })}
-          data-tip={t('mcp.servers.copyTip')}
-          className={ICON_BUTTON_CLASS}
-        >
-          <Icon name="copy" />
-        </button>
-        <button onClick={() => void window.mage.revealFile(origin.path)} aria-label={t('mcp.servers.revealAria', { name: row.name })} data-tip={origin.path} className={ICON_BUTTON_CLASS}>
-          <Icon name="folderOpen" />
-        </button>
-      </div>
+      <RowMenu label={t('mcp.row.moreActions', { name: row.name })} items={items} />
       {message !== null && (
         <span role="alert" className="max-w-[240px] text-right text-[10px] text-mg-danger">
           {message}

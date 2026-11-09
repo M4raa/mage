@@ -6,6 +6,7 @@ import { Icon } from '../Icon';
 import { McpScopeDialog, ProviderPills } from './McpScopeDialog';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
 import { useT } from '../../../i18n/uiLanguage';
+import { McpRow, MetaChip, RowMenu, type RowMenuItem } from './McpRow';
 import { describeError } from '../../describeError';
 
 // Pestaña «Extensiones» (C3-a…d): paquetes .mcpb/.dxt de Mage. Instalar desde archivo (el dialogo lo
@@ -99,6 +100,8 @@ export function McpExtensionsTab(): React.JSX.Element {
   );
 }
 
+// P-038 V12: la misma fila que en Servidores y Conectores. «Ajustes» queda a la vista (es lo que pide una extensión sin
+// configurar); dónde se carga, la carpeta y desinstalar van al «⋯».
 function ExtensionCard({
   extension,
   onToggle,
@@ -114,56 +117,55 @@ function ExtensionCard({
 }): React.JSX.Element {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const t = useT();
-  return (
-    <div data-mcp-extension={extension.id} className="flex flex-col gap-[5px] rounded-[8px] border border-mg-border-subtle p-[9px_11px]">
-      <div className="flex items-center gap-[8px]">
-        <Icon name="puzzle" className="text-mg-focus" />
-        <span className="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-mg-body">
-          {extension.displayName} <span className="font-normal text-mg-sec">{extension.version}</span>
-        </span>
-        <label className="flex items-center gap-[5px] text-[10.5px] text-mg-body2">
-          <input type="checkbox" checked={extension.enabled} onChange={onToggle} aria-label={t('mcp.extensions.enableAria', { name: extension.displayName })} />
-          {t('mcp.extensions.enabled')}
-        </label>
-      </div>
-      <div className="flex flex-wrap items-center gap-[6px] text-[10px] text-mg-sec">
-        {extension.author.length > 0 && <span>{t('mcp.extensions.byAuthor', { author: extension.author })}</span>}
-        <span>{t('mcp.extensions.unsigned')}</span>
-        <span>· {extension.serverType}</span>
-        {extension.platforms.length > 0 && <span>· {extension.platforms.join(', ')}</span>}
-        <ProviderPills providers={extension.enabled ? extension.providers : []} testId={extension.id} />
-      </div>
-      {extension.description.length > 0 && <p className="text-[10.5px] text-mg-body2">{extension.description}</p>}
+  const meta = (
+    <>
+      <MetaChip>{extension.version}</MetaChip>
+      {extension.author.length > 0 && <MetaChip>{t('mcp.extensions.byAuthor', { author: extension.author })}</MetaChip>}
+      <MetaChip warn>{t('mcp.extensions.unsigned')}</MetaChip>
+      <MetaChip>{extension.serverType}</MetaChip>
+      {extension.platforms.length > 0 && <MetaChip>{extension.platforms.join(', ')}</MetaChip>}
+      <ProviderPills providers={extension.enabled ? extension.providers : []} testId={extension.id} />
+    </>
+  );
+  const status = (
+    <div className="flex flex-col gap-[3px]">
+      <label className="flex items-center gap-[5px] text-[10.5px] text-mg-body2">
+        <input type="checkbox" checked={extension.enabled} onChange={onToggle} aria-label={t('mcp.extensions.enableAria', { name: extension.displayName })} />
+        {t('mcp.extensions.enabled')}
+      </label>
       {extension.problem !== null && (
         <span role="status" data-mcp-extension-problem="true" className="text-[10.5px] text-mg-warn-text">
           {renderLocalized(t, extension.problem)}
         </span>
       )}
-      <div className="flex flex-wrap items-center justify-end gap-[4px]">
-        {extension.fields.length > 0 && (
-          <button onClick={onConfig} className={BUTTON_CLASS}>
-            <Icon name="gear" />
-            {t('mcp.extensions.settings')}
-          </button>
-        )}
-        <button onClick={onScope} className={BUTTON_CLASS}>
-          {t('mcp.extensions.scope')}
+    </div>
+  );
+  const items: readonly RowMenuItem[] = [
+    { label: t('mcp.extensions.scope'), onSelect: onScope },
+    { label: t('mcp.extensions.revealFolder'), onSelect: () => void window.mage.revealFile(extension.dir) },
+    { label: t('mcp.extensions.uninstall'), ariaLabel: t('mcp.extensions.uninstallAria', { name: extension.displayName }), onSelect: () => setConfirmRemove(true), danger: true },
+  ];
+  const actions = (
+    <>
+      {extension.fields.length > 0 && (
+        <button onClick={onConfig} className={BUTTON_CLASS}>
+          <Icon name="gear" />
+          {t('mcp.extensions.settings')}
         </button>
-        <button onClick={() => void window.mage.revealFile(extension.dir)} className={BUTTON_CLASS}>
-          <Icon name="folderOpen" />
-          {t('mcp.extensions.revealFolder')}
+      )}
+      {confirmRemove && (
+        <button onClick={onRemove} className={`${BUTTON_CLASS} text-mg-danger`}>
+          {t('mcp.extensions.confirmUninstall')}
         </button>
-        {confirmRemove ? (
-          <button onClick={onRemove} className={`${BUTTON_CLASS} text-mg-danger`}>
-            {t('mcp.extensions.confirmUninstall')}
-          </button>
-        ) : (
-          <button onClick={() => setConfirmRemove(true)} className={BUTTON_CLASS} aria-label={t('mcp.extensions.uninstallAria', { name: extension.displayName })}>
-            <Icon name="trash" />
-            {t('mcp.extensions.uninstall')}
-          </button>
-        )}
-      </div>
+      )}
+      <RowMenu label={t('mcp.row.moreActions', { name: extension.displayName })} items={items} />
+    </>
+  );
+  const tone = !extension.enabled ? 'idle' : extension.problem === null ? 'ok' : 'attention';
+  return (
+    <div className="flex flex-col">
+      <McpRow name={extension.displayName} meta={meta} status={status} tone={tone} actions={actions} dataAttrs={{ 'data-mcp-extension': extension.id }} />
+      {extension.description.length > 0 && <p className="-mt-[4px] border-b border-mg-border-subtle pb-[8px] pl-[18px] text-[10.5px] text-mg-sec">{extension.description}</p>}
     </div>
   );
 }

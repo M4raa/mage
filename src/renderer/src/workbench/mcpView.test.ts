@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { foreignText, localized } from '@shared/i18n/localizedText';
 import type { McpExtensionView, McpInventory, McpInventoryRow } from '@shared/mcp';
-import { mcpAuthMessage, buildClaudeConnectorGroups, buildMcpTable, buildServersTable, describeCheckedAt, filterMcpTable, mcpStatusLabel, mergeLiveStatuses, summarizeStatus, tagSessionServers } from './mcpView';
+import { mcpAuthMessage, buildClaudeConnectorGroups, buildMcpTable, buildServersTable, describeCheckedAt, filterMcpTable, mcpStatusLabel, mergeLiveStatuses, statusTone, summarizeStatus, tagSessionServers } from './mcpView';
 
 const row = (patch: Partial<McpInventoryRow>): McpInventoryRow => ({
   name: 'a',
@@ -268,5 +268,26 @@ describe('describeCheckedAt', () => {
     ['basura', 'Última comprobación: basura'],
   ])('describeCheckedAt_%s', (iso, text) => {
     expect(describeCheckedAt(iso, now)).toBe(text);
+  });
+});
+
+describe('statusTone', () => {
+  it('statusTone_sinDatoODesactivado_idle', () => {
+    expect(statusTone([])).toBe('idle');
+    expect(statusTone(['connected'], true)).toBe('idle');
+  });
+
+  it('statusTone_algunoFalla_error', () => {
+    expect(statusTone(['connected', 'failed'])).toBe('error');
+  });
+
+  it('statusTone_pideLoginODesconocido_attention', () => {
+    expect(statusTone(['connected', 'needs-auth'])).toBe('attention');
+    expect(statusTone(['pending'])).toBe('attention');
+    expect(statusTone(['algo-nuevo'])).toBe('attention');
+  });
+
+  it('statusTone_todosConectados_ok', () => {
+    expect(statusTone(['connected', 'connected'])).toBe('ok');
   });
 });
