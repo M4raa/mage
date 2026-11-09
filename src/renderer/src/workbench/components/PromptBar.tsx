@@ -1,5 +1,5 @@
 import { useLocalPopover } from '../localPopovers';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { readOnlyLockMessage } from '@shared/conversationLock';
 import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
@@ -10,7 +10,7 @@ import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
 import { motion } from 'motion/react';
 import { COMPOSER_LAYOUT_TRANSITION } from '../motionPresets';
-import { composerLayout, type ComposerLayout } from '../composerLayout';
+import { composerLayout, popoverAnchor, type ComposerLayout } from '../composerLayout';
 import type { ProviderModel } from '@shared/providers';
 import { continueListOnNewline, indentLines, outdentLines, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
@@ -344,6 +344,9 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   useEffect(() => setMentionFailures(NO_FAILURES), [activeTabId]);
   const previews = useMentionPreviews(mentionTab);
   const mentions = useMentionSuggestions({ tab: mentionTab, text, cursor, blocked: slashOpen || disabled, onPick: pickMention, onError: setError });
+  // P-038: cada popover encima de SU carácter (`/` o `@`), no en el borde izquierdo de la fila.
+  const slashAnchor = usePopoverAnchor(editorRef, rowRef, slashOpen ? (slashQueryAt(text, cursor)?.start ?? null) : null, SLASH_POPOVER_PX);
+  const mentionAnchor = usePopoverAnchor(editorRef, rowRef, mentions.open ? (mentionQueryAt(text, cursor)?.start ?? null) : null, MENTION_POPOVER_PX);
   useLocalPopover(mentions.open);
   const canImprove = !disabled && !busy && text.trim().length > 0 && isClaude;
   // Handoff: necesita una sesion reanudable (viva o restaurada) y solo Claude soporta --resume.
@@ -773,12 +776,13 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
       {/* `flex-wrap`: los controles (todos `shrink-0`) bajan a la linea siguiente cuando no caben junto al
           editor, en vez de estrujarlo a 0 px de ancho — ver el comentario del host en PromptEditor.tsx. */}
       <div ref={rowRef} className="relative flex flex-wrap items-end gap-[10px] rounded-[9px] border border-mg-border-ctrl bg-mg-panel p-[10px_14px]">
-        {mentions.open && <MentionPopover suggestions={mentions} />}
+        {mentions.open && <MentionPopover suggestions={mentions} anchor={mentionAnchor} />}
         {slashOpen && (
           // Popover de comandos "/" (M2.6): navegable con flechas/Enter/Tab; click completa.
           <div
             role="listbox"
             aria-label={t('prompt.slash.listLabel')}
+            style={slashAnchor}
             className="absolute bottom-full left-0 mb-[6px] w-[300px] overflow-hidden rounded-[8px] border border-mg-border-pop bg-mg-panel py-[4px] mg-shadow-pop"
           >
             {slashSuggestions.map((command, i) => (
@@ -1151,4 +1155,30 @@ function IconButton({
 // Spinner minimo (borde girando) para dar feedback de "trabajando".
 function Spinner(): React.JSX.Element {
   return <span className="inline-block h-[11px] w-[11px] animate-spin rounded-full border border-mg-border-emph border-t-mg-body" />;
+}
+
+// Anchos de los dos popovers de sugerencias (los `w-[…]` de su clase): con ellos se recorta para no salirse de la fila.
+const SLASH_POPOVER_PX = 300;
+const MENTION_POPOVER_PX = 340;
+
+// Posición del popover encima del carácter `start` (`/` o `@`), relativa a la fila del input (P-038). Sin carácter
+// (popover cerrado) o sin pintar, undefined: el popover cae a su sitio de siempre (borde izquierdo).
+function usePopoverAnchor(
+  editorRef: React.RefObject<PromptEditorHandle | null>,
+  rowRef: React.RefObject<HTMLDivElement | null>,
+  start: number | null,
+  width: number,
+): React.CSSProperties | undefined {
+  const [anchor, setAnchor] = useState<React.CSSProperties | undefined>(undefined);
+  useLayoutEffect(() => {
+    const char = start === null ? null : (editorRef.current?.coordsAt(start) ?? null);
+    const row = rowRef.current?.getBoundingClientRect() ?? null;
+    if (char === null || row === null) {
+      setAnchor(undefined);
+      return;
+    }
+    const { left, bottom } = popoverAnchor(char, row, width);
+    setAnchor({ left, bottom, marginBottom: 0 });
+  }, [editorRef, rowRef, start, width]);
+  return anchor;
 }

@@ -41,7 +41,7 @@ function MentionOption({ row, selected, onPick, onHover }: { readonly row: Menti
 }
 
 // Popover de menciones `@` (Q06). Mismo estilo y sitio que el de comandos `/`: encima de la caja.
-export function MentionPopover({ suggestions }: { readonly suggestions: MentionSuggestions }): React.JSX.Element {
+export function MentionPopover({ suggestions, anchor }: { readonly suggestions: MentionSuggestions; readonly anchor: React.CSSProperties | undefined }): React.JSX.Element {
   const t = useT();
   const { rows, state, index } = suggestions;
   const untrusted = state.status === 'ready' && state.untrusted;
@@ -50,6 +50,7 @@ export function MentionPopover({ suggestions }: { readonly suggestions: MentionS
       role="listbox"
       data-mention-popover="true"
       aria-label={t('prompt.mentions.listLabel')}
+      style={anchor}
       className="absolute bottom-full left-0 mb-[6px] w-[340px] overflow-hidden rounded-[8px] border border-mg-border-pop bg-mg-panel py-[4px] mg-shadow-pop"
     >
       {untrusted && <div className="px-[11px] py-[6px] text-[10.5px] text-mg-muted">{t('prompt.mentions.untrusted')}</div>}

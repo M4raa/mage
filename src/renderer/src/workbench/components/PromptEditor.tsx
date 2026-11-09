@@ -22,6 +22,8 @@ export interface PromptEditorHandle {
   // Aplica un resultado de `promptEditing` (indentar, desindentar, continuar lista) como una
   // transaccion, reponiendo la seleccion. Es lo que sustituye al `pendingSelectionRef` del textarea.
   applyTextState: (next: TextState) => void;
+  // Caja en pantalla del carácter en `pos` (null si aún no está pintado): ancla los popovers de `@` y `/` (P-038).
+  coordsAt: (pos: number) => { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number } | null;
 }
 
 export interface PromptEditorProps {
@@ -192,6 +194,11 @@ export function PromptEditor({
           scrollIntoView: true,
         });
         view.focus();
+      },
+      coordsAt: (pos) => {
+        const view = viewRef.current;
+        if (view === null || pos < 0 || pos > view.state.doc.length) return null;
+        return view.coordsAtPos(pos);
       },
     }),
     [],
