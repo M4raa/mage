@@ -1,4 +1,4 @@
-import type { MageEvent, ToolFileInfo, ToolUse } from '@shared/events';
+import type { BackgroundTaskInfo, MageEvent, ToolFileInfo, ToolUse } from '@shared/events';
 import type { UsageWindowInfo } from '@shared/usage';
 import { localized } from '@shared/i18n/localizedText';
 // Se reutiliza el conversor de fechas del panel de Uso (unico sitio que sabe distinguir epoch en
@@ -20,6 +20,7 @@ import {
   RateLimitEventSchema,
   ResultSchema,
   SessionStateSchema,
+  BackgroundTasksChangedSchema,
   ToolResultBlockSchema,
   ToolResultUserSchema,
 } from './schemas';
@@ -124,7 +125,20 @@ function normalizeSystem(raw: Record<string, unknown>): MageEvent[] {
   }
   if (raw.subtype === 'status') return normalizeStatus(raw);
   if (raw.subtype === 'task_progress' || raw.subtype === 'task_notification') return normalizeTaskUpdate(raw);
+  if (raw.subtype === 'background_tasks_changed') return [{ kind: 'background_tasks', tasks: backgroundTasksOf(raw) }];
   return [];
+}
+
+// Subagente = `task_type: 'local_agent'` o con `subagent_type` (medido en 2.1.319): esos van al dock de agentes.
+const AGENT_TASK_TYPE = 'local_agent';
+
+function backgroundTasksOf(raw: Record<string, unknown>): readonly BackgroundTaskInfo[] {
+  const tasks: BackgroundTaskInfo[] = [];
+  for (const entry of BackgroundTasksChangedSchema.parse(raw).tasks) {
+    if (entry === null || entry.task_type === AGENT_TASK_TYPE || entry.subagent_type !== undefined) continue;
+    tasks.push({ taskId: entry.task_id, type: entry.task_type, description: entry.description });
+  }
+  return tasks;
 }
 
 function normalizeStatus(raw: Record<string, unknown>): MageEvent[] {

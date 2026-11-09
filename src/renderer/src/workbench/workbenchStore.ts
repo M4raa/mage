@@ -155,6 +155,7 @@ import { isWindowsPlatform } from './keybindings/platform';
 import { describeError } from './describeError';
 import { localized, renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
+import { mergeBackgroundTasks, type BackgroundTaskRow } from './backgroundTasks';
 import { formatClockTime } from '../i18n/format';
 
 // Contexto en placeholder hasta M1.3 (el uso/contexto real llega con UsageService).
@@ -255,6 +256,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // pestana. Ausente hasta el primer `result`; entonces el Inspector la prefiere al calculo derivado
   // de la transcripcion (que no ve el system prompt, las tools, las skills ni la memoria).
   readonly contextUsageByChat: Readonly<Record<string, ContextUsage>>;
+  // Tareas vivas en segundo plano que no son subagentes (P-038 V2), por pestaña: las pinta su dock encima del input.
+  readonly backgroundTasksByChat: Readonly<Record<string, readonly BackgroundTaskRow[]>>;
   // Servidores MCP que la sesion REALMENTE cargo (mcp_servers del `session_init`, D1 Fase 2), por
   // pestana. Antes se descartaba: alimenta la pestaña "MCP" del Inspector (comun vs propio).
   readonly mcpServersByChat: Readonly<Record<string, readonly McpServerStatus[]>>;
@@ -1067,6 +1070,7 @@ function dropLiveSessionOfTab(mage: MageClient, set: SetFn, target: { readonly t
     extensionsByChat: without(s.extensionsByChat, tabId),
     resolvedModelByChat: without(s.resolvedModelByChat, tabId),
     contextUsageByChat: without(s.contextUsageByChat, tabId),
+    backgroundTasksByChat: without(s.backgroundTasksByChat, tabId),
     providerUsageByChat: without(s.providerUsageByChat, tabId),
     rateLimitByChat: without(s.rateLimitByChat, tabId),
   }));
@@ -1510,6 +1514,7 @@ export function createWorkbenchStore(mage: MageClient) {
     modelCatalogByAccount: {},
     subagentsByChat: {},
     contextUsageByChat: {},
+    backgroundTasksByChat: {},
     toolsByChat: {},
     extensionsByChat: {},
     activitySubagentByChat: {},
@@ -1738,6 +1743,7 @@ export function createWorkbenchStore(mage: MageClient) {
           slashCommandsByChat: without(s.slashCommandsByChat, tabId),
           subagentsByChat: without(s.subagentsByChat, tabId),
           contextUsageByChat: without(s.contextUsageByChat, tabId),
+          backgroundTasksByChat: without(s.backgroundTasksByChat, tabId),
           providerUsageByChat: without(s.providerUsageByChat, tabId),
           lastTurnUsageByChat: without(s.lastTurnUsageByChat, tabId),
           missingConversationByChat: without(s.missingConversationByChat, tabId),
@@ -3437,6 +3443,8 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
         ...withBlocks(state, tabId, next),
         streamingIdByChat: { ...state.streamingIdByChat, [tabId]: null },
         statusByChat: { ...state.statusByChat, [tabId]: 'idle' },
+        // El proceso murió: sus tareas en segundo plano con él (P-038 V2).
+        backgroundTasksByChat: without(state.backgroundTasksByChat, tabId),
       };
     }
     // Modo de permiso (M2.6): refleja el modo actual venga de donde venga (nuestro cambio, ExitPlanMode,
@@ -3516,6 +3524,12 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     case 'conversation_rewound':
     case 'thread_history':
       return {};
+    // Tareas en segundo plano (P-038 V2): el CLI manda la lista ENTERA; vacía, se quita la entrada.
+    case 'background_tasks': {
+      const next = mergeBackgroundTasks(state.backgroundTasksByChat[tabId], event.tasks, Date.now());
+      if (next === state.backgroundTasksByChat[tabId]) return {};
+      return { backgroundTasksByChat: next.length === 0 ? without(state.backgroundTasksByChat, tabId) : { ...state.backgroundTasksByChat, [tabId]: next } };
+    }
     // Desglose de contexto del propio CLI (D3): no toca la conversacion, alimenta el Inspector.
     case 'context_usage':
       return { contextUsageByChat: { ...state.contextUsageByChat, [tabId]: event.usage } };

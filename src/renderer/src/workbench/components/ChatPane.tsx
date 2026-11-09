@@ -12,6 +12,7 @@ import { RateLimitBanner } from './RateLimitBanner';
 import { TabSubline } from './TabSubline';
 import { TaskStrip } from '../tasks/TaskStrip';
 import { QuestionDock } from './QuestionDock';
+import { TasksDock } from './TasksDock';
 import { ElicitationDock } from './ElicitationDock';
 import { AgentsDock } from './AgentsDock';
 import { QueuedMessagesDock } from './QueuedMessagesDock';
@@ -152,6 +153,8 @@ export function ChatPane({
         <QuestionDock />
         <ElicitationDock />
         <AgentsDock />
+        {/* Comandos que el agente dejó corriendo (P-038 V2): sin esto el chat parecía colgado. */}
+        <TasksDock />
         {/* Lo enviado con el turno en marcha espera aqui, no en el hilo (0.1.1 R2, punto 30). */}
         <QueuedMessagesDock />
         <PromptBar fileDropRef={fileDropRef} />

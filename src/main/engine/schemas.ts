@@ -268,3 +268,20 @@ export const CommandLifecycleSchema = z
 export type InitEvent = z.infer<typeof InitSchema>;
 export type CanUseToolEvent = z.infer<typeof CanUseToolSchema>;
 export type ResultEvent = z.infer<typeof ResultSchema>;
+
+// system/background_tasks_changed (P-038 V2), MEDIDO en 2.1.319: la lista ENTERA de tareas vivas en segundo plano
+// cada vez que cambia. Tolerante: una entrada sin `task_id` se descarta (`catch` a null) y no tumba la lista.
+const BackgroundTaskEntrySchema = z
+  .object({
+    task_id: z.string().min(1),
+    task_type: z.string().catch(''),
+    subagent_type: z.string().optional().catch(undefined),
+    description: z.string().catch(''),
+  })
+  .passthrough()
+  .nullable()
+  .catch(null);
+
+export const BackgroundTasksChangedSchema = z
+  .object({ tasks: z.array(BackgroundTaskEntrySchema).catch([]) })
+  .passthrough();

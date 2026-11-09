@@ -120,6 +120,13 @@ export interface ContextCategory {
 // derivarla de la transcripcion: incluye system prompt, tools, skills y memoria (que suman decenas de
 // miles de tokens antes del primer mensaje) y trae la ventana EFECTIVA del modelo, que no coincide con
 // el 200k/1M que se adivina por el nombre.
+// Una tarea viva en segundo plano del CLI (P-038 V2). `type` es el `task_type` tal cual (`local_bash`, …): dato ajeno.
+export interface BackgroundTaskInfo {
+  readonly taskId: string;
+  readonly type: string;
+  readonly description: string;
+}
+
 export interface ContextUsage {
   readonly totalTokens: number;
   readonly maxTokens: number;
@@ -297,6 +304,10 @@ export type MageEvent =
   // 2.1.284). Con la pestaña parada es el CLI abriendo un turno solo (la notificacion de una tarea en
   // segundo plano): cuenta como turno en marcha y la cola de Mage espera (0.1.1 R2, punto 30).
   | { readonly kind: 'request_started' }
+  // Tareas EN SEGUNDO PLANO que no son subagentes (Bash con `run_in_background`, monitores…), P-038 V2. MEDIDO
+  // en 2.1.319: `system/background_tasks_changed` trae la lista ENTERA de las vivas cada vez que cambia (vacía al
+  // acabar la última). Los subagentes (`task_type: 'local_agent'`) ya tienen su dock y aquí no entran.
+  | { readonly kind: 'background_tasks'; readonly tasks: readonly BackgroundTaskInfo[] }
   // Salida de un comando LOCAL del CLI (`/context`, `/mcp`, `/rename x`...), P-028 grupo C. MEDIDO en
   // 2.1.284: no manda deltas, solo un `assistant` sintetico, asi que sin este evento el chat se quedaba
   // vacio. `command` es el nombre sin barra (`rename`), o null si el sintetico no es un comando (un

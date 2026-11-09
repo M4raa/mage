@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { localized } from '@shared/i18n/localizedText';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { normalizeRawEvent } from './normalize';
+
+// Líneas `system/*` de dos turnos reales (CLI 2.1.319): un Bash con `run_in_background` y un subagente en segundo plano.
+const BACKGROUND_FIXTURE = readFileSync(join(__dirname, '..', '..', '..', 'spike', '__fixtures__', 'claude-background-tasks-2.1.319.jsonl'), 'utf8')
+  .split(/\r?\n/)
+  .filter((line) => line.length > 0)
+  .map((line) => JSON.parse(line) as Record<string, unknown>);
+const backgroundChanges = BACKGROUND_FIXTURE.filter((raw) => raw.subtype === 'background_tasks_changed');
 
 // Lo que pasa DURANTE un turno: deltas de pensamiento y de texto, texto del asistente, peticiones
 // de permiso, estado de la sesion, compactado, modo de permiso y el `result` que lo cierra.
@@ -345,6 +354,26 @@ describe('normalizeRawEvent: subagentes en segundo plano', () => {
 
   it('normalizeRawEvent_taskSinToolUseId_seIgnora', () => {
     expect(normalizeRawEvent({ type: 'system', subtype: 'task_notification', task_id: 'k1', status: 'failed' })).toEqual([]);
+  });
+
+  it('normalizeRawEvent_backgroundTasksChangedBashMedido_emiteLaTarea', () => {
+    expect(normalizeRawEvent(backgroundChanges[0] as Record<string, unknown>)).toEqual([
+      { kind: 'background_tasks', tasks: [{ taskId: 'btm2l81ba', type: 'local_bash', description: 'Sleep 8 seconds then echo hecho' }] },
+    ]);
+  });
+
+  it('normalizeRawEvent_backgroundTasksChangedVacio_listaVacia', () => {
+    expect(normalizeRawEvent(backgroundChanges[1] as Record<string, unknown>)).toEqual([{ kind: 'background_tasks', tasks: [] }]);
+  });
+
+  it('normalizeRawEvent_backgroundTasksChangedSubagenteMedido_noEntra', () => {
+    expect(normalizeRawEvent(backgroundChanges[2] as Record<string, unknown>)).toEqual([{ kind: 'background_tasks', tasks: [] }]);
+  });
+
+  it('normalizeRawEvent_backgroundTasksChangedEntradaRota_seDescartaSinTumbarLaLista', () => {
+    const raw = { type: 'system', subtype: 'background_tasks_changed', tasks: [{ description: 'sin id' }, { task_id: 'm1', task_type: 'monitor', description: 7 }] };
+
+    expect(normalizeRawEvent(raw)).toEqual([{ kind: 'background_tasks', tasks: [{ taskId: 'm1', type: 'monitor', description: '' }] }]);
   });
 
   it('normalizeRawEvent_statusRequesting_emiteRequestStarted', () => {

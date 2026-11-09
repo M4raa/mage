@@ -19,6 +19,7 @@ function state(overrides: Partial<WorkbenchState> = {}): WorkbenchState {
     prGuardByChat: {},
     slashCommandsByChat: {},
     contextUsageByChat: {},
+    backgroundTasksByChat: {},
     rateLimitByChat: {},
     // `tabs` hace falta desde 2.3b: el reducer consulta las reglas "Permitir siempre aqui" de la
     // conversacion para decidir si la peticion lleva tarjeta o se auto-aprueba.
@@ -315,6 +316,32 @@ describe('reduceEvent — AskUserQuestion (2.3)', () => {
     });
 
     expect(patch.subagentsByChat?.[TAB]).toEqual([{ name: 'Explore', description: 'Busca', model: null }]);
+  });
+});
+
+describe('reduceEvent — tareas en segundo plano (P-038 V2)', () => {
+  const bash = { taskId: 'b1', type: 'local_bash', description: 'Sleep 8 seconds' };
+
+  it('reduceEvent_backgroundTasks_guardaLaListaDeLaPestana', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'background_tasks', tasks: [bash] });
+
+    expect(patch.backgroundTasksByChat?.[TAB]).toMatchObject([bash]);
+  });
+
+  it('reduceEvent_backgroundTasksVacia_quitaLaEntrada', () => {
+    const current = state({ backgroundTasksByChat: { [TAB]: [{ ...bash, sinceMs: 1 }] } });
+
+    const patch = reduceEvent(current, TAB, { kind: 'background_tasks', tasks: [] });
+
+    expect(patch.backgroundTasksByChat).toEqual({});
+  });
+
+  it('reduceEvent_sessionRestarting_quitaLasTareas', () => {
+    const current = state({ backgroundTasksByChat: { [TAB]: [{ ...bash, sinceMs: 1 }] } });
+
+    const patch = reduceEvent(current, TAB, { kind: 'session_restarting', attempt: 1, delayMs: 1_000 });
+
+    expect(patch.backgroundTasksByChat?.[TAB]).toBeUndefined();
   });
 });
 

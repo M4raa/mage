@@ -618,6 +618,10 @@ export interface MessageValues {
   readonly "chat.system.conversationReset": never;
   readonly "chat.table.copyMarkdown": never;
   readonly "chat.table.copyTsv": never;
+  readonly "chat.tasks.ariaLabel": never;
+  readonly "chat.tasks.stopAria": { readonly "name": string | number };
+  readonly "chat.tasks.stopTip": never;
+  readonly "chat.tasks.summary": { readonly "count": number };
   readonly "chat.thinking.aria": { readonly "errors": number; readonly "label": string | number; readonly "steps": string | number };
   readonly "chat.thinking.errors": { readonly "count": number };
   readonly "chat.thinking.mcp": { readonly "server": string | number; readonly "tool": string | number };
