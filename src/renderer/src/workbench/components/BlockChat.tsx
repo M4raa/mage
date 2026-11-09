@@ -83,7 +83,7 @@ export function BlockChat(): React.JSX.Element {
   const anchor = useListAnchor(activeTabId, rows);
   const enteringKeys = useEnteringRowKeys(`${activeTabId}:${anchor.generation}`, rows);
   const expandedRows = useExpandedRowsStore(activeTabId);
-  const { virtuosoRef, onScrollerRef } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
+  const { virtuosoRef, onScrollerRef, followOutput } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
   const lastRow = rows[rows.length - 1];
   const lastRowKey = lastRow === undefined ? null : rowKey(lastRow);
   const footerContext = useMemo<ChatListContext>(
@@ -119,7 +119,7 @@ export function BlockChat(): React.JSX.Element {
           initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
           increaseViewportBy={{ top: VIEWPORT_OVERSCAN_PX, bottom: VIEWPORT_OVERSCAN_PX }}
           atBottomThreshold={STICK_TO_BOTTOM_PX}
-          followOutput={(atBottom) => (atBottom ? 'auto' : false)}
+          followOutput={followOutput}
           scrollerRef={onScrollerRef}
           components={CHAT_LIST_COMPONENTS}
           context={footerContext}
@@ -162,7 +162,9 @@ interface ChatListContext {
 function renderChatItem(_index: number, row: ChatRow, context: ChatListContext): React.JSX.Element {
   const key = rowKey(row);
   return (
-    <div data-chat-row="true" data-row-key={key} {...(key === context.lastRowKey ? { 'data-last-row': 'true' } : {})} className={`px-[22px] pb-[14px]${context.enteringKeys.has(key) ? ' mg-enter' : ''}`}>
+    // La clase NO va pegada a `${`: el escáner de Tailwind leía `pb-[14px]${…` como un solo candidato y no generaba
+    // `pb-[14px]` (el hilo se quedó sin aire entre mensajes en la 0.1.4, P-038).
+    <div data-chat-row="true" data-row-key={key} {...(key === context.lastRowKey ? { 'data-last-row': 'true' } : {})} className={`px-[22px] pb-[14px] ${context.enteringKeys.has(key) ? 'mg-enter' : ''}`}>
       <ChatRowView row={row} accent={context.accent} />
     </div>
   );
@@ -237,6 +239,7 @@ function useEnteringRowKeys(resetKey: string, rows: readonly ChatRow[]): Readonl
 function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize: number; readonly turnLive: boolean; readonly resetKey: string }): {
   readonly virtuosoRef: React.RefObject<VirtuosoHandle | null>;
   readonly onScrollerRef: (ref: HTMLElement | Window | null) => void;
+  readonly followOutput: () => 'auto' | false;
 } {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const stuckRef = useRef(true);
@@ -257,7 +260,10 @@ function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize
     if (scroller === null || !stuckRef.current) return undefined;
     return settleAtBottom(scroller, stuckRef, BROWSER_FRAMES);
   }, [scroller, tailSize, turnLive, resetKey]);
-  return { virtuosoRef, onScrollerRef };
+  // Virtuoso sigue las filas nuevas con SU margen de 80 px; aquí manda el «pegado» propio, que la rueda hacia arriba
+  // suelta en el acto (P-038).
+  const followOutput = useCallback((): 'auto' | false => (stuckRef.current ? 'auto' : false), []);
+  return { virtuosoRef, onScrollerRef, followOutput };
 }
 
 const BROWSER_FRAMES: FrameApi = { request: (callback) => requestAnimationFrame(callback), cancel: (id) => cancelAnimationFrame(id) };

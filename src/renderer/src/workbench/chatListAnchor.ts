@@ -37,14 +37,28 @@ export function appendedTailKeys(prev: { readonly length: number; readonly lastK
 // Por debajo de este margen el usuario cuenta como «pegado» al final (mismo valor que `useStickToBottom`, el del panel de Actividad).
 export const STICK_TO_BOTTOM_PX = 80;
 
+// A esta distancia (o menos) se está EN el final: es lo único que vuelve a pegar tras haber subido a propósito.
+export const AT_BOTTOM_PX = 2;
+
+// Teclas con las que el usuario sube a leer (con el foco en el hilo).
+const SCROLL_UP_KEYS: ReadonlySet<string> = new Set(['PageUp', 'ArrowUp', 'Home']);
+
+// Lo que llega de la rueda y del teclado (en tests, objetos planos).
+export interface ScrollIntentEvent {
+  readonly deltaY?: number;
+  readonly key?: string;
+}
+
+type ScrollerEventType = 'scroll' | 'wheel' | 'keydown';
+
 // Lo que el seguimiento del final necesita del scroller (en tests, un objeto plano).
 export interface WatchedScroller<T> {
   scrollTop: number;
   readonly scrollHeight: number;
   readonly clientHeight: number;
   readonly firstElementChild: { readonly children: ArrayLike<T> } | null;
-  addEventListener(type: 'scroll', listener: () => void, options: { readonly passive: true }): void;
-  removeEventListener(type: 'scroll', listener: () => void): void;
+  addEventListener(type: ScrollerEventType, listener: (event: ScrollIntentEvent) => void, options: { readonly passive: true }): void;
+  removeEventListener(type: ScrollerEventType, listener: (event: ScrollIntentEvent) => void): void;
 }
 
 export interface SizeObserver<T> {
@@ -64,9 +78,26 @@ export function pinToBottom(scroller: Pick<WatchedScroller<unknown>, 'scrollTop'
 // Sigue el final del chat. «Pegado» solo cambia con un scroll: encoger la vista (un dock que aparece) o crecer el
 // contenido no despega. Mientras está pegado, cualquier cambio de tamaño del scroller o de los hijos de su viewport
 // (cabecera, lista y pie de Virtuoso) vuelve a pegarlo. Devuelve la función que lo desmonta.
+//
+// P-038: la rueda hacia arriba (o ↑/RePág/Inicio) despega EN EL ACTO y no vuelve a pegar hasta llegar al final
+// real. Antes, con el margen de 80 px, un golpe de rueda corto quedaba dentro del margen y el texto en streaming
+// lo devolvía abajo: había que subir «muy fuerte» para escapar.
 export function watchChatBottom<T>(scroller: WatchedScroller<T>, stuck: { current: boolean }, createObserver: (onResize: () => void) => SizeObserver<T>): () => void {
+  let userAway = false;
+  const leave = (): void => {
+    userAway = true;
+    stuck.current = false;
+  };
   const onScroll = (): void => {
-    stuck.current = distanceToBottom(scroller) <= STICK_TO_BOTTOM_PX;
+    const distance = distanceToBottom(scroller);
+    if (distance <= AT_BOTTOM_PX) userAway = false;
+    stuck.current = !userAway && distance <= STICK_TO_BOTTOM_PX;
+  };
+  const onWheel = (event: ScrollIntentEvent): void => {
+    if ((event.deltaY ?? 0) < 0) leave();
+  };
+  const onKey = (event: ScrollIntentEvent): void => {
+    if (event.key !== undefined && SCROLL_UP_KEYS.has(event.key)) leave();
   };
   const observer = createObserver(() => {
     if (stuck.current) pinToBottom(scroller);
@@ -74,9 +105,13 @@ export function watchChatBottom<T>(scroller: WatchedScroller<T>, stuck: { curren
   observer.observe(scroller);
   for (const child of Array.from(scroller.firstElementChild?.children ?? [])) observer.observe(child);
   scroller.addEventListener('scroll', onScroll, { passive: true });
+  scroller.addEventListener('wheel', onWheel, { passive: true });
+  scroller.addEventListener('keydown', onKey, { passive: true });
   return () => {
     observer.disconnect();
     scroller.removeEventListener('scroll', onScroll);
+    scroller.removeEventListener('wheel', onWheel);
+    scroller.removeEventListener('keydown', onKey);
   };
 }
 
