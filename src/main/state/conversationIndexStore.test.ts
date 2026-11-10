@@ -429,3 +429,30 @@ describe('ConversationIndexStore — sesiones del host', () => {
     expect(() => memoryStore().recordHostSession('conv-1', { ...record, accountId: '' })).toThrow('cuenta vacia en la sesion del host conv-1');
   });
 });
+
+// P-038 (lag): el historial del lateral pregunta por cientos de conversaciones en cada refresco; antes cada pregunta
+// releía y revalidaba el fichero entero en el hilo de main.
+describe('ConversationIndexStore — lectura una sola vez', () => {
+  it('loadPrefs_muchasConsultas_leeElDiscoUnaVez', () => {
+    let content = '';
+    const readFile = vi.fn(() => content);
+    const store = new ConversationIndexStore(buildDeps({ exists: () => content.length > 0, readFile, writeFile: (_p, data) => { content = data; } }));
+    store.savePrefs(SESSION, { accountId: 'C:/Users/u/.claude-p' });
+    readFile.mockClear();
+
+    for (let i = 0; i < 300; i += 1) store.loadPrefs(i % 2 === 0 ? SESSION : `otra-${i}`);
+
+    expect(readFile).toHaveBeenCalledTimes(0);
+    expect(store.loadPrefs(SESSION)?.accountId).toBe('C:/Users/u/.claude-p');
+  });
+
+  it('loadPrefs_tiendaNueva_leeElFicheroLaPrimeraVez', () => {
+    const readFile = vi.fn(() => '{}');
+    const store = new ConversationIndexStore(buildDeps({ readFile }));
+
+    store.loadPrefs('a');
+    store.loadPrefs('b');
+
+    expect(readFile).toHaveBeenCalledTimes(1);
+  });
+});
