@@ -234,7 +234,7 @@ import { buildJumpListCategories, parseJumpListArgs } from './os/jumpList';
 import { UsageService } from './usage/usageService';
 import { ApiUsageStore } from './usage/apiUsageStore';
 import { UsageHistoryService, type TranscriptRoot } from './usage/usageHistoryService';
-import { listTranscripts, parseUsageHistoryCache, readRange } from './usage/usageHistoryFs';
+import { listTranscriptsOf, parseUsageHistoryCache, readRange } from './usage/usageHistoryFs';
 import type { UsageInfo } from '@shared/usage';
 import { StatusService } from './status/statusService';
 import { claudeUserAgent } from './os/claudeVersion';
@@ -1483,7 +1483,7 @@ const statusService = new StatusService({ fetch, now: () => Date.now() });
 const USAGE_HISTORY_FILE = 'usage-history.json';
 const usageHistoryService = new UsageHistoryService({
   roots: usageHistoryRoots,
-  listTranscripts,
+  listTranscripts: listTranscriptsOf,
   readRange,
   loadCache: () => {
     const path = join(app.getPath('userData'), USAGE_HISTORY_FILE);
@@ -1505,14 +1505,16 @@ const usageHistoryService = new UsageHistoryService({
 function usageHistoryRoots(): readonly TranscriptRoot[] {
   const seen = new Set<string>();
   const roots: TranscriptRoot[] = [];
-  const add = (dir: string, ownerAccountId?: string): void => {
+  const add = (dir: string, ownerAccountId?: string, format?: 'codex'): void => {
     if (!existsSync(dir)) return;
     const key = canonicalPath(dir).toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
-    roots.push(ownerAccountId === undefined ? { dir } : { dir, ownerAccountId });
+    roots.push({ dir, ...(ownerAccountId === undefined ? {} : { ownerAccountId }), ...(format === undefined ? {} : { format }) });
   };
   for (const account of listAllAccounts()) {
+    // Codex (P-039 F2): cada cuenta es su CODEX_HOME y sus registros son suyos.
+    if (account.providerId === 'codex') add(join(account.configDir, 'sessions'), account.configDir, 'codex');
     if (account.providerId !== 'claude') continue;
     add(join(account.configDir, 'projects'));
     add(join(account.configDir, PRIVATE_PROFILE_DIR_NAME, 'projects'), account.configDir);

@@ -1,4 +1,5 @@
 import type { DayDetail, DayKey, UsageHistory } from '@shared/usageHistory';
+import { parseCodexLines, type CodexParseState } from './codexUsage';
 import { aggregateHistory, INITIAL_PARSE_STATE, localDayKey, localTimeOf, mergeDayMaps, parseUsageLines, pruneWindowPeaks, recordWindowPeak, type FileUsage, type ParseState, type WindowPeaks } from './usageHistory';
 
 // Servicio de «Cuentas y consumo» (P-038 V11): consumo por días leyendo las transcripciones de Claude y foto diaria de
@@ -14,9 +15,13 @@ const CHUNK_BYTES = 8 * 1024 * 1024;
 const MS_PER_DAY = 86_400_000;
 const NEWLINE = 0x0a;
 
+// Formato de los registros de una raíz: las transcripciones de Claude o los registros de Codex (P-039 F2).
+export type TranscriptFormat = 'claude' | 'codex';
+
 export interface TranscriptRoot {
-  readonly dir: string; // un `projects/`
-  readonly ownerAccountId?: string; // perfil privado: sus conversaciones son de su cuenta
+  readonly dir: string; // un `projects/` de Claude o un `sessions/` de Codex
+  readonly ownerAccountId?: string; // perfil privado o cuenta de Codex: sus registros son de esa cuenta
+  readonly format?: TranscriptFormat; // sin él, Claude
 }
 
 export interface TranscriptFile {
@@ -30,7 +35,7 @@ export interface CachedFile {
   readonly offset: number;
   readonly sessionId: string;
   readonly ownerAccountId?: string;
-  readonly state: ParseState;
+  readonly state: ParseState & CodexParseState;
   readonly days: Readonly<Record<DayKey, DayDetail>>;
 }
 
@@ -48,7 +53,7 @@ export const EMPTY_CACHE: UsageHistoryCache = { version: USAGE_HISTORY_CACHE_VER
 
 export interface UsageHistoryDeps {
   readonly roots: () => readonly TranscriptRoot[];
-  readonly listTranscripts: (root: string) => Promise<readonly TranscriptFile[]>;
+  readonly listTranscripts: (root: string, format: TranscriptFormat) => Promise<readonly TranscriptFile[]>;
   // Bytes [start, end) del fichero.
   readonly readRange: (path: string, start: number, end: number) => Promise<Buffer>;
   readonly loadCache: () => UsageHistoryCache;
@@ -90,7 +95,7 @@ export class UsageHistoryService {
     const files: Record<string, CachedFile> = {};
     let invalid = 0;
     for (const root of this.deps.roots()) {
-      for (const file of await this.deps.listTranscripts(root.dir)) {
+      for (const file of await this.deps.listTranscripts(root.dir, root.format ?? 'claude')) {
         if (file.mtimeMs < minMtime) continue; // nada de ese fichero entra en la ventana
         const updated = await this.updateFile(file, root, previous[file.path]);
         invalid += updated.invalid;
@@ -114,7 +119,9 @@ export class UsageHistoryService {
       const bytes = await this.deps.readRange(file.path, entry.offset, end);
       const lastNewline = bytes.lastIndexOf(NEWLINE);
       if (lastNewline < 0) break; // una línea a medio escribir (o más larga que el trozo): se lee la próxima vez
-      const parsed = parseUsageLines(bytes.subarray(0, lastNewline).toString('utf8').split('\n'), entry.state, (ms) => localTimeOf(ms, this.deps.offsetMinutes()));
+      const lines = bytes.subarray(0, lastNewline).toString('utf8').split('\n');
+      const timeOf = (ms: number) => localTimeOf(ms, this.deps.offsetMinutes());
+      const parsed = root.format === 'codex' ? parseCodexLines(lines, entry.state, timeOf) : parseUsageLines(lines, entry.state, timeOf);
       invalid += parsed.invalidLines;
       entry = { ...entry, offset: entry.offset + lastNewline + 1, state: parsed.state, days: mergeDayMaps(entry.days, parsed.days) };
     }

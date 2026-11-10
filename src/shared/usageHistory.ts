@@ -43,11 +43,27 @@ export interface LimitHits {
 
 export const HOURS_PER_DAY = 24;
 
+// Lo más alto que se vio ese día de cada ventana (0..100), o null sin dato.
+export interface DayPeaks {
+  readonly fiveHourMax: number | null;
+  readonly sevenDayMax: number | null;
+}
+
 export interface DayDetail {
   readonly byModel: Readonly<Record<string, ModelUsage>>;
   readonly limits: LimitHits;
   readonly hours: readonly number[]; // turnos por hora LOCAL (24 posiciones)
   readonly tools: Readonly<Record<string, number>>; // llamadas por herramienta
+  // Picos de las ventanas que el propio registro trae (Codex los apunta en cada `token_count`; Claude no).
+  readonly peaks?: DayPeaks;
+}
+
+const maxOrNull = (a: number | null, b: number | null): number | null => (a === null ? b : b === null ? a : Math.max(a, b));
+
+export function maxPeaks(a: DayPeaks | undefined, b: DayPeaks | undefined): DayPeaks | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  return { fiveHourMax: maxOrNull(a.fiveHourMax, b.fiveHourMax), sevenDayMax: maxOrNull(a.sevenDayMax, b.sevenDayMax) };
 }
 
 export interface DailyDetail extends DayDetail {
@@ -89,8 +105,11 @@ export function addDetails(a: DayDetail, b: DayDetail): DayDetail {
     limits: { fiveHour: a.limits.fiveHour + b.limits.fiveHour, weekly: a.limits.weekly + b.limits.weekly, other: a.limits.other + b.limits.other },
     hours: a.hours.map((count, hour) => count + (b.hours[hour] ?? 0)),
     tools: addCounts(a.tools, b.tools),
+    ...withPeaks(maxPeaks(a.peaks, b.peaks)),
   };
 }
+
+const withPeaks = (peaks: DayPeaks | undefined): { readonly peaks?: DayPeaks } => (peaks === undefined ? {} : { peaks });
 
 // Los totales de siempre (`DayTokens`) a partir del detalle: la escritura de caché junta 5 min y 1 h.
 export function detailTokens(detail: DayDetail): DayTokens {

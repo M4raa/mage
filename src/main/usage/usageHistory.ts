@@ -234,6 +234,13 @@ function dailyDetails(days: Map<DayKey, DayAccumulator> | undefined): DailyDetai
 
 const toTokens = (detail: readonly DailyDetail[]): DailyTokens[] => detail.map((day) => ({ day: day.day, ...detailTokens(day) }));
 
+// Los picos que trae el propio registro (Codex) se suman a los que Mage apuntó al consultar el uso: gana el mayor.
+function withDetailPeaks(recorded: Readonly<Record<DayKey, WindowPeaks>> | undefined, detail: readonly DailyDetail[]): Record<DayKey, WindowPeaks> {
+  let peaks: Record<DayKey, WindowPeaks> = { ...(recorded ?? {}) };
+  for (const day of detail) if (day.peaks !== undefined) peaks = recordWindowPeak(peaks, day.day, day.peaks);
+  return peaks;
+}
+
 // Agrupa por cuenta (la dueña fija o la que dice el índice) y recorta a `fromDay`. Una cuenta que el índice nombra
 // pero ya no existe cuenta como sin atribuir.
 export function aggregateHistory(input: HistoryInput): UsageHistory {
@@ -245,7 +252,7 @@ export function aggregateHistory(input: HistoryInput): UsageHistory {
   }
   const accounts: AccountUsageHistory[] = input.accountIds.map((accountId) => {
     const detail = dailyDetails(byAccount.get(accountId));
-    return { accountId, days: toTokens(detail), detail, windows: windowList(input.windows[accountId], input.fromDay) };
+    return { accountId, days: toTokens(detail), detail, windows: windowList(withDetailPeaks(input.windows[accountId], detail), input.fromDay) };
   });
   return { generatedAt: input.generatedAt, fromDay: input.fromDay, accounts, unattributed: toTokens(dailyDetails(byAccount.get(UNATTRIBUTED))) };
 }

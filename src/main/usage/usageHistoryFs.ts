@@ -2,13 +2,38 @@ import { open, readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { z } from 'zod';
 import { HOURS_PER_DAY } from '@shared/usageHistory';
-import { EMPTY_CACHE, USAGE_HISTORY_CACHE_VERSION, type TranscriptFile, type UsageHistoryCache } from './usageHistoryService';
+import { EMPTY_CACHE, USAGE_HISTORY_CACHE_VERSION, type TranscriptFile, type TranscriptFormat, type UsageHistoryCache } from './usageHistoryService';
 
 // El disco de «Cuentas y consumo» (P-038 V11): listar transcripciones, leer un rango de bytes y validar la caché. Todo
 // asíncrono: la primera pasada lee cientos de MB y no puede parar el hilo de main.
 
 const JSONL = '.jsonl';
 const SUBAGENTS_DIR = 'subagents';
+
+// Los registros de una raíz según su formato.
+export function listTranscriptsOf(dir: string, format: TranscriptFormat): Promise<readonly TranscriptFile[]> {
+  return format === 'codex' ? listCodexRollouts(dir) : listTranscripts(dir);
+}
+
+const CODEX_ROLLOUT = /^rollout-.*\.jsonl$/;
+// Profundidad de `sessions/AAAA/MM/DD/`: no se baja más (ni se sigue nada raro que haya debajo).
+const CODEX_DATE_DEPTH = 3;
+
+// `<CODEX_HOME>/sessions/AAAA/MM/DD/rollout-<fecha>-<id>.jsonl` (P-039 F2). Cada registro es una conversación.
+export async function listCodexRollouts(sessionsDir: string, depth = 0): Promise<readonly TranscriptFile[]> {
+  const result: TranscriptFile[] = [];
+  for (const entry of await readDirOrEmpty(sessionsDir)) {
+    const path = join(sessionsDir, entry);
+    if (depth === CODEX_DATE_DEPTH) {
+      if (!CODEX_ROLLOUT.test(entry)) continue;
+      const file = await describe(path, basename(entry, JSONL));
+      if (file !== null) result.push(file);
+      continue;
+    }
+    result.push(...(await listCodexRollouts(path, depth + 1)));
+  }
+  return result;
+}
 
 // `<proyecto>/<sesión>.jsonl` y los de sus subagentes `<proyecto>/<sesión>/subagents/*.jsonl` (cuentan para su sesión).
 export async function listTranscripts(projectsDir: string): Promise<readonly TranscriptFile[]> {
@@ -67,21 +92,22 @@ export async function readRange(path: string, start: number, end: number): Promi
 }
 
 const count = z.number().int().min(0);
+const pct = z.number().min(0).max(100).nullable();
 const modelUsage = z.object({ inputTokens: count, outputTokens: count, cacheReadTokens: count, cacheWrite5mTokens: count, cacheWrite1hTokens: count, turns: count });
 const dayDetail = z.object({
   byModel: z.record(modelUsage),
   limits: z.object({ fiveHour: count, weekly: count, other: count }),
   hours: z.array(count).length(HOURS_PER_DAY),
   tools: z.record(count),
+  peaks: z.object({ fiveHourMax: pct, sevenDayMax: pct }).optional(),
 });
-const pct = z.number().min(0).max(100).nullable();
 const CacheSchema = z.object({
   version: z.literal(USAGE_HISTORY_CACHE_VERSION),
   files: z.record(z.object({
     offset: count,
     sessionId: z.string().min(1),
     ownerAccountId: z.string().min(1).optional(),
-    state: z.object({ recentIds: z.array(z.string()), cwd: z.string().optional() }),
+    state: z.object({ recentIds: z.array(z.string()), cwd: z.string().optional(), model: z.string().optional(), atLimit: z.boolean().optional() }),
     days: z.record(dayDetail),
   })),
   windows: z.record(z.record(z.object({ fiveHourMax: pct, sevenDayMax: pct }))),
