@@ -4,13 +4,13 @@ import { GitChips } from './GitChips';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
 import { folderChip, privacyChip } from '../chatInfoView';
-import { apiBilledLabel } from '../accountView';
+import { apiBilledLabel, providerLabel } from '../accountView';
 import { useT } from '../../i18n/uiLanguage';
-import { contextPctOf } from '../contextView';
 
 const SEPARATOR = ' · ';
 
-// Sublínea bajo la barra de pestañas de un panel (Q-U11): cuenta · carpeta · rama, sin modelo (D18). La carpeta
+// Información de la conversación (Q-U11): proveedor · cuenta · carpeta · rama · privacidad, sin modelo (D18). Desde el
+// rediseño de P-038 vive a la izquierda de la fila bajo el input (`ChatInfoBar`), no bajo las pestañas. La carpeta
 // es la única parte accionable (se abre, que es como se llega a lo que genera el agente y al scratchpad); la rama
 // y los cambios salen de `GitChips` en su variante sin píldora. Sin pestaña, no pinta nada.
 export function TabSubline(): React.JSX.Element | null {
@@ -22,10 +22,8 @@ export function TabSubline(): React.JSX.Element | null {
   const scratchDir = useWorkbenchStore((s) => s.scratchDir);
   const scratchRoots = useWorkbenchStore((s) => s.scratchRoots);
   const ensureScratchDir = useWorkbenchStore((s) => s.ensureScratchDir);
-  // Ocupación de la ventana que reporta el CLI (cualquier proveedor); sin dato todavía, no se pinta.
-  const contextPct = useWorkbenchStore((s) => contextPctOf(s.contextUsageByChat[tabId]));
   // Suscribe la fila al idioma: las etiquetas de carpeta y privacidad salen de `chatInfoView`, que traduce al llamarse.
-  const translate = useT();
+  useT();
 
   useEffect(() => {
     void ensureScratchDir();
@@ -37,7 +35,7 @@ export function TabSubline(): React.JSX.Element | null {
   const parts: readonly React.ReactNode[] = [
     <span key="account" data-tab-subline-account className="inline-flex min-w-0 items-center gap-[6px]">
       <span aria-hidden="true" className="h-[7px] w-[7px] flex-none rounded-full" style={{ background: account?.accent.base ?? 'transparent' }} />
-      <span className="truncate" title={tab.accountAlias}>{tab.accountAlias}</span>
+      <span className="truncate" title={tab.accountAlias}>{providerLabel(tab.provider)} {tab.accountAlias}</span>
       {account?.apiBilled === true && <span data-subline-api-billed="true" className="flex-none text-mg-warn">{apiBilledLabel()}</span>}
     </span>,
     ...(folder === null
@@ -60,11 +58,10 @@ export function TabSubline(): React.JSX.Element | null {
       <Icon name={privacy.icon} size={12} />
       <span>{privacy.label}</span>
     </span>,
-    ...(contextPct === null ? [] : [<span key="context" data-tab-subline-context={contextPct} data-tip={translate('tabs.subline.contextTip')} className="flex-none cursor-help tabular-nums">{translate('tabs.subline.context', { pct: contextPct })}</span>]),
   ];
 
   return (
-    <div data-tab-subline="true" className="flex items-center gap-[6px] border-b border-mg-border-subtle px-[14px] py-[4px] text-[10.5px] text-mg-muted">
+    <div data-tab-subline="true" className="flex min-w-0 items-center gap-[6px]">
       {parts.map((part, index) => (
         <Fragment key={(part as React.ReactElement).key}>
           {index > 0 && <span aria-hidden="true">{SEPARATOR}</span>}

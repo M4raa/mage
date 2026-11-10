@@ -9,7 +9,6 @@ import { shouldFocusPromptOnClick } from '../promptFocus';
 import { BlockChat } from './BlockChat';
 import { PromptBar } from './PromptBar';
 import { RateLimitBanner } from './RateLimitBanner';
-import { TabSubline } from './TabSubline';
 import { TaskStrip } from '../tasks/TaskStrip';
 import { QuestionDock } from './QuestionDock';
 import { TasksDock } from './TasksDock';
@@ -144,8 +143,6 @@ export function ChatPane({
           split ? (focused ? 'outline outline-1 -outline-offset-1 outline-mg-border-emph' : 'opacity-80') : ''
         }`}
       >
-        {/* Cuenta · carpeta · rama, justo bajo la barra de pestañas de este panel y encima del hilo (Q-U11). */}
-        <TabSubline />
         <TaskStrip />
         <BlockChat />
         <RateLimitBanner />

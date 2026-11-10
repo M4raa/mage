@@ -1,12 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useWorkbenchStore } from '../workbenchStore';
 import { creatorTabOf } from '../adoptSession';
 import { usePaneTabId } from '../paneContext';
 import { CHIP_CLASS } from './GitChips';
 import { PrBar } from './PrBar';
-import { reportActionError } from '../notificationStore';
 import { useT } from '../../i18n/uiLanguage';
+import { TabSubline } from './TabSubline';
 
 // Fila de informacion del chat, encima del input (peticion del usuario).
 //
@@ -16,9 +16,11 @@ import { useT } from '../../i18n/uiLanguage';
 // como queda, deberian salir etiquetas de informacion del chat" — y eso es esto: lo que de verdad hace
 // falta ver de un vistazo, sin ejecutar nada.
 //
-// La carpeta y la rama (Q-U11) viven ahora en la sublinea bajo las pestañas (`TabSubline`); aqui quedan la
-// «Encargada por…» y el PR (la privacidad subió a la sublínea, P-038 V3). Los refrescos de git y de PR siguen aqui: se lanzan con la pestaña.
-export function ChatInfoBar(): React.JSX.Element | null {
+// P-038 (rediseño del 10-11): la fila va DEBAJO de la caja del input y junta todo lo que antes estaba encima del
+// input y en la sublínea de las pestañas. A la izquierda, la conversación (`TabSubline`: proveedor · cuenta, carpeta,
+// rama, privacidad; la creadora y el PR); a la derecha, `children`: los selectores de modelo, esfuerzo y modo.
+// Los refrescos de git y de PR siguen aqui: se lanzan con la pestaña.
+export function ChatInfoBar({ children }: { readonly children?: ReactNode }): React.JSX.Element | null {
   const tabId = usePaneTabId();
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
   // Suscribe la fila al idioma: las etiquetas salen de `chatInfoView`, que traduce al llamarse.
@@ -44,10 +46,16 @@ export function ChatInfoBar(): React.JSX.Element | null {
   // Sin pestaña no hay nada que contar, y una fila vacia solo roba alto al hilo.
   if (tab === undefined) return null;
   return (
-    <div className="mb-[6px] flex flex-wrap empty:hidden items-center gap-[6px] text-[10.5px] text-mg-muted">
-      <CreatorChip tabId={tabId} />
-      <AwaitingCreatorChip tabId={tabId} />
-      <PrBar tabId={tabId} />
+    <div data-chat-info-bar="true" className="mt-[6px] flex flex-wrap items-center gap-x-[10px] gap-y-[4px] text-[10.5px] text-mg-muted">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-[6px]">
+        <TabSubline />
+        <CreatorChip tabId={tabId} />
+        <AwaitingCreatorChip tabId={tabId} />
+        <PrBar tabId={tabId} />
+      </div>
+      <div data-prompt-controls="true" className="ml-auto flex flex-wrap items-center justify-end gap-[8px]">
+        {children}
+      </div>
     </div>
   );
 }
