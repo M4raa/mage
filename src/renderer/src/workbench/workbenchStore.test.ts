@@ -3341,7 +3341,7 @@ describe('openConversation — dueña del host', () => {
     await store.getState().openConversation(item(), 'acc-active');
 
     const opened = store.getState().tabs.find((t) => t.resumeSessionId === 'n-1');
-    expect(opened).toMatchObject({ accountId: 'C:\\x\\home\\.claude-x-inval', accountPinned: true, accountAlias: 'claude-x-inval' });
+    expect(opened).toMatchObject({ accountId: 'C:\\x\\home\\.claude-x-inval', accountPinned: true, accountAlias: 'x-inval' });
     expect(store.getState().activeAccountId).toBe('acc-active');
     await expect(store.getState().ensureSession(opened?.id ?? '')).rejects.toThrow(/solo lectura/);
     expect(createSession).not.toHaveBeenCalled();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountInfo } from '@shared/accounts';
-import { aliasFromConfigDir, applyAccentOverrides, applyAccountOverrides, assignMissingAccents, providerBadge, providerLabel, toAccountView, visibleAccounts } from './accountView';
+import { aliasFromConfigDir, aliasFromName, applyAccentOverrides, applyAccountOverrides, assignMissingAccents, providerBadge, providerLabel, toAccountView, visibleAccounts } from './accountView';
 
 function info(overrides: Partial<AccountInfo>): AccountInfo {
   return {
@@ -18,12 +18,29 @@ function info(overrides: Partial<AccountInfo>): AccountInfo {
   };
 }
 
+describe('aliasFromName', () => {
+  it('aliasFromName_conPrefijoDelProveedor_quitaPuntoYPrefijo', () => {
+    expect(aliasFromName('.claude-p')).toBe('p');
+    expect(aliasFromName('codex_casa')).toBe('casa');
+  });
+
+  it('aliasFromName_cuentaPrincipal_seQuedaConElPrefijo', () => {
+    expect(aliasFromName('.claude')).toBe('claude');
+    expect(aliasFromName('')).toBe('');
+  });
+
+  it('aliasFromName_sinPrefijo_noLoToca', () => {
+    expect(aliasFromName('trabajo')).toBe('trabajo');
+    expect(aliasFromName('claudette')).toBe('claudette');
+  });
+});
+
 describe('toAccountView', () => {
   it('toAccountView_mapsCoreFields_fromConfigDir', () => {
     const account = toAccountView(info({ configDir: '/home/u/.claude-p', name: '.claude-p' }));
 
     expect(account.id).toBe('/home/u/.claude-p');
-    expect(account.alias).toBe('claude-p'); // sin el punto inicial
+    expect(account.alias).toBe('p'); // sin el punto inicial ni el prefijo del proveedor
     expect(account.provider).toBe('Claude');
   });
 
@@ -170,12 +187,12 @@ describe('assignMissingAccents (#46, H3)', () => {
 });
 
 describe('aliasFromConfigDir', () => {
-  it('aliasFromConfigDir_rutaWindows_nombreSinPunto', () => {
-    expect(aliasFromConfigDir('C:\\x\\home\\.claude-x-inval')).toBe('claude-x-inval');
+  it('aliasFromConfigDir_rutaWindows_nombreSinPuntoNiPrefijo', () => {
+    expect(aliasFromConfigDir('C:\\x\\home\\.claude-x-inval')).toBe('x-inval');
   });
 
-  it('aliasFromConfigDir_rutaPosixConBarraFinal_nombreSinPunto', () => {
-    expect(aliasFromConfigDir('/home/u/.claude-p/')).toBe('claude-p');
+  it('aliasFromConfigDir_rutaPosixConBarraFinal_nombreSinPuntoNiPrefijo', () => {
+    expect(aliasFromConfigDir('/home/u/.claude-p/')).toBe('p');
   });
 
   it('aliasFromConfigDir_vacio_vacio', () => {
@@ -192,8 +209,8 @@ describe('applyAccountOverrides y visibleAccounts (P-038 V16)', () => {
     const renamed = applyAccountOverrides(accounts, { accentByAccount: {}, aliasByAccount: { A: 'Trabajo' } });
     const restored = applyAccountOverrides(renamed, { accentByAccount: {}, aliasByAccount: {} });
 
-    expect(renamed.map((a) => a.alias)).toEqual(['Trabajo', 'claude-b']);
-    expect(restored.map((a) => a.alias)).toEqual(['claude-a', 'claude-b']);
+    expect(renamed.map((a) => a.alias)).toEqual(['Trabajo', 'b']);
+    expect(restored.map((a) => a.alias)).toEqual(['a', 'b']);
   });
 
   it('visibleAccounts_ocultas_fueraSalvoLaActiva', () => {

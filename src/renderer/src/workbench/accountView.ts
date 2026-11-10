@@ -29,12 +29,20 @@ export function apiBilledLabel(): string {
 // carpeta sin los puntos del principio). Nunca la ruta entera, que lleva el usuario del equipo.
 export function aliasFromConfigDir(configDir: string): string {
   const last = configDir.split(/[\\/]/).filter((part) => part.length > 0).at(-1) ?? '';
-  return last.replace(/^\.+/, '');
+  return aliasFromName(last);
+}
+
+// Alias de una cuenta a partir del nombre de su carpeta (P-038): sin los puntos del principio y sin el prefijo del
+// proveedor, que ya se ve al lado («.claude-p» → «p»). La principal no tiene más nombre que el prefijo y se queda así.
+export function aliasFromName(name: string): string {
+  const plain = name.replace(/^\.+/, '');
+  const bare = plain.replace(PROVIDER_NAME_PREFIX, '').trim();
+  return bare.length > 0 ? bare : plain;
 }
 
 // Mapea una cuenta de dominio (AccountInfo, segura) a la cuenta de PRESENTACION que consume la UI.
 export function toAccountView(info: AccountInfo, accentOverride?: number, aliasOverride?: string): Account {
-  const alias = info.name.replace(/^\.+/, ''); // ".claude-p" -> "claude-p"
+  const alias = aliasFromName(info.name);
   return {
     id: info.configDir,
     monogram: deriveMonogram(info.email, alias),
