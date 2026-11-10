@@ -13,6 +13,7 @@ function setup(initial: Record<string, string>, options: { mtimeMs?: number; acc
     roots: () => [{ dir: 'projects' }],
     listTranscripts: async () =>
       [...files.entries()].map(([path, text]): TranscriptFile => ({ path, sessionId: path.replace(/\.jsonl$/, ''), sizeBytes: Buffer.byteLength(text), mtimeMs: options.mtimeMs ?? NOW })),
+    readAgySteps: () => [],
     readRange: async (path, start, end) => {
       reads.push({ path, start, end });
       return Buffer.from(files.get(path) ?? '').subarray(start, end);

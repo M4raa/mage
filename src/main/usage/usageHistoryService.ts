@@ -1,5 +1,7 @@
 import type { DayDetail, DayKey, UsageHistory } from '@shared/usageHistory';
 import { parseCodexLines, type CodexParseState } from './codexUsage';
+import { parseAgySteps } from './agyHistoryUsage';
+import type { AgyStep } from '../conversations/agyHistory';
 import { aggregateHistory, INITIAL_PARSE_STATE, localDayKey, localTimeOf, mergeDayMaps, parseUsageLines, pruneWindowPeaks, recordWindowPeak, type FileUsage, type ParseState, type WindowPeaks } from './usageHistory';
 
 // Servicio de «Cuentas y consumo» (P-038 V11): consumo por días leyendo las transcripciones de Claude y foto diaria de
@@ -16,7 +18,7 @@ const MS_PER_DAY = 86_400_000;
 const NEWLINE = 0x0a;
 
 // Formato de los registros de una raíz: las transcripciones de Claude o los registros de Codex (P-039 F2).
-export type TranscriptFormat = 'claude' | 'codex';
+export type TranscriptFormat = 'claude' | 'codex' | 'agy';
 
 export interface TranscriptRoot {
   readonly dir: string; // un `projects/` de Claude o un `sessions/` de Codex
@@ -33,6 +35,7 @@ export interface TranscriptFile {
 
 export interface CachedFile {
   readonly offset: number;
+  readonly mtimeMs?: number; // solo agy: la base no crece por el final y se compara por tamaño y fecha
   readonly sessionId: string;
   readonly ownerAccountId?: string;
   readonly state: ParseState & CodexParseState;
@@ -54,6 +57,8 @@ export const EMPTY_CACHE: UsageHistoryCache = { version: USAGE_HISTORY_CACHE_VER
 export interface UsageHistoryDeps {
   readonly roots: () => readonly TranscriptRoot[];
   readonly listTranscripts: (root: string, format: TranscriptFormat) => Promise<readonly TranscriptFile[]>;
+  // Pasos de una conversación de agy (SQLite en solo lectura, P-039 F3).
+  readonly readAgySteps: (path: string) => readonly AgyStep[];
   // Bytes [start, end) del fichero.
   readonly readRange: (path: string, start: number, end: number) => Promise<Buffer>;
   readonly loadCache: () => UsageHistoryCache;
@@ -107,8 +112,18 @@ export class UsageHistoryService {
     return this.aggregate(files);
   }
 
+  // agy (SQLite) no crece por el final: con la base (o su -wal) cambiada, se relee entera; si no, lo guardado. El
+  // «offset» es el tamaño de base + wal y `mtimeMs` la última escritura de cualquiera de los dos.
+  private updateAgyFile(file: TranscriptFile, root: TranscriptRoot, cached: CachedFile | undefined): { entry: CachedFile; invalid: number } {
+    if (cached !== undefined && cached.offset === file.sizeBytes && cached.mtimeMs === file.mtimeMs) return { entry: cached, invalid: 0 };
+    const parsed = parseAgySteps(this.deps.readAgySteps(file.path), (ms) => localTimeOf(ms, this.deps.offsetMinutes()));
+    const owner = root.ownerAccountId === undefined ? {} : { ownerAccountId: root.ownerAccountId };
+    return { entry: { offset: file.sizeBytes, mtimeMs: file.mtimeMs, sessionId: file.sessionId, ...owner, state: INITIAL_PARSE_STATE, days: parsed.days }, invalid: parsed.invalidSteps };
+  }
+
   // Lee solo lo que el fichero creció desde la última vez. Si encogió (se reescribió), desde el principio.
   private async updateFile(file: TranscriptFile, root: TranscriptRoot, cached: CachedFile | undefined): Promise<{ entry: CachedFile; invalid: number }> {
+    if (root.format === 'agy') return this.updateAgyFile(file, root, cached);
     const fresh = cached === undefined || file.sizeBytes < cached.offset;
     let entry: CachedFile = fresh
       ? { offset: 0, sessionId: file.sessionId, ...(root.ownerAccountId === undefined ? {} : { ownerAccountId: root.ownerAccountId }), state: INITIAL_PARSE_STATE, days: {} }

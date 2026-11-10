@@ -12,7 +12,25 @@ const SUBAGENTS_DIR = 'subagents';
 
 // Los registros de una raíz según su formato.
 export function listTranscriptsOf(dir: string, format: TranscriptFormat): Promise<readonly TranscriptFile[]> {
-  return format === 'codex' ? listCodexRollouts(dir) : listTranscripts(dir);
+  if (format === 'codex') return listCodexRollouts(dir);
+  return format === 'agy' ? listAgyConversations(dir) : listTranscripts(dir);
+}
+
+const AGY_DB = '.db';
+const WAL_SUFFIX = '-wal';
+
+// `<perfil>/.gemini/antigravity-cli/conversations/<id>.db` (P-039 F3). Tamaño y fecha juntan la base y su -wal: agy
+// escribe en modo WAL y la base no cambia hasta el checkpoint.
+export async function listAgyConversations(dir: string): Promise<readonly TranscriptFile[]> {
+  const result: TranscriptFile[] = [];
+  for (const entry of await readDirOrEmpty(dir)) {
+    if (!entry.endsWith(AGY_DB)) continue;
+    const db = await describe(join(dir, entry), basename(entry, AGY_DB));
+    if (db === null) continue;
+    const wal = await describe(join(dir, `${entry}${WAL_SUFFIX}`), db.sessionId);
+    result.push(wal === null ? db : { ...db, sizeBytes: db.sizeBytes + wal.sizeBytes, mtimeMs: Math.max(db.mtimeMs, wal.mtimeMs) });
+  }
+  return result;
 }
 
 const CODEX_ROLLOUT = /^rollout-.*\.jsonl$/;
@@ -105,6 +123,7 @@ const CacheSchema = z.object({
   version: z.literal(USAGE_HISTORY_CACHE_VERSION),
   files: z.record(z.object({
     offset: count,
+    mtimeMs: z.number().optional(),
     sessionId: z.string().min(1),
     ownerAccountId: z.string().min(1).optional(),
     state: z.object({ recentIds: z.array(z.string()), cwd: z.string().optional(), model: z.string().optional(), atLimit: z.boolean().optional() }),

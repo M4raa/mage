@@ -214,7 +214,7 @@ import { codexTranscriptSource, codexTurnsBatches } from './conversations/codexT
 import type { TranscriptSource } from './transcripts/transcriptSource';
 import type { TranscriptBatch } from '@shared/transcripts';
 import { MIGRATE_CONVERSATION_SCHEMA } from './conversations/migrationParams';
-import { AgyHistoryService } from './conversations/agyHistory';
+import { AGY_CONVERSATIONS_DIR, AgyHistoryService } from './conversations/agyHistory';
 import { createAgySqliteStore, writeAgyConversationDb } from './conversations/agySqliteStore';
 import { AGY_TOKEN_PARTS } from './accounts/providerAccounts';
 import { AgyLoginService } from './accounts/agyLoginService';
@@ -1484,6 +1484,7 @@ const USAGE_HISTORY_FILE = 'usage-history.json';
 const usageHistoryService = new UsageHistoryService({
   roots: usageHistoryRoots,
   listTranscripts: listTranscriptsOf,
+  readAgySteps: (path) => createAgySqliteStore().readSteps(path),
   readRange,
   loadCache: () => {
     const path = join(app.getPath('userData'), USAGE_HISTORY_FILE);
@@ -1505,7 +1506,7 @@ const usageHistoryService = new UsageHistoryService({
 function usageHistoryRoots(): readonly TranscriptRoot[] {
   const seen = new Set<string>();
   const roots: TranscriptRoot[] = [];
-  const add = (dir: string, ownerAccountId?: string, format?: 'codex'): void => {
+  const add = (dir: string, ownerAccountId?: string, format?: 'codex' | 'agy'): void => {
     if (!existsSync(dir)) return;
     const key = canonicalPath(dir).toLowerCase();
     if (seen.has(key)) return;
@@ -1515,6 +1516,10 @@ function usageHistoryRoots(): readonly TranscriptRoot[] {
   for (const account of listAllAccounts()) {
     // Codex (P-039 F2): cada cuenta es su CODEX_HOME y sus registros son suyos.
     if (account.providerId === 'codex') add(join(account.configDir, 'sessions'), account.configDir, 'codex');
+    // agy (P-039 F3): las conversaciones de su perfil y, si es de suscripción, las del agy propio del usuario, que gastan de
+    // la misma suscripción (como el historial). Una carpeta ya vista no se cuenta dos veces.
+    const agyProfile = account.providerId === 'agy' ? agyProfileOfAccount(account.configDir) : null;
+    if (agyProfile !== null) for (const profile of [agyProfile, ...agyExternalProfileOf(account.configDir)]) add(join(profile, ...AGY_CONVERSATIONS_DIR), account.configDir, 'agy');
     if (account.providerId !== 'claude') continue;
     add(join(account.configDir, 'projects'));
     add(join(account.configDir, PRIVATE_PROFILE_DIR_NAME, 'projects'), account.configDir);
