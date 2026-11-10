@@ -8775,6 +8775,43 @@ const CHECKS = [
     },
   },
   {
+    // P-038 (captura del usuario, 10-11): con 5h al 43 % y 7d al 80 %, el aviso iba delante de la de 5h y el texto del
+    // consumo quedaba más alto que el resto de la barra. El aviso va con SU ventana y todo centrado en la misma línea.
+    name: 'P-038: barra de estado: el aviso va con su ventana y el consumo, alineado con el resto',
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().accounts);
+      try {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const id = store.getState().activeAccountId;
+          store.setState((s) => ({ accounts: s.accounts.map((a) => (a.id === id ? { ...a, usage: { fiveHour: { pct: 43, label: '2 h 10 m' }, weekly: { pct: 80, label: '8 h 5 m' } } } : a)) }));
+        });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const medido = await page.evaluate(() => {
+          const bar = document.querySelector('[data-status-bar]');
+          const centro = (el) => (el === null ? null : Math.round((el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2) * 2) / 2);
+          const meter = (name) => bar.querySelector(`[data-usage-meter="${name}"]`);
+          return {
+            avisoEn5h: meter('5h')?.querySelector('svg') !== null,
+            avisoEn7d: meter('7d')?.querySelector('svg') !== null,
+            severidad7d: meter('7d')?.getAttribute('data-usage-severity') ?? null,
+            centros: {
+              proveedor: centro(bar.querySelector('[data-status-provider]')),
+              cincoH: centro(meter('5h')?.lastElementChild ?? null),
+              sieteD: centro(meter('7d')?.lastElementChild ?? null),
+              servicio: centro(bar.lastElementChild),
+            },
+          };
+        });
+        const centros = Object.values(medido.centros).filter((c) => c !== null);
+        const ok = !medido.avisoEn5h && medido.avisoEn7d && medido.severidad7d === 'warn' && centros.length === 4 && Math.max(...centros) - Math.min(...centros) <= 1;
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((cuentas) => window.__mageDev.store.setState({ accounts: cuentas }), previo);
+      }
+    },
+  },
+  {
     name: 'P-038: el popover de uso con muchas cuentas cabe, tiene scroll y se puede entrar en él',
     async run(page) {
       const previo = await page.evaluate(() => ({ accounts: window.__mageDev.store.getState().accounts }));
