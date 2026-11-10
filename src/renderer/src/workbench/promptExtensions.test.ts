@@ -78,6 +78,16 @@ function seen(set: DecorationSet): readonly Seen[] {
   return out;
 }
 
+// Las decoraciones de LÍNEA (sangría francesa de las listas) con su estilo.
+function lineStyles(set: DecorationSet): readonly { readonly from: number; readonly style: string }[] {
+  const out: { from: number; style: string }[] = [];
+  set.between(0, Number.MAX_SAFE_INTEGER, (from, _to, value) => {
+    const attributes = value.spec.attributes as Record<string, string> | undefined;
+    if (value.spec.class === 'cm-mg-list-line') out.push({ from, style: attributes?.style ?? '' });
+  });
+  return out;
+}
+
 const stateAt = (doc: string, cursor: number): EditorState => EditorState.create({ doc, selection: { anchor: cursor } });
 
 describe('buildPromptDecorations', () => {
@@ -105,6 +115,19 @@ describe('buildPromptDecorations', () => {
 
     expect(seen(sets.atomic)).toEqual([]);
     expect(seen(sets.all)).toContainEqual({ from: 0, to: 3, widget: false });
+  });
+
+  it('buildPromptDecorations_listaSangrada_lineaConSangriaFrancesaDeSuCabeza', () => {
+    const sets = buildPromptDecorations(stateAt('hola\n  - uno\n3. dos', 0));
+
+    expect(lineStyles(sets.all)).toEqual([
+      { from: 5, style: 'padding-left: 2.2em; text-indent: -2.2em' },
+      { from: 13, style: 'padding-left: 1.65em; text-indent: -1.65em' },
+    ]);
+  });
+
+  it('buildPromptDecorations_textoSinLista_sinSangria', () => {
+    expect(lineStyles(buildPromptDecorations(stateAt('hola\nadios', 0)).all)).toEqual([]);
   });
 
   it('buildPromptDecorations_textoSinLista_sinAtomicos', () => {

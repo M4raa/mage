@@ -32,7 +32,8 @@ export interface UsageWindow {
 export interface Account {
   readonly id: string; // configDir de la cuenta (identificador estable y unico)
   readonly monogram: string; // letra del avatar
-  readonly alias: string; // "claude-p" (nombre del dir sin el punto inicial)
+  readonly alias: string; // "claude-p" (nombre del dir sin el punto inicial) o el elegido a mano (P-038 V16)
+  readonly baseAlias?: string; // el de la carpeta, para volver a él al quitar el elegido
   readonly provider: string; // "Claude" | "Codex" | "agy": el CLI de la cuenta
   // Proveedor de la cuenta (grupo E). Una conversacion nueva en ella usa este proveedor.
   readonly providerId: string;

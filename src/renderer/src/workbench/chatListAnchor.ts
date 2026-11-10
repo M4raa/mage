@@ -37,14 +37,41 @@ export function appendedTailKeys(prev: { readonly length: number; readonly lastK
 // Por debajo de este margen el usuario cuenta como «pegado» al final (mismo valor que `useStickToBottom`, el del panel de Actividad).
 export const STICK_TO_BOTTOM_PX = 80;
 
+// A esta distancia (o menos) se está EN el final: es lo único que vuelve a pegar tras haber subido a propósito.
+export const AT_BOTTOM_PX = 2;
+
+// Teclas con las que el usuario sube a leer o baja hacia el final (con el foco en el hilo).
+const SCROLL_UP_KEYS: ReadonlySet<string> = new Set(['PageUp', 'ArrowUp', 'Home']);
+const SCROLL_DOWN_KEYS: ReadonlySet<string> = new Set(['PageDown', 'ArrowDown', 'End', ' ']);
+
+// «El usuario se fue del final a propósito» y «desde entonces hizo un gesto hacia abajo». Lo comparte quien vuelve a
+// pegar a mano (enviar un mensaje): `resetAway` lo limpia.
+export interface AwayState {
+  away: boolean;
+  downIntent: boolean;
+}
+
+export function resetAway(state: AwayState): void {
+  state.away = false;
+  state.downIntent = false;
+}
+
+// Lo que llega de la rueda y del teclado (en tests, objetos planos).
+export interface ScrollIntentEvent {
+  readonly deltaY?: number;
+  readonly key?: string;
+}
+
+type ScrollerEventType = 'scroll' | 'wheel' | 'keydown' | 'pointerdown' | 'pointerup';
+
 // Lo que el seguimiento del final necesita del scroller (en tests, un objeto plano).
 export interface WatchedScroller<T> {
   scrollTop: number;
   readonly scrollHeight: number;
   readonly clientHeight: number;
   readonly firstElementChild: { readonly children: ArrayLike<T> } | null;
-  addEventListener(type: 'scroll', listener: () => void, options: { readonly passive: true }): void;
-  removeEventListener(type: 'scroll', listener: () => void): void;
+  addEventListener(type: ScrollerEventType, listener: (event: ScrollIntentEvent) => void, options: { readonly passive: true }): void;
+  removeEventListener(type: ScrollerEventType, listener: (event: ScrollIntentEvent) => void): void;
 }
 
 export interface SizeObserver<T> {
@@ -64,9 +91,57 @@ export function pinToBottom(scroller: Pick<WatchedScroller<unknown>, 'scrollTop'
 // Sigue el final del chat. «Pegado» solo cambia con un scroll: encoger la vista (un dock que aparece) o crecer el
 // contenido no despega. Mientras está pegado, cualquier cambio de tamaño del scroller o de los hijos de su viewport
 // (cabecera, lista y pie de Virtuoso) vuelve a pegarlo. Devuelve la función que lo desmonta.
-export function watchChatBottom<T>(scroller: WatchedScroller<T>, stuck: { current: boolean }, createObserver: (onResize: () => void) => SizeObserver<T>): () => void {
+//
+// P-038: la rueda hacia arriba (o ↑/RePág/Inicio) despega EN EL ACTO y solo vuelve a pegar al llegar al final real
+// TRAS UN GESTO DEL USUARIO hacia abajo (rueda abajo, ↓/AvPág/Fin/espacio, arrastrar la barra). Antes, con el margen de
+// 80 px, un golpe de rueda corto quedaba dentro del margen y el texto en streaming lo devolvía abajo; y MEDIDO después
+// (verify:gui, instrumentado): Virtuoso, al medir el texto que llega, emite un scroll con distancia 0 que el usuario no
+// ha hecho, y «llegar al final» con cualquier scroll lo reenganchaba igual.
+//
+// Y al revés (informe del usuario, 10-11: «al volver a un chat a veces se queda por medio»): un scroll SIN gesto
+// tampoco despega. Al remontar la lista, Virtuoso corrige `scrollTop` mientras mide las filas; si esa corrección caía a
+// más de 80 px del final, despegaba y ya nadie volvía a bajar. Ahora solo despegan la rueda, las teclas y arrastrar la
+// barra.
+export function watchChatBottom<T>(
+  scroller: WatchedScroller<T>,
+  stuck: { current: boolean },
+  createObserver: (onResize: () => void) => SizeObserver<T>,
+  state: AwayState = { away: false, downIntent: false },
+): () => void {
+  const leave = (): void => {
+    state.away = true;
+    state.downIntent = false;
+    stuck.current = false;
+  };
+  // Arrastrando la barra (puntero pulsado sobre el scroller): la dirección solo se sabe por el scroll.
+  let dragging = false;
   const onScroll = (): void => {
-    stuck.current = distanceToBottom(scroller) <= STICK_TO_BOTTOM_PX;
+    const distance = distanceToBottom(scroller);
+    if (distance <= AT_BOTTOM_PX && state.downIntent) resetAway(state);
+    else if (dragging && distance > STICK_TO_BOTTOM_PX) state.away = true;
+    // Sin re-pegar aquí: el scroll ajeno es de Virtuoso, y empujarlo dentro de su propio scroll le descuadra el
+    // «estoy al final» con el que sigue el contenido que crece (medido: se quedaba a 787 px). Re-pegan el observador y
+    // `settleAtBottom`.
+    stuck.current = !state.away;
+  };
+  const onWheel = (event: ScrollIntentEvent): void => {
+    dragging = false;
+    const deltaY = event.deltaY ?? 0;
+    if (deltaY < 0) leave();
+    else if (deltaY > 0) state.downIntent = true;
+  };
+  const onKey = (event: ScrollIntentEvent): void => {
+    if (event.key === undefined) return;
+    if (SCROLL_UP_KEYS.has(event.key)) leave();
+    else if (SCROLL_DOWN_KEYS.has(event.key)) state.downIntent = true;
+  };
+  // Arrastrar la barra: no se sabe la dirección hasta el scroll, así que cuenta como gesto hacia abajo si acaba al final.
+  const onPointer = (): void => {
+    state.downIntent = true;
+    dragging = true;
+  };
+  const onPointerUp = (): void => {
+    dragging = false;
   };
   const observer = createObserver(() => {
     if (stuck.current) pinToBottom(scroller);
@@ -74,9 +149,17 @@ export function watchChatBottom<T>(scroller: WatchedScroller<T>, stuck: { curren
   observer.observe(scroller);
   for (const child of Array.from(scroller.firstElementChild?.children ?? [])) observer.observe(child);
   scroller.addEventListener('scroll', onScroll, { passive: true });
+  scroller.addEventListener('wheel', onWheel, { passive: true });
+  scroller.addEventListener('keydown', onKey, { passive: true });
+  scroller.addEventListener('pointerdown', onPointer, { passive: true });
+  scroller.addEventListener('pointerup', onPointerUp, { passive: true });
   return () => {
     observer.disconnect();
     scroller.removeEventListener('scroll', onScroll);
+    scroller.removeEventListener('wheel', onWheel);
+    scroller.removeEventListener('keydown', onKey);
+    scroller.removeEventListener('pointerdown', onPointer);
+    scroller.removeEventListener('pointerup', onPointerUp);
   };
 }
 

@@ -132,9 +132,9 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (params.permissionMode !== undefined && params.permissionMode.length > 0) {
       args.push('--permission-mode', params.permissionMode);
     }
-    if (params.projectInstructions !== undefined && params.projectInstructions.length > 0) {
-      args.push('--append-system-prompt', params.projectInstructions);
-    }
+    // Un solo `--append-system-prompt`: las instrucciones del proyecto y el aviso de Mage (P-038), juntos.
+    const appended = [params.projectInstructions ?? '', params.shared?.systemNotice ?? ''].filter((text) => text.length > 0).join('\n\n');
+    if (appended.length > 0) args.push('--append-system-prompt', appended);
     // Lo comun (MCP compartidos y extensiones, hooks y permisos) traducido a flags de Claude.
     const shared = claudeSharedLaunch(params.shared, params.accountDir, this.writeMcpConfig);
     args.push(...shared.args);

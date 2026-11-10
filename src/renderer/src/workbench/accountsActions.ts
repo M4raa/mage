@@ -12,7 +12,7 @@ import { describeError } from './describeError';
 // tal cual. Este modulo es el UNICO que escribe `accounts`, `usageByAccount`, `modelCatalogByAccount` y `status`
 // (borrar una cuenta, que cierra sus pestañas, sigue en el store).
 
-export type AccountsActions = Pick<WorkbenchState, 'loadModelCatalog' | 'refreshAccounts' | 'assignAccountAccents' | 'refreshUsage' | 'refreshActiveUsage' | 'refreshStatus'>;
+export type AccountsActions = Pick<WorkbenchState, 'loadModelCatalog' | 'refreshAccounts' | 'refreshLogin' | 'assignAccountAccents' | 'refreshUsage' | 'refreshActiveUsage' | 'refreshStatus'>;
 
 export interface AccountsDeps {
   readonly mage: MageApi;
@@ -35,6 +35,13 @@ export function createAccountsActions(deps: AccountsDeps): AccountsActions {
       set((s) => ({ modelCatalogByAccount: { ...s.modelCatalogByAccount, [configDir]: models } }));
     },
 
+    // «Refrescar sesión» (P-038): el CLI de la cuenta renueva su token y se relee su estado y su uso.
+    refreshLogin: async (accountId) => {
+      await mage.refreshLogin(accountId);
+      await get().refreshAccounts();
+      if (get().accounts.some((account) => account.id === accountId && account.loginStatus === 'logged_in')) await get().refreshUsage(accountId);
+    },
+
     refreshAccounts: async () => {
       const infos = await mage.listAccounts();
       // Catalogo de modelos de cada cuenta (P-026 2.4): en segundo plano, no retrasa la lista.
@@ -47,7 +54,7 @@ export function createAccountsActions(deps: AccountsDeps): AccountsActions {
         // toAccountView repone el placeholder de uso; re-fusionamos el uso real ya conocido para no
         // parpadear a 0% mientras se re-descubren las cuentas (el placeholder solo queda si no hay dato).
         const accounts = infos.map((infoItem) => {
-          const view = toAccountView(infoItem, s.settings.accentByAccount[infoItem.configDir]);
+          const view = toAccountView(infoItem, s.settings.accentByAccount[infoItem.configDir], s.settings.aliasByAccount[infoItem.configDir]);
           const info = s.usageByAccount[view.id];
           return info === null || info === undefined ? view : { ...view, usage: toUsageWindows(info, Date.now()) };
         });

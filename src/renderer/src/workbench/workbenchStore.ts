@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { defaultEffortForProvider, defaultModelForProvider, providerFallbackModel, providerModels, type ApiKeyUpdate } from './models';
+import { defaultEffortForProvider, defaultModelForProvider, defaultPermissionForProvider, providerFallbackModel, providerModels, type ApiKeyUpdate } from './models';
 import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo, TurnUsage } from '@shared/events';
@@ -14,7 +14,7 @@ import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc'
 import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
 import type { AgyUsageSnapshot, UsageInfo } from '@shared/usage';
 import type { StatusInfo } from '@shared/status';
-import { aliasFromConfigDir, applyAccentOverrides } from './accountView';
+import { aliasFromConfigDir, applyAccountOverrides } from './accountView';
 import { nextIndexForArrow } from './a11y/keyboardNav';
 import { canChangeCwd } from './cwdChange';
 import {
@@ -155,6 +155,7 @@ import { isWindowsPlatform } from './keybindings/platform';
 import { describeError } from './describeError';
 import { localized, renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
+import { mergeBackgroundTasks, type BackgroundTaskRow } from './backgroundTasks';
 import { formatClockTime } from '../i18n/format';
 
 // Contexto en placeholder hasta M1.3 (el uso/contexto real llega con UsageService).
@@ -186,6 +187,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   addAccountOpen: boolean; // dialogo de alta de cuenta (crear + login) abierto
   handoffOpen: boolean; // modal de prompt handoff (preview + copiar / nuevo chat) abierto
   settingsOpen: boolean; // pantalla de Configuracion de la app (M2.3) abierta
+  accountsUsageOpen: boolean; // pantalla «Cuentas y consumo» (P-038 V11) abierta
   // Seccion con la que se abre Configuracion (P-028, 41: «Añadir cuenta» del gateway lleva a
   // «Proveedores y modelos»). null = la de siempre. La valida SettingsView contra su lista.
   settingsSection: string | null;
@@ -255,6 +257,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // pestana. Ausente hasta el primer `result`; entonces el Inspector la prefiere al calculo derivado
   // de la transcripcion (que no ve el system prompt, las tools, las skills ni la memoria).
   readonly contextUsageByChat: Readonly<Record<string, ContextUsage>>;
+  // Tareas vivas en segundo plano que no son subagentes (P-038 V2), por pestaña: las pinta su dock encima del input.
+  readonly backgroundTasksByChat: Readonly<Record<string, readonly BackgroundTaskRow[]>>;
   // Servidores MCP que la sesion REALMENTE cargo (mcp_servers del `session_init`, D1 Fase 2), por
   // pestana. Antes se descartaba: alimenta la pestaña "MCP" del Inspector (comun vs propio).
   readonly mcpServersByChat: Readonly<Record<string, readonly McpServerStatus[]>>;
@@ -412,6 +416,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // --- Shell (cuentas y pestanas reales) ---
   init: () => void;
   refreshAccounts: () => Promise<void>;
+  // Renueva el token caducado de una cuenta de Claude con su CLI, sin turno, y relee su estado (P-038).
+  refreshLogin: (accountId: string) => Promise<void>;
   // #46/H3: guarda un acento (el menos usado) para cada cuenta que aún no tiene uno. Solo con los ajustes
   // ya cargados: antes, persistir pisaría los colores elegidos a mano.
   assignAccountAccents: () => void;
@@ -448,6 +454,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   openHandoff: () => void;
   closeHandoff: () => void;
   openSettings: (section?: string) => void;
+  openAccountsUsage: () => void;
+  closeAccountsUsage: () => void;
   closeSettings: () => void;
   // Abre (o enfoca) la pseudo-pestaña de novedades en `version`, o en la instalada sin argumento.
   openReleaseNotes: (version?: string) => void;
@@ -492,6 +500,13 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setAccountAccent: (accountId: string, colorIndex: number | undefined) => void;
   // Conectores de claude.ai de una cuenta (C3-f): aplica a las sesiones que se abran despues.
   setClaudeAiConnectorsEnabled: (accountId: string, enabled: boolean) => void;
+  // Nombre propio de una cuenta (null = el de su carpeta) y ocultarla o no (P-038 V16).
+  renameAccount: (accountId: string, alias: string | null) => void;
+  setPlanPrice: (accountId: string, microUsd: number | null) => void;
+  setAdminMode: (enabled: boolean) => void;
+  setAccountHidden: (accountId: string, hidden: boolean) => void;
+  // MCP de Mage en todas las conversaciones (P-038 V7): aplica a las que se lancen o reabran después.
+  setMageMcpEnabled: (enabled: boolean) => void;
   // Comando de agy permitido, denegado o quitado (null). Se guarda al momento: agy lee sus reglas al lanzar.
   setAgyCommandVerdict: (command: string, verdict: AgyCommandVerdict | null) => void;
   // Carpetas extra que Mage enlaza en el perfil de agy (relativas a la casa del usuario).
@@ -1067,6 +1082,7 @@ function dropLiveSessionOfTab(mage: MageClient, set: SetFn, target: { readonly t
     extensionsByChat: without(s.extensionsByChat, tabId),
     resolvedModelByChat: without(s.resolvedModelByChat, tabId),
     contextUsageByChat: without(s.contextUsageByChat, tabId),
+    backgroundTasksByChat: without(s.backgroundTasksByChat, tabId),
     providerUsageByChat: without(s.providerUsageByChat, tabId),
     rateLimitByChat: without(s.rateLimitByChat, tabId),
   }));
@@ -1480,6 +1496,7 @@ export function createWorkbenchStore(mage: MageClient) {
     handoffOpen: false,
     accountSwitchPrompt: null,
     settingsOpen: false,
+    accountsUsageOpen: false,
     settingsSection: null,
     releaseNotesVersion: null,
     appVersion: '',
@@ -1510,6 +1527,7 @@ export function createWorkbenchStore(mage: MageClient) {
     modelCatalogByAccount: {},
     subagentsByChat: {},
     contextUsageByChat: {},
+    backgroundTasksByChat: {},
     toolsByChat: {},
     extensionsByChat: {},
     activitySubagentByChat: {},
@@ -1738,6 +1756,7 @@ export function createWorkbenchStore(mage: MageClient) {
           slashCommandsByChat: without(s.slashCommandsByChat, tabId),
           subagentsByChat: without(s.subagentsByChat, tabId),
           contextUsageByChat: without(s.contextUsageByChat, tabId),
+          backgroundTasksByChat: without(s.backgroundTasksByChat, tabId),
           providerUsageByChat: without(s.providerUsageByChat, tabId),
           lastTurnUsageByChat: without(s.lastTurnUsageByChat, tabId),
           missingConversationByChat: without(s.missingConversationByChat, tabId),
@@ -1970,7 +1989,7 @@ export function createWorkbenchStore(mage: MageClient) {
       const settingsLoaded = mage.loadSettings().then((settings) => {
         applyThemeFromSettings(settings, systemPrefersDark());
         mage.setUiScale(settings.uiScale);
-        set((s) => ({ settings, settingsLoaded: true, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
+        set((s) => ({ settings, settingsLoaded: true, accounts: applyAccountOverrides(s.accounts, settings) }));
       });
       settingsLoaded.catch((err: unknown) => console.warn('No se pudo cargar la configuracion:', describeError(err)));
       // Novedades: DESPUES de restaurar el workspace (si no, restaurar reescribe `splitLayout` y se come
@@ -1993,7 +2012,7 @@ export function createWorkbenchStore(mage: MageClient) {
       mage.onSettingsChanged((settings) => {
         applyThemeFromSettings(settings, systemPrefersDark());
         mage.setUiScale(settings.uiScale);
-        set((s) => ({ settings, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
+        set((s) => ({ settings, accounts: applyAccountOverrides(s.accounts, settings) }));
       });
 
       // Una pestaña que llega de otra ventana (la arrastraste fuera, o la mandaste por el menu). Se
@@ -2019,6 +2038,10 @@ export function createWorkbenchStore(mage: MageClient) {
       // El sondeo de modelos de arranque (P-026 2.4) termina cuando el selector ya esta pintado.
       mage.onModelCatalogChanged(({ configDir, models }) => {
         set((s) => ({ modelCatalogByAccount: { ...s.modelCatalogByAccount, [configDir]: models } }));
+        // El sondeo de arranque también renueva el token de una cuenta expirada (P-038): se relee su estado.
+        if (get().accounts.some((account) => account.id === configDir && account.loginStatus === 'expired')) {
+          void get().refreshAccounts().catch((err: unknown) => console.warn('No se pudo releer las cuentas:', err));
+        }
       });
     },
 
@@ -2129,8 +2152,9 @@ export function createWorkbenchStore(mage: MageClient) {
       }
       const alias = get().accounts.find((a) => a.id === accountId)?.alias ?? (accountId || providerLabel(provider, get().settings.customProviders));
       // TODAS las rutas que crean pestañas pasan por aqui (nueva conversacion, dialogo, clon): el modo por
-      // defecto de Ajustes (P-028 6) se aplica en un solo sitio. Solo Claude tiene modos de permiso.
-      const initialMode = permissionMode ?? (provider === 'claude' ? get().settings.defaultPermissionMode : '');
+      // defecto de Ajustes (P-028 6) se aplica en un solo sitio. Claude tiene el suyo; Codex y agy, el de su ficha (P-038).
+      const settings = get().settings;
+      const initialMode = permissionMode ?? (provider === 'claude' ? settings.defaultPermissionMode : defaultPermissionForProvider(settings.defaultModelByProvider, provider));
       const tab: Tab = {
         id: nextTabId(),
         accountId,
@@ -2541,6 +2565,8 @@ export function createWorkbenchStore(mage: MageClient) {
     closeHandoff: () => set({ handoffOpen: false }),
     openSettings: (section) => set({ settingsOpen: true, settingsSection: section ?? null }),
     closeSettings: () => set({ settingsOpen: false }),
+    openAccountsUsage: () => set({ accountsUsageOpen: true }),
+    closeAccountsUsage: () => set({ accountsUsageOpen: false }),
 
     openReleaseNotes: (version) => {
       set({ releaseNotesVersion: version ?? null });
@@ -3437,6 +3463,8 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
         ...withBlocks(state, tabId, next),
         streamingIdByChat: { ...state.streamingIdByChat, [tabId]: null },
         statusByChat: { ...state.statusByChat, [tabId]: 'idle' },
+        // El proceso murió: sus tareas en segundo plano con él (P-038 V2).
+        backgroundTasksByChat: without(state.backgroundTasksByChat, tabId),
       };
     }
     // Modo de permiso (M2.6): refleja el modo actual venga de donde venga (nuestro cambio, ExitPlanMode,
@@ -3516,6 +3544,12 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     case 'conversation_rewound':
     case 'thread_history':
       return {};
+    // Tareas en segundo plano (P-038 V2): el CLI manda la lista ENTERA; vacía, se quita la entrada.
+    case 'background_tasks': {
+      const next = mergeBackgroundTasks(state.backgroundTasksByChat[tabId], event.tasks, Date.now());
+      if (next === state.backgroundTasksByChat[tabId]) return {};
+      return { backgroundTasksByChat: next.length === 0 ? without(state.backgroundTasksByChat, tabId) : { ...state.backgroundTasksByChat, [tabId]: next } };
+    }
     // Desglose de contexto del propio CLI (D3): no toca la conversacion, alimenta el Inspector.
     case 'context_usage':
       return { contextUsageByChat: { ...state.contextUsageByChat, [tabId]: event.usage } };

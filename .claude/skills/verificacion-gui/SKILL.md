@@ -13,6 +13,12 @@ description: Cómo verificar cambios de UI de Mage por CDP/Playwright y evitar l
 > que este harness vino a sustituir.
 
 
+> **La tanda corre en segundo plano** (desde la 0.1.5): la ventana va fuera de todas las pantallas, sin robar el foco,
+> y la página cree tenerlo (`Emulation.setFocusEmulationEnabled`); Chromium no la trata como tapada y pinta a su
+> ritmo (`src/main/windows/backgroundTestWindow.ts`). Una comprobación nueva no debe traerla al frente
+> (`page.bringToFront`, `window.focus()` del SO): el foco ya está simulado. `--foreground` la deja a la vista, y
+> `--keep` y `--perf-baseline` también, porque ahí se mira o se mide la cadencia real.
+
 Un agente headless no puede pilotar la ventana de Electron a ojo, pero **sí** puede medir el DOM real.
 La regla del proyecto: *"verifica end-to-end (arranca lo construido, no solo tests)"*. Los tests en
 verde no son verificación de UI.

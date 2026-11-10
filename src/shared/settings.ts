@@ -34,6 +34,11 @@ export interface ChatProject {
 
 export const APP_SETTINGS_VERSION = 1;
 
+// Largo máximo de un alias de cuenta (P-038 V16): cabe en la barra de cuentas y en la sublínea.
+export const ACCOUNT_ALIAS_MAX = 40;
+// Tope del precio del plan que se acepta (10 000 $ al mes en micro-USD): por encima es un error de teclado.
+export const PLAN_PRICE_MAX_MICRO_USD = 10_000_000_000;
+
 // Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6). '' = el de la cuenta
 // (Mage adopta el que reporta el CLI). «Omitir permisos» se ofrece desde la 0.1.1 R2 (punto 6): medido en el
 // CLI 2.1.285 que arranca en `bypassPermissions` con `--permission-mode` + el flag de `claudeAdapter`. Ajustes
@@ -116,6 +121,9 @@ export interface AppSettings {
   readonly dockDefaultsVersion: number;
   // Widget flotante always-on-top (M3): si esta activo, se abre al arrancar. Default false (opt-in).
   readonly widgetEnabled: boolean;
+  // MCP de Mage (P-038 V7): activado, TODA conversación de Claude o Codex nueva o reabierta lo recibe al lanzarse
+  // (también las privadas). Default false (opt-in).
+  readonly mageMcpEnabled: boolean;
   // Opacidad de los FONDOS de la app, 50..100 (%). 100 = opaco, como siempre. Por debajo, las
   // superficies (ventana, rail, paneles, bloques) se pintan con alfa para dejar ver lo que hay detras
   // — en Windows 11, el material acrilico que activa el proceso main. El suelo es 50 A PROPOSITO:
@@ -183,6 +191,17 @@ export interface AppSettings {
   // Color de cada cuenta elegido por el usuario (PERS-3, P-028 punto 2): config dir -> indice de acento
   // (0..ACCOUNT_ACCENT_COUNT-1). Una cuenta ausente usa el de su posicion, como siempre. Default {}.
   readonly accentByAccount: Readonly<Record<string, number>>;
+  // Nombre elegido a mano para una cuenta («Cuentas y consumo», P-038 V16). Sin entrada, el de su carpeta.
+  readonly aliasByAccount: Readonly<Record<string, string>>;
+  // Precio mensual del plan de cada cuenta en micro-USD enteros (P-039 D6): con él, «Cuentas y consumo» dice cuántas
+  // veces lo que se paga vale el consumo a precio de API. Sin entrada, no se calcula. Default {}.
+  readonly planPriceMicroUsdByAccount: Readonly<Record<string, number>>;
+  // Modo admin (P-039 D5): enseña las métricas de actividad, proyectos y herramientas y picos de ventana. Se recuerda
+  // entre arranques. Default false.
+  readonly adminMode: boolean;
+  // Cuentas ocultas (P-038 V16): fuera de la barra de cuentas, del selector y del popover de uso; su sesión,
+  // conversaciones y ficheros no se tocan. Se reactivan desde «Cuentas y consumo».
+  readonly hiddenAccounts: readonly string[];
   // Cuentas de Claude (config dir) con los conectores de claude.ai APAGADOS: sus sesiones se lanzan con
   // `ENABLE_CLAUDEAI_MCP_SERVERS=false` (medido en 2.1.285: 0 conectores). No se escribe nada en su
   // config dir. Default []: todas los usan, como siempre.
@@ -287,6 +306,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   separatorContrast: 'normal',
   dockDefaultsVersion: 0,
   widgetEnabled: false,
+  mageMcpEnabled: false,
   backgroundOpacity: 100,
   importedThemes: [],
   activeThemeId: null,
@@ -305,6 +325,10 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   uiScale: 100,
   defaultProvider: 'claude',
   accentByAccount: {},
+  aliasByAccount: {},
+  planPriceMicroUsdByAccount: {},
+  adminMode: false,
+  hiddenAccounts: [],
   claudeAiConnectorsOff: [],
   artifactEnabled: false,
   ghNoticeDismissed: false,

@@ -24,6 +24,10 @@ import {
   applyRuntimeProbe,
   probeErrorText,
   draftFromProvider,
+  defaultModelForProvider,
+  defaultPermissionForProvider,
+  permissionSettingKey,
+  settingsEffortLevels,
   type CustomProviderDraft,
 } from './models';
 
@@ -454,5 +458,44 @@ describe('probeErrorText', () => {
 
   it('probeErrorText_sinFallo_devuelveNull', () => {
     expect(probeErrorText(null)).toBeNull();
+  });
+});
+
+describe('settingsEffortLevels', () => {
+  const codex = [
+    { id: 'sol', label: 'Sol', supportedEfforts: ['low', 'medium', 'high', 'max'] },
+    { id: 'luna', label: 'Luna', supportedEfforts: ['low', 'high', 'xhigh'] },
+    { id: 'viejo', label: 'Viejo' },
+  ];
+
+  it('settingsEffortLevels_proveedorConNivelesFijos_losFijos', () => {
+    expect(settingsEffortLevels(['low', 'max'], codex, 'sol')).toEqual(['low', 'max']);
+  });
+
+  it('settingsEffortLevels_modeloPorDefectoConCatalogo_losDeEseModelo', () => {
+    expect(settingsEffortLevels([], codex, 'luna')).toEqual(['low', 'high', 'xhigh']);
+  });
+
+  it('settingsEffortLevels_automatico_laUnionEnOrdenSinRepetir', () => {
+    expect(settingsEffortLevels([], codex, '')).toEqual(['low', 'medium', 'high', 'max', 'xhigh']);
+  });
+
+  it('settingsEffortLevels_sinCatalogos_vacio', () => {
+    expect(settingsEffortLevels([], [{ id: 'x', label: 'X' }], '')).toEqual([]);
+    expect(settingsEffortLevels([], [], '')).toEqual([]);
+  });
+});
+
+describe('defaultPermissionForProvider', () => {
+  it('defaultPermissionForProvider_guardado_loDevuelveYElModeloNoLoConfunde', () => {
+    const defaults = { [permissionSettingKey('codex')]: ':workspace', codex: 'sol' };
+
+    expect(defaultPermissionForProvider(defaults, 'codex')).toBe(':workspace');
+    expect(defaultModelForProvider(defaults, 'codex')).toBe('sol');
+    expect(defaultModelForProvider(defaults, permissionSettingKey('codex'))).toBe('');
+  });
+
+  it('defaultPermissionForProvider_sinGuardar_vacio', () => {
+    expect(defaultPermissionForProvider({}, 'agy')).toBe('');
   });
 });

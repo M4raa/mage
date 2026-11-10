@@ -72,6 +72,9 @@
   --color-mg-danger-strong-hover: #6a3838;
 
   /* Aviso ambar (skin de contexto medio) */
+  /* El color de aviso «a secas» (punto, borde y texto de una etiqueta de aviso). Faltaba: ocho sitios usaban
+     `text-mg-warn`/`border-mg-warn`/`bg-mg-warn` y se pintaban sin color (P-038; p. ej. la etiqueta «Factura API»). */
+  --color-mg-warn: #e0c98a;
   --color-mg-warn-text: #e0c98a;
   --color-mg-warn-border: #5a5030;
   --color-mg-warn-bg: #242017;
@@ -203,6 +206,7 @@
   --color-mg-danger-strong-hover: #b42318;
 
   /* Aviso ambar */
+  --color-mg-warn: #92610a;
   --color-mg-warn-text: #92610a;
   --color-mg-warn-border: #f0d9a0;
   --color-mg-warn-bg: #fef8ec;
@@ -506,8 +510,16 @@ select:focus-visible,
 }
 /* La viñeta: un widget `•` que sustituye al `- ` (atómico, como `[Imagen N]`). Los numeros de lista NO pasan por
    aqui: son texto real y se ven siempre. */
+/* Cabeza de una línea de lista (P-038): anchos fijos puestos desde `promptExtensions` para la sangría francesa. El
+   `text-indent` negativo de la línea se hereda: dentro de estas cajas se anula. */
+.cm-mg-bullet-painted,
+.cm-mg-ordinal,
+.cm-mg-list-indent {
+  display: inline-block;
+  white-space: pre;
+  text-indent: 0;
+}
 .cm-mg-bullet-painted {
-  margin-right: 0.45em;
   color: var(--color-mg-ter);
 }
 .cm-mg-ordinal {

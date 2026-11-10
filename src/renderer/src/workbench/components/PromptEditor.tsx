@@ -22,6 +22,8 @@ export interface PromptEditorHandle {
   // Aplica un resultado de `promptEditing` (indentar, desindentar, continuar lista) como una
   // transaccion, reponiendo la seleccion. Es lo que sustituye al `pendingSelectionRef` del textarea.
   applyTextState: (next: TextState) => void;
+  // Caja en pantalla del carácter en `pos` (null si aún no está pintado): ancla los popovers de `@` y `/` (P-038).
+  coordsAt: (pos: number) => { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number } | null;
 }
 
 export interface PromptEditorProps {
@@ -37,34 +39,13 @@ export interface PromptEditorProps {
   // Devuelve `true` si la tecla se ha consumido (entonces CodeMirror no la ve).
   readonly onKeyDown: (event: KeyboardEvent) => boolean;
   readonly onPasteImages: (files: readonly File[]) => void;
-  // El contenido pasa a ocupar mas (o menos) de una linea visual (P-026 3.1). Solo se llama al CAMBIAR.
-  readonly onWrapChange: (wraps: boolean) => void;
-  // Ancho en px del texto cuando cabe en UNA linea visual (sin saltos), o null si envuelve/esta vacio. Con
-  // el decide la barra si puede volver a poner los selectores en linea (P-028 10). Solo se llama al CAMBIAR.
-  readonly onTextWidthChange: (width: number | null) => void;
-  // Selectores en su propia fila: el editor se queda con todo el ancho de la suya.
-  readonly stacked: boolean;
   readonly handleRef: Ref<PromptEditorHandle>;
 }
-
-// Mas de una linea visual: la altura del contenido pasa de 1,5 lineas. Lo mide CodeMirror (valores ya
-// calculados, O(1)): nada de medir el DOM a mano en cada tecla.
-const WRAP_LINE_FACTOR = 1.5;
 
 // `cut` tambien es un evento `delete.*`, pero NO borra el adjunto (el usuario puede pegar el token en otro
 // sitio): se excluye.
 function isUserDelete(update: ViewUpdate): boolean {
   return update.transactions.some((tr) => tr.isUserEvent('delete') && !tr.isUserEvent('delete.cut'));
-}
-
-// Ancho del texto si ocupa una sola linea logica y visual; null si esta vacio o tiene saltos de linea.
-// `coordsAtPos` da la posicion en pantalla del final del documento (null si aun no esta pintado).
-function singleLineTextWidth(view: EditorView): number | null {
-  const doc = view.state.doc;
-  if (doc.length === 0 || doc.lines > 1) return null;
-  const end = view.coordsAtPos(doc.length);
-  if (end === null) return null;
-  return Math.ceil(end.right - view.contentDOM.getBoundingClientRect().left);
 }
 
 export function PromptEditor({
@@ -76,19 +57,14 @@ export function PromptEditor({
   onSelectionChange,
   onKeyDown,
   onPasteImages,
-  onWrapChange,
-  onTextWidthChange,
-  stacked,
   handleRef,
 }: PromptEditorProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   // Los callbacks viven en una ref para que el editor se cree UNA vez: recrearlo en cada render
   // perderia el foco, el historial y el cursor a cada tecla.
-  const handlersRef = useRef({ onChange, onSelectionChange, onKeyDown, onPasteImages, onWrapChange, onTextWidthChange });
-  handlersRef.current = { onChange, onSelectionChange, onKeyDown, onPasteImages, onWrapChange, onTextWidthChange };
-  const wrapsRef = useRef(false);
-  const textWidthRef = useRef<number | null>(null);
+  const handlersRef = useRef({ onChange, onSelectionChange, onKeyDown, onPasteImages });
+  handlersRef.current = { onChange, onSelectionChange, onKeyDown, onPasteImages };
   // El placeholder SI cambia (depende de `disabled`: «Abre una pestaña…» sin pestaña): va en su propio
   // compartimento para reconfigurarlo sin recrear el editor.
   const placeholderRef = useRef(new Compartment());
@@ -124,17 +100,6 @@ export function PromptEditor({
           EditorView.updateListener.of((update) => {
             if (update.docChanged) handlersRef.current.onChange(update.state.doc.toString(), isUserDelete(update));
             if (update.docChanged || update.selectionSet) handlersRef.current.onSelectionChange(update.state.selection.main.head);
-            if (!update.docChanged && !update.geometryChanged) return;
-            // Con el documento vacio el que puede envolver es el PLACEHOLDER, no el texto del usuario: no cuenta.
-            const wraps = update.state.doc.length > 0 && update.view.contentHeight > update.view.defaultLineHeight * WRAP_LINE_FACTOR;
-            if (wraps !== wrapsRef.current) {
-              wrapsRef.current = wraps;
-              handlersRef.current.onWrapChange(wraps);
-            }
-            const width = wraps ? null : singleLineTextWidth(update.view);
-            if (width === textWidthRef.current) return;
-            textWidthRef.current = width;
-            handlersRef.current.onTextWidthChange(width);
           }),
         ],
       }),
@@ -193,6 +158,11 @@ export function PromptEditor({
         });
         view.focus();
       },
+      coordsAt: (pos) => {
+        const view = viewRef.current;
+        if (view === null || pos < 0 || pos > view.state.doc.length) return null;
+        return view.coordsAtPos(pos);
+      },
     }),
     [],
   );
@@ -211,9 +181,8 @@ export function PromptEditor({
   return (
     <div
       ref={hostRef}
-      className={`min-w-0 ${stacked ? 'flex-[1_1_calc(100%-2rem)]' : 'flex-[1_1_160px]'}`}
+      className="min-w-0 flex-1"
       data-prompt-editor="true"
-      data-prompt-layout={stacked ? 'stacked' : 'inline'}
     />
   );
 }

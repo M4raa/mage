@@ -147,6 +147,9 @@ const CODEX_PROFILE_LABEL_KEY: Readonly<Record<string, 'prompt.permission.codex.
   ':danger-full-access': 'prompt.permission.codex.dangerFullAccess',
 };
 
+// Los tres perfiles de serie de Codex: los de Ajustes antes de que Codex se haya sondeado (P-038).
+export const CODEX_BUILTIN_PROFILES: readonly string[] = Object.keys(CODEX_PROFILE_LABEL_KEY);
+
 // Pasos del deslizador con los modos QUE EXPONE el CLI: los conocidos en su escala de siempre y los
 // nuevos detras, con su nombre crudo. null (el CLI no contesto) = la lista fija de Mage.
 export function permissionStepsFor(cliModes: readonly string[] | null): readonly SliderStep[] {

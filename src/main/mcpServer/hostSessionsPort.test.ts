@@ -55,7 +55,7 @@ function setup(options: {
   const deps = {
     caller: { sessionId: 'caller-s', conversationId: 'caller-c', accountId: 'acc1' },
     log: {
-      watch: vi.fn(), recordInstruction: vi.fn(), messagesAfter: vi.fn(() => []),
+      watch: vi.fn(), recordInstruction: vi.fn(), messagesAfter: vi.fn(() => []), readMessages: vi.fn(() => []),
       get: (id: string) => views.find((v) => v.child.conversationId === id) ?? null, list: () => views,
       recordQuestion: vi.fn((): 'recorded' | 'creator_closed' => 'recorded'), settleQuestion: vi.fn(() => false),
       ...options.log,

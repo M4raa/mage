@@ -100,15 +100,18 @@ describe('createMcpConnector', () => {
     expect(JSON.stringify(result)).toContain('delegation_depth_exceeded');
   });
 
-  it('open_knownCallerWithBrowser_onlySevenSessionTools', async () => {
+  // P-038: las `mage_browser_*` vuelven (en la 0.1.4 estaban apagadas: la vista aparcada no se pintaba y ni el clic, ni
+  // la escritura ni la captura llegaban; lo arregla `backgroundThrottling: false`, medido con spike/browser-agent-e2e.mjs).
+  it('open_knownCallerWithBrowser_sessionAndBrowserTools', async () => {
     const browserFor = vi.fn(() => ({}) as BrowserToolsPort);
     const client = await connect(makeDeps({ browserFor }), CREDENTIAL);
 
     const { tools } = await client.listTools();
 
-    expect(tools.map((tool) => tool.name).sort()).toEqual(TOOLS);
-    expect(tools.some((tool) => tool.name.startsWith('mage_browser_'))).toBe(false);
-    expect(browserFor).not.toHaveBeenCalled();
+    const names = tools.map((tool) => tool.name);
+    expect(names.filter((name) => !name.startsWith('mage_browser_')).sort()).toEqual(TOOLS);
+    expect(names.filter((name) => name.startsWith('mage_browser_'))).toHaveLength(7);
+    expect(browserFor).toHaveBeenCalledTimes(1);
   });
 
   it('open_unknownCallerWithBrowser_sevenToolsNoBrowserFor', async () => {

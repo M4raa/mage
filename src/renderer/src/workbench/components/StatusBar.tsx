@@ -2,17 +2,20 @@ import { useEffect, useState } from 'react';
 import { useT } from '../../i18n/uiLanguage';
 import { Icon } from './Icon';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
-import { severityForPct, type UsageSeverity } from '../usageView';
+import { severityForPct, shortCountdown, type UsageSeverity } from '../usageView';
 import { UsagePopover } from './UsagePopover';
 import { reportActionError } from '../notificationStore';
 import { providerLabel } from '../accountView';
 import { conversationIdOfTab } from '../conversationId';
 import { conversationSizeById } from '../sidebarModel';
 import { formatSize } from '../conversationList';
+import { contextPctOf } from '../contextView';
 import type { Account } from '../types';
 import type { StatusIndicator, StatusInfo } from '@shared/status';
 import { formatMicroUsd } from '@shared/usage';
 import { activeFormatLocale, formatInteger } from '../../i18n/format';
+import { isAdminToggle } from '../adminMode';
+import { isMacPlatform } from '../keybindings/platform';
 
 type StatusTextKey = 'app.statusBar.statusOperational' | 'app.statusBar.statusMinor' | 'app.statusBar.statusMajor' | 'app.statusBar.statusCritical' | 'app.statusBar.statusMaintenance';
 
@@ -85,8 +88,26 @@ function UpdateIndicator(): React.JSX.Element | null {
 // placeholder que aparece y desaparece en la barra de estado se ve como un parpadeo.
 let appVersionPromise: Promise<string> | null = null;
 
+// Ctrl+Shift+F12 (⌘+⇧+F12 en macOS) activa y desactiva el modo admin (P-039 D5). La barra de estado está siempre
+// montada: es el sitio de la escucha. En captura, para que ningún control con el foco se la quede.
+function useAdminModeShortcut(): void {
+  const setAdminMode = useWorkbenchStore((s) => s.setAdminMode);
+  useEffect(() => {
+    const isMac = isMacPlatform();
+    const onKey = (event: KeyboardEvent): void => {
+      if (!isAdminToggle(event, isMac)) return;
+      event.preventDefault();
+      setAdminMode(!useWorkbenchStore.getState().settings.adminMode);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [setAdminMode]);
+}
+
 function AppVersion(): React.JSX.Element | null {
   const t = useT();
+  useAdminModeShortcut();
+  const adminMode = useWorkbenchStore((s) => s.settings.adminMode);
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -107,13 +128,14 @@ function AppVersion(): React.JSX.Element | null {
 
   if (version === null) return null;
   return (
-    <span className="font-mono text-mg-muted" title={t('app.statusBar.versionTitle', { version })}>
-      {t('app.statusBar.versionShort', { version })}
+    <span data-app-version={adminMode ? 'admin' : 'normal'} className="font-mono text-mg-muted" title={t('app.statusBar.versionTitle', { version })}>
+      {adminMode ? t('app.statusBar.versionAdmin', { version }) : t('app.statusBar.versionShort', { version })}
     </span>
   );
 }
 
 function AccountStatus({ account, provider }: { readonly account: Account; readonly provider: string }): React.JSX.Element {
+  const openAccountsUsage = useWorkbenchStore((s) => s.openAccountsUsage);
   const t = useT();
   const { fiveHour, weekly } = account.usage;
   // Peso de la conversación de la pestaña activa (sale de la fila del lateral): primitivo, así que solo repinta si cambia.
@@ -123,8 +145,8 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
     return id === undefined ? 0 : (conversationSizeById(s.allConversationHistory).get(id) ?? 0);
   });
   const apiUsage = useWorkbenchStore((s) => s.usageByAccount[account.id]?.apiUsage);
-  // Severidad global de la cuenta: la peor de sus ventanas (para el aviso ⚠/⛔ en la barra).
-  const severity = worst(severityForPct(fiveHour.pct), severityForPct(weekly.pct));
+  // Ocupación de la ventana de contexto de la pestaña activa que reporta el CLI; sin dato todavía, no se pinta.
+  const contextPct = useWorkbenchStore((s) => contextPctOf(s.contextUsageByChat[s.activeTabId]));
   const refreshUsage = useWorkbenchStore((s) => s.refreshUsage);
   const accounts = useWorkbenchStore((s) => s.accounts);
   const refreshAll = (): void => {
@@ -134,7 +156,7 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
     <>
       <span className="flex items-center gap-[6px]" style={{ color: account.accent.tint }}>
         <span className="h-[7px] w-[7px] rounded-[2px]" style={{ background: account.accent.base }} />
-        {account.alias} · <span data-status-provider="true">{provider}</span> ▾
+        <span data-status-provider="true">{provider}</span> · {account.alias} ▾
       </span>
       {/* Sin el modelo por defecto de la cuenta (P-026, D18): no era el del chat, su ▾ no abria nada y
           el modelo ya se ve —y se cambia— en el selector del input. */}
@@ -147,20 +169,32 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
       {/* Al abrir el popover se consulta el uso de TODAS las cuentas con login (P-028, 22): solo se
           consultaba la activa y las demas enseñaban un 0 % que no era verdad. main cachea 180 s y
           tiene lockout, asi que pasar el raton varias veces no dispara peticiones de mas. */}
-      <div className="group relative" onMouseEnter={refreshAll} onFocus={refreshAll}>
+      <div className="group relative flex items-center" onMouseEnter={refreshAll} onFocus={refreshAll}>
         {/* data-volatile-text: uso y estado del servicio REALES de la cuenta; verify:gui --dump-dom-text no los vuelca */}
+        {/* P-038 V11: pulsarlo abre «Cuentas y consumo» (el hover sigue con el popover rápido). */}
         <span
           data-volatile-text="true"
+          data-usage-summary="true"
           tabIndex={0}
-          className="cursor-default border-b border-dotted border-mg-idle"
-          style={severity !== 'ok' ? { color: SEVERITY_COLOR[severity] } : undefined}
+          role="button"
+          data-tip={t('accountsUsage.openAria')}
+          onClick={openAccountsUsage}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAccountsUsage(); } }}
+          aria-label={account.apiBilled ? undefined : t('app.statusBar.windows', { fiveHour: fiveHour.pct, weekly: weekly.pct, reset: fiveHour.label })}
+          className="inline-flex cursor-pointer items-center gap-[10px] hover:text-mg-body"
         >
-          {severity !== 'ok' && <Icon name={severity === 'critical' ? 'error' : 'warning'} size={12} className="mr-[4px]" />}
           {account.apiBilled ? (apiUsage === undefined ? t('app.statusBar.apiNoTurns')
             : t('app.statusBar.apiUsage', { tokens: formatInteger(apiUsage.totals.totalTokens), cost: formatMicroUsd(apiUsage.totals.costMicroUsd, activeFormatLocale()) }))
-            : t('app.statusBar.windows', { fiveHour: fiveHour.pct, weekly: weekly.pct, reset: fiveHour.label })}
+            : (
+              <>
+                <UsageMeter name="5h" window={fiveHour} />
+                <UsageMeter name="7d" window={weekly} />
+              </>
+            )}
         </span>
-        <div className="pointer-events-none absolute bottom-[calc(100%_+_8px)] left-0 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+        {/* `pb-[8px]` y no un `bottom` desplazado: el hueco entre el resumen y el popover es parte de la zona de hover, y
+            el ratón puede entrar a desplazar la lista (P-038: con muchas cuentas se cortaba y no se llegaba a ella). */}
+        <div className="pointer-events-none absolute bottom-full left-0 pb-[8px] opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
           <UsagePopover />
         </div>
       </div>
@@ -169,7 +203,30 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
           <span aria-hidden="true">· </span>{formatSize(sizeBytes)}
         </span>
       )}
+      {contextPct !== null && (
+        <span data-status-context={contextPct} data-tip={t('tabs.subline.contextTip')} className="-ml-[8px] cursor-help tabular-nums">
+          <span aria-hidden="true">· </span>{t('tabs.subline.context', { pct: contextPct })}
+        </span>
+      )}
     </>
+  );
+}
+
+// Una ventana de uso en pequeño (P-038): nombre, barra, % y lo que falta para el reset. La barra toma el color de su
+// severidad; el texto completo va en el nombre accesible del resumen.
+function UsageMeter({ name, window }: { readonly name: string; readonly window: { readonly pct: number; readonly label: string } }): React.JSX.Element {
+  const severity = severityForPct(window.pct);
+  const color = severity === 'ok' ? undefined : SEVERITY_COLOR[severity];
+  return (
+    <span data-usage-meter={name} data-usage-severity={severity} aria-hidden="true" className="inline-flex items-center gap-[5px] tabular-nums" style={color === undefined ? undefined : { color }}>
+      {severity !== 'ok' && <Icon name={severity === 'critical' ? 'error' : 'warning'} size={12} />}
+      <span className={color === undefined ? 'text-mg-muted' : ''}>{name}</span>
+      <span className="relative h-[4px] w-[36px] overflow-hidden rounded-full bg-mg-track">
+        <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${window.pct}%`, background: color ?? 'var(--color-mg-sec)' }} />
+      </span>
+      <span>{window.pct}%</span>
+      <span className="text-mg-muted">{shortCountdown(window.label)}</span>
+    </span>
   );
 }
 
@@ -233,8 +290,3 @@ function StatusPopover({ status }: { readonly status: StatusInfo | null }): Reac
   );
 }
 
-// Devuelve la severidad mas grave de dos (critical > warn > ok).
-function worst(a: UsageSeverity, b: UsageSeverity): UsageSeverity {
-  const rank: Record<UsageSeverity, number> = { ok: 0, warn: 1, critical: 2 };
-  return rank[a] >= rank[b] ? a : b;
-}

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { ASK_CREATOR_DESCRIPTION, CREATE_SESSION_DESCRIPTION, startMageMcpServer } from './server';
+import { ASK_CREATOR_DESCRIPTION, CREATE_SESSION_DESCRIPTION, SESSIONS_INSTRUCTIONS, startMageMcpServer } from './server';
 import { createInputSchema } from './schemas';
 import { MemorySessionsPort } from './memorySessionsPort';
 import { MemoryIdempotencyStore } from './idempotencyStore';
@@ -70,6 +70,19 @@ describe('Mage MCP server', () => {
       expect(tool.outputSchema?.type).toBe('object');
     }
     expect(client.getServerVersion()).toEqual({ name: 'mage', version: '1' });
+  });
+  // P-038: sin instrucciones, «lanza dos sesiones nuevas» acababa en subagentes aun con el MCP cargado.
+  it('initialize_sinNavegador_instruccionesDeSesionesSinLasDelNavegador', async () => {
+    const { client } = await connect();
+    const instructions = client.getInstructions() ?? '';
+    expect(instructions).toBe(SESSIONS_INSTRUCTIONS);
+    expect(instructions).toContain('mage_create_session');
+    expect(instructions).not.toContain('mage_browser_');
+  });
+  it('listTools_todasLasHerramientas_tienenDescripcion', async () => {
+    const { client } = await connect();
+    const tools = (await client.listTools()).tools;
+    expect(tools.filter((tool) => (tool.description ?? '').length === 0).map((tool) => tool.name)).toEqual([]);
   });
   it('listTools_askCreator_descripcionPideTerminarElTurno', async () => {
     const { client } = await connect();

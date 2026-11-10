@@ -99,10 +99,13 @@ export class AgentSession {
   private launchStale = false;
   // Hay un turno en marcha (desde el mensaje hasta su `result`): no se recicla el proceso a mitad de uno.
   private turnActive = false;
-  // Se escribio un directo desde el ultimo `result`. MEDIDO en 2.1.319: un `initialize` que llega al CLI con el hook
-  // `UserPromptSubmit` de un directo aun sin contestar lo cancela y descarta el prompt («The SDK host reconnected
-  // before its prompt hook answered…»). Con un directo en vuelo, el refresco del catalogo espera al siguiente `result`.
-  private steerSinceResult = false;
+  // Mensajes (normales o directos) escritos al CLI que aun no han pasado su hook `UserPromptSubmit`. MEDIDO en 2.1.319
+  // (`spike/resume-hook-spike.mjs`): un `initialize` que llega con ese hook pendiente lo cancela y el CLI descarta el
+  // prompt («The SDK host reconnected before its prompt hook answered…»). No solo pasaba con un directo: al reanudar
+  // un chat con una tarea de fondo que murio, el CLI emite un `result` ADELANTADO (el de su notificacion) antes del
+  // hook del mensaje del usuario, y el refresco del catalogo de ese `result` se lo llevaba por delante. Con alguno
+  // pendiente, el refresco espera a un `result` sin ninguno.
+  private promptsAwaitingHook = 0;
   // Id de la conversacion del CLI tras un `/clear` (P-028): el relanzado reanuda ESA y no la de antes
   // del clear. null = la del arranque (`params.sessionId`).
   private resetConversationId: string | null = null;
@@ -142,6 +145,7 @@ export class AgentSession {
     this.lastStderr = '';
     this.launchStale = false; // el proceso nuevo ya lleva los ajustes de `currentParams()`
     this.turnActive = false;
+    this.promptsAwaitingHook = 0;
     const plan = this.deps.adapter.buildSpawnPlan(params);
     this.log('info', 'Spawn del agente', {
       sessionId: this.deps.params.sessionId,
@@ -232,6 +236,7 @@ export class AgentSession {
       this.launch(this.resumeParams());
     }
     this.turnActive = true;
+    this.promptsAwaitingHook += 1;
     this.writePayload(this.deps.adapter.encodeUserMessage(text, attachments, messageId));
   }
 
@@ -245,7 +250,7 @@ export class AgentSession {
       this.trackAndEmit({ kind: 'steer_result', messageId, outcome: 'no_active_turn' });
       return;
     }
-    this.steerSinceResult = true;
+    this.promptsAwaitingHook += 1;
     this.writePayload(encoding.payload);
   }
 
@@ -560,15 +565,15 @@ export class AgentSession {
       // Refresco del catalogo de comandos "/" (2.2): un `/reload-plugins` o un plugin instalado a
       // mitad de sesion aparece SIN reiniciar nada. Medido: un segundo `initialize` responde con los
       // 159 comandos y NO duplica los hooks (un turno de prueba recibio un solo hook_callback de Stop).
-      // Salvo con un directo en vuelo (ver `steerSinceResult`): se deja para el siguiente `result`.
-      if (!this.steerSinceResult) this.requestCommandCatalog();
-      this.steerSinceResult = false;
+      // Salvo con un mensaje aun antes de su hook (ver `promptsAwaitingHook`): se deja para un `result` posterior.
+      if (this.promptsAwaitingHook === 0) this.requestCommandCatalog();
     } else if (event.kind === 'engine_response') {
       this.pendingEngineRequests.delete(event.requestId);
     } else if (event.kind === 'conversation_reset') {
       this.resetConversationId = event.newSessionId;
     } else if (event.kind === 'hook_fired') {
       this.answerHook(event.requestId); // el CLI espera respuesta: contestar antes de seguir (D2)
+      if (event.event === USER_PROMPT_SUBMIT && this.promptsAwaitingHook > 0) this.promptsAwaitingHook -= 1;
     } else if (event.kind === 'control_error') {
       return this.classifyControlError(event);
     } else if (event.kind === 'permission_request') {
@@ -726,6 +731,8 @@ export class AgentSession {
 // Desde 2.2 son DOS por fin de turno (contexto + catalogo de comandos) mas el `initialize` del arranque:
 // con 16 sigue sobrado, pero el numero ya no es "uno por turno".
 const MAX_TRACKED_CONTROL_REQUESTS = 16;
+// El hook que el CLI dispara al aceptar cada prompt (nombre medido: `hook_event_name` del hook_callback).
+const USER_PROMPT_SUBMIT = 'UserPromptSubmit';
 
 // Lee el request_id de un control_request ya serializable. Los del protocolo lo llevan en la raiz; si el
 // payload tiene otra forma, se devuelve null y simplemente no se correlaciona.

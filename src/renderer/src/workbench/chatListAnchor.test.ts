@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIRST_ITEM_INDEX_BASE, INITIAL_ANCHOR, SETTLE_FRAMES, appendedTailKeys, nextListAnchor, pinToBottom, settleAtBottom, watchChatBottom, type FrameApi, type ListAnchor, type SizeObserver, type WatchedScroller } from './chatListAnchor';
+import { FIRST_ITEM_INDEX_BASE, INITIAL_ANCHOR, SETTLE_FRAMES, appendedTailKeys, nextListAnchor, pinToBottom, settleAtBottom, watchChatBottom, type FrameApi, type ListAnchor, type ScrollIntentEvent, type SizeObserver, type WatchedScroller, resetAway } from './chatListAnchor';
 
 const keyOf = (s: string): string => s;
 
@@ -58,7 +58,8 @@ describe('appendedTailKeys', () => {
   });
 });
 
-type FakeScroller = WatchedScroller<string> & { listener: (() => void) | null };
+type Listener = (event: ScrollIntentEvent) => void;
+type FakeScroller = WatchedScroller<string> & { listener: (() => void) | null; listeners: Map<string, Listener> };
 
 function fakeScroller(init: { scrollTop: number; scrollHeight: number; clientHeight: number; children?: readonly string[] | null }): FakeScroller {
   const scroller: FakeScroller = {
@@ -67,11 +68,14 @@ function fakeScroller(init: { scrollTop: number; scrollHeight: number; clientHei
     clientHeight: init.clientHeight,
     firstElementChild: init.children === null ? null : { children: init.children ?? [] },
     listener: null,
-    addEventListener: (_type, listener) => {
-      scroller.listener = listener;
+    listeners: new Map(),
+    addEventListener: (type, listener) => {
+      scroller.listeners.set(type, listener);
+      if (type === 'scroll') scroller.listener = () => listener({});
     },
-    removeEventListener: () => {
-      scroller.listener = null;
+    removeEventListener: (type) => {
+      scroller.listeners.delete(type);
+      if (type === 'scroll') scroller.listener = null;
     },
   };
   return scroller;
@@ -112,12 +116,35 @@ describe('watchChatBottom', () => {
     expect(scroller.scrollTop).toBe(100);
   });
 
-  it('watchChatBottom_userScrollsFarUp_unsticks', () => {
+  it('watchChatBottom_scrollLejosSinGesto_siguePegado', () => {
+    // Virtuoso corrigiendo `scrollTop` al remontar la lista (volver a un chat): no es el usuario.
     const scroller = fakeScroller({ scrollTop: 0, scrollHeight: 1000, clientHeight: 500 });
     const stuck = { current: true };
     watchChatBottom(scroller, stuck, fakeObserver().create);
     scroller.listener?.();
+    expect(stuck.current).toBe(true);
+  });
+
+  it('watchChatBottom_arrastrarLaBarraHaciaArriba_despega', () => {
+    const scroller = fakeScroller({ scrollTop: 500, scrollHeight: 1000, clientHeight: 500 });
+    const stuck = { current: true };
+    watchChatBottom(scroller, stuck, fakeObserver().create);
+    scroller.listeners.get('pointerdown')?.({});
+    scroller.scrollTop = 100;
+    scroller.listener?.();
     expect(stuck.current).toBe(false);
+    expect(scroller.scrollTop).toBe(100);
+  });
+
+  it('watchChatBottom_soltarLaBarraYScrollAjeno_noDespega', () => {
+    const scroller = fakeScroller({ scrollTop: 500, scrollHeight: 1000, clientHeight: 500 });
+    const stuck = { current: true };
+    watchChatBottom(scroller, stuck, fakeObserver().create);
+    scroller.listeners.get('pointerdown')?.({});
+    scroller.listeners.get('pointerup')?.({});
+    scroller.scrollTop = 100;
+    scroller.listener?.();
+    expect(stuck.current).toBe(true);
   });
 
   it('watchChatBottom_scrollWithinMargin_sticks', () => {
@@ -150,6 +177,66 @@ describe('watchChatBottom', () => {
     expect(observer.observed).toEqual([scroller]);
   });
 
+  it('watchChatBottom_ruedaHaciaArribaDentroDelMargen_despegaYNoRepega', () => {
+    const scroller = fakeScroller({ scrollTop: 480, scrollHeight: 1000, clientHeight: 500 });
+    const stuck = { current: true };
+    const observer = fakeObserver();
+    watchChatBottom(scroller, stuck, observer.create);
+    scroller.listeners.get('wheel')?.({ deltaY: -40 });
+    scroller.scrollTop = 460;
+    scroller.listener?.();
+    observer.onResize?.();
+    expect(stuck.current).toBe(false);
+    expect(scroller.scrollTop).toBe(460);
+  });
+
+  it('watchChatBottom_trasSubirLlegaAlFinal_vuelveAPegar', () => {
+    const scroller = fakeScroller({ scrollTop: 400, scrollHeight: 1000, clientHeight: 500 });
+    const stuck = { current: true };
+    watchChatBottom(scroller, stuck, fakeObserver().create);
+    scroller.listeners.get('keydown')?.({ key: 'PageUp' });
+    scroller.scrollTop = 470;
+    scroller.listener?.();
+    expect(stuck.current).toBe(false);
+    scroller.listeners.get('wheel')?.({ deltaY: 40 });
+    scroller.scrollTop = 500;
+    scroller.listener?.();
+    expect(stuck.current).toBe(true);
+  });
+
+  // MEDIDO en verify:gui: Virtuoso emite un scroll al final (distancia 0) al medir el texto que llega, sin que el
+  // usuario haya hecho nada. Eso no puede reenganchar.
+  it('watchChatBottom_trasSubirUnScrollAlFinalSinGesto_noVuelveAPegar', () => {
+    const scroller = fakeScroller({ scrollTop: 460, scrollHeight: 1000, clientHeight: 500 });
+    const stuck = { current: true };
+    watchChatBottom(scroller, stuck, fakeObserver().create);
+    scroller.listeners.get('wheel')?.({ deltaY: -40 });
+    scroller.scrollTop = 500;
+    scroller.listener?.();
+    expect(stuck.current).toBe(false);
+  });
+
+  it('watchChatBottom_resetAwayTrasEnviar_vuelveAPegarConElSiguienteScroll', () => {
+    const scroller = fakeScroller({ scrollTop: 400, scrollHeight: 1000, clientHeight: 500 });
+    const stuck = { current: true };
+    const state = { away: false, downIntent: false };
+    watchChatBottom(scroller, stuck, fakeObserver().create, state);
+    scroller.listeners.get('wheel')?.({ deltaY: -40 });
+    resetAway(state);
+    scroller.scrollTop = 500;
+    scroller.listener?.();
+    expect(stuck.current).toBe(true);
+  });
+
+  it('watchChatBottom_ruedaHaciaAbajoOTeclaAjena_noDespega', () => {
+    const scroller = fakeScroller({ scrollTop: 500, scrollHeight: 1000, clientHeight: 500 });
+    const stuck = { current: true };
+    watchChatBottom(scroller, stuck, fakeObserver().create);
+    scroller.listeners.get('wheel')?.({ deltaY: 40 });
+    scroller.listeners.get('keydown')?.({ key: 'a' });
+    expect(stuck.current).toBe(true);
+  });
+
   it('watchChatBottom_dispose_disconnectsAndRemovesListener', () => {
     const scroller = fakeScroller({ scrollTop: 0, scrollHeight: 1000, clientHeight: 500 });
     const observer = fakeObserver();
@@ -157,6 +244,7 @@ describe('watchChatBottom', () => {
     dispose();
     expect(observer.disconnected).toBe(true);
     expect(scroller.listener).toBeNull();
+    expect(scroller.listeners.size).toBe(0);
   });
 });
 

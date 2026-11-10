@@ -1,6 +1,8 @@
+import { useMemo } from 'react';
 import { formatMicroUsd, type AgyUsageSnapshot, type UsageInfo } from '@shared/usage';
 import { useWorkbenchStore } from '../workbenchStore';
 import { formatResetAbsolute } from '../usageView';
+import { visibleAccounts } from '../accountView';
 import type { Account } from '../types';
 import { useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale, formatInteger } from '../../i18n/format';
@@ -11,7 +13,10 @@ import { activeFormatLocale, formatInteger } from '../../i18n/format';
 // se congelaba). Lee `usageByAccount`, no `account.usage`: el relleno de este ultimo pintaba 0 % en
 // las cuentas que aun no se habian consultado. Sin dato -> «sin dato», nunca un 0 % falso.
 export function UsagePopover(): React.JSX.Element {
-  const accounts = useWorkbenchStore((s) => s.accounts);
+  const allAccounts = useWorkbenchStore((s) => s.accounts);
+  const hidden = useWorkbenchStore((s) => s.settings.hiddenAccounts);
+  const activeAccountId = useWorkbenchStore((s) => s.activeAccountId);
+  const accounts = useMemo(() => visibleAccounts(allAccounts, hidden, activeAccountId), [allAccounts, hidden, activeAccountId]);
   const usageByAccount = useWorkbenchStore((s) => s.usageByAccount);
   const agyUsageByAccount = useWorkbenchStore((s) => s.agyUsageByAccount);
   const now = Date.now();
@@ -20,7 +25,7 @@ export function UsagePopover(): React.JSX.Element {
   return (
     <div
       data-usage-popover="true"
-      className="flex w-[260px] flex-col gap-2 rounded-[9px] border border-mg-border-pop bg-mg-popover p-[11px_12px] text-[10.5px] mg-shadow-pop"
+      className="flex max-h-[min(70vh,560px)] w-[260px] flex-col gap-2 overflow-y-auto rounded-[9px] border border-mg-border-pop bg-mg-popover p-[11px_12px] text-[10.5px] mg-shadow-pop"
     >
       <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">{t('usage.popover.title')}</div>
       {accounts.map((a) => (

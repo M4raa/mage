@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ConversationSnapshot, CoordinatedState, PendingRequest } from '@shared/coordination';
 import type { MageEvent, PermissionRequest } from '@shared/events';
+import { sessionResultMessage } from '@shared/systemWrappers';
 import type { SequencedSessionEvent, SessionListener } from '../coordination/sessionCoordinator';
 import { DelegationLog, MAX_ANNOUNCED_TEXT_CHARS, MAX_MESSAGES_PER_SESSION, mcpStateOf } from './delegationLog';
 import type { DelegatedSession } from './delegationLog';
@@ -24,7 +25,9 @@ function setup(options: { creatorAlive?: boolean } = {}) {
   let unsubscribed = 0;
   const announced: MageEvent[] = [];
   const announcedTo: { sessionId: string; event: MageEvent }[] = [];
+  const sent: { sessionId: string; text: string }[] = [];
   const coordinator = {
+    send: (params: { sessionId: string; text: string }) => { sent.push({ sessionId: params.sessionId, text: params.text }); return { kind: 'sent', messageId: 'm' } as never; },
     subscribe: (_id: string, l: SessionListener) => { listener = l; return { snapshot: current, unsubscribe: () => { unsubscribed += 1; } }; },
     snapshot: () => current,
     announce: (id: string, event: MageEvent) => { announced.push(event); announcedTo.push({ sessionId: id, event }); },
@@ -36,7 +39,7 @@ function setup(options: { creatorAlive?: boolean } = {}) {
     const payload: SequencedSessionEvent = { sessionId: 'child', event, conversationId: 'conv-child', seq: 1, at: Date.parse('2026-11-03T10:05:00.000Z') };
     listener?.sink(payload);
   };
-  return { log, emit, announced, announcedTo, close: () => listener?.onClosed(), unsubscribed: () => unsubscribed };
+  return { log, emit, announced, announcedTo, sent, close: () => listener?.onClosed(), unsubscribed: () => unsubscribed };
 }
 const result = { kind: 'result', result: {} } as unknown as MageEvent;
 
@@ -78,6 +81,36 @@ describe('DelegationLog', () => {
     expect(log.messagesAfter('conv-child', 0)).toEqual([{ seq: 1, role: 'assistant', text: 'hecho' }]);
     expect(log.get('conv-child')).toMatchObject({ state: 'done', turnCount: 1, lastEventAt: '2026-11-03T10:05:00.000Z' });
     expect(announced).toContainEqual({ kind: 'delegation_message', fromId: 'conv-child', toId: 'conv-parent', messageKind: 'result', text: 'hecho' });
+  });
+  it('watch_resultConRespuesta_seLaEntregaALaCreadoraComoMensaje', () => {
+    const { log, emit, sent } = setup();
+    log.watch(CHILD);
+    emit({ kind: 'assistant_text', text: 'hola 7' }, snap('running'));
+    emit(result, snap('idle'));
+    expect(sent).toEqual([{ sessionId: 'parent', text: sessionResultMessage({ title: 't', conversationId: 'conv-child', text: 'hola 7' }) }]);
+  });
+  it('watch_creadoraYaLeyoLaRespuesta_noLeMandaElAviso', () => {
+    const { log, emit, sent } = setup();
+    log.watch(CHILD);
+    emit({ kind: 'assistant_text', text: 'hola 7' }, snap('running'));
+    expect(log.readMessages('conv-child', 0)).toEqual([{ seq: 1, role: 'assistant', text: 'hola 7' }]);
+    emit(result, snap('idle'));
+    expect(sent).toEqual([]);
+  });
+  it('watch_creadoraLeyoAntesDeLaRespuesta_siLeMandaElAviso', () => {
+    const { log, emit, sent } = setup();
+    log.watch(CHILD);
+    log.readMessages('conv-child', 0);
+    emit({ kind: 'assistant_text', text: 'hola 7' }, snap('running'));
+    emit(result, snap('idle'));
+    expect(sent).toHaveLength(1);
+  });
+  it('watch_creadoraCerrada_noEntregaNada', () => {
+    const { log, emit, sent } = setup({ creatorAlive: false });
+    log.watch(CHILD);
+    emit({ kind: 'assistant_text', text: 'x' }, snap('running'));
+    emit(result, snap('idle'));
+    expect(sent).toEqual([]);
   });
   it('watch_question_waitingAnswerAndQuestionAnnounced', () => {
     const { log, emit, announced } = setup();

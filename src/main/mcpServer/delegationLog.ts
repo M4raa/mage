@@ -1,4 +1,5 @@
 import { parseAskUserQuestion } from '@shared/askUserQuestion';
+import { sessionResultMessage } from '@shared/systemWrappers';
 import type { ConversationSnapshot } from '@shared/coordination';
 import type { MageEvent } from '@shared/events';
 import type { SequencedSessionEvent, SessionCoordinator } from '../coordination/sessionCoordinator';
@@ -37,7 +38,7 @@ export interface DelegationView {
   readonly closed: boolean;
 }
 export interface DelegationLogDeps {
-  readonly coordinator: Pick<SessionCoordinator, 'subscribe' | 'snapshot' | 'announce' | 'ownerOf'>;
+  readonly coordinator: Pick<SessionCoordinator, 'subscribe' | 'snapshot' | 'announce' | 'ownerOf' | 'send'>;
   readonly now: () => number;
 }
 interface Entry {
@@ -49,6 +50,10 @@ interface Entry {
   state: McpState;
   closed: boolean;
   lastAssistant: string | null;
+  // Secuencia del último mensaje del asistente y hasta dónde lo leyó ya la creadora con mage_read_result (P-038 V13):
+  // si ya lo leyó, el aviso de fin de turno sobra (le abría un turno de más).
+  lastAssistantSeq: number;
+  readUpTo: number;
   // U26: la delegada preguntó a su creadora con `mage_ask_creator`; `turnEnded` marca que el turno que preguntó ya acabó.
   awaiting: { turnEnded: boolean } | null;
   readonly unsubscribe: () => void;
@@ -94,7 +99,7 @@ export class DelegationLog {
     });
     const entry: Entry = {
       child, messages: [], nextSeq: 1, turnCount: 0, lastEventAt: new Date(now()).toISOString(),
-      state: mcpStateOf({ snapshot: subscription.snapshot, closed: false, turnCount: 0 }), closed: false, lastAssistant: null, awaiting: null, unsubscribe: subscription.unsubscribe,
+      state: mcpStateOf({ snapshot: subscription.snapshot, closed: false, turnCount: 0 }), closed: false, lastAssistant: null, lastAssistantSeq: 0, readUpTo: 0, awaiting: null, unsubscribe: subscription.unsubscribe,
     };
     holder.entry = entry;
     this.entries.set(child.sessionId, entry);
@@ -133,6 +138,15 @@ export class DelegationLog {
     return [...this.entries.values()].map(viewOf);
   }
 
+  // Lo que lee la creadora con mage_read_result: además de devolverlo, apunta hasta dónde leyó.
+  readMessages(conversationId: string, afterSeq: number): readonly PublicMessage[] {
+    const messages = this.messagesAfter(conversationId, afterSeq);
+    const entry = this.byConversation.get(conversationId);
+    const last = messages.at(-1);
+    if (entry !== undefined && last !== undefined) entry.readUpTo = Math.max(entry.readUpTo, last.seq);
+    return messages;
+  }
+
   messagesAfter(conversationId: string, afterSeq: number): readonly PublicMessage[] {
     const entry = this.byConversation.get(conversationId);
     if (entry === undefined) return [];
@@ -152,6 +166,7 @@ export class DelegationLog {
     if (event.kind === 'assistant_text') {
       this.push(entry, 'assistant', event.text);
       entry.lastAssistant = event.text;
+      entry.lastAssistantSeq = entry.nextSeq - 1;
     }
     if (event.kind === 'permission_request') this.onPermission(entry, event.request.input);
     if (event.kind === 'result') {
@@ -175,6 +190,16 @@ export class DelegationLog {
     const text = entry.lastAssistant.slice(0, MAX_ANNOUNCED_TEXT_CHARS);
     entry.lastAssistant = null;
     this.announceToCreator(entry, { kind: 'delegation_message', fromId: entry.child.conversationId, toId: entry.child.creatorConversationId, messageKind: 'result', text });
+    if (entry.readUpTo < entry.lastAssistantSeq) this.deliverToCreator(entry, text);
+  }
+
+  // P-038 V13: la respuesta de la delegada le llega a la creadora como MENSAJE (a la cola si está trabajando; si no,
+  // abre turno), así continúa sola en vez de quedarse «esperando» hasta que el usuario escriba. Con la creadora
+  // cerrada no hay a quién.
+  private deliverToCreator(entry: Entry, text: string): void {
+    const { coordinator } = this.deps;
+    if (coordinator.ownerOf(entry.child.creatorSessionId) === undefined) return;
+    coordinator.send({ sessionId: entry.child.creatorSessionId, text: sessionResultMessage({ title: entry.child.title, conversationId: entry.child.conversationId, text }) });
   }
 
   private onClosed(entry: Entry): void {

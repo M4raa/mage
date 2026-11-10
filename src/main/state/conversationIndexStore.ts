@@ -97,9 +97,30 @@ export interface ConversationIndexStoreDeps extends AtomicWriteDeps {
   readonly filePath: string;
 }
 
+// El índice ya leído y validado, con su mapa «id nativo -> conversación» (P-038, lag). MEDIDO en la máquina del
+// usuario (perfil de CPU de main, 120 s): cada `loadPrefs` leía el fichero entero (57 KB), lo parseaba, lo validaba con
+// Zod y recorría todas las entradas en `keyFor`; el historial del lateral lo llama dos veces por conversación (hasta
+// 300 por cuenta, 5 cuentas, cada 30 s) y main se pasaba ~12 s de cada 120 haciendo solo eso, sin atender a la
+// ventana. Solo esta clase escribe el fichero (main es único y el host vive dentro), así que basta con leerlo una vez
+// y actualizar la copia en cada escritura.
+interface LoadedIndex {
+  readonly index: ConversationIndexFile;
+  readonly byNative: ReadonlyMap<string, ConversationId>;
+}
+
+function withNativeIndex(index: ConversationIndexFile): LoadedIndex {
+  const byNative = new Map<string, ConversationId>();
+  for (const [key, entry] of Object.entries(index.conversations)) {
+    const nativeId = entry.nativeRef?.nativeId;
+    if (nativeId !== undefined && !byNative.has(nativeId)) byNative.set(nativeId, key);
+  }
+  return { index, byNative };
+}
+
 export class ConversationIndexStore {
   // Contenido v1 leido de disco y aun sin respaldar: se copia antes de la primera escritura en v2.
   private legacyContent: string | null = null;
+  private loaded: LoadedIndex | null = null;
 
   constructor(private readonly deps: ConversationIndexStoreDeps) {}
 
@@ -108,7 +129,7 @@ export class ConversationIndexStore {
   // ConversationId o el id de su sesion nativa (el renderer conoce el nativo).
   loadPrefs(id: string): ConversationPrefs | null {
     const index = this.read();
-    const entry = index.conversations[keyFor(index, id)];
+    const entry = index.conversations[this.keyFor(index, id)];
     return entry === undefined ? null : prefsOf(entry);
   }
 
@@ -120,7 +141,7 @@ export class ConversationIndexStore {
       throw new Error(`sessionId vacio al guardar las preferencias de la conversacion: ${JSON.stringify(id)}`);
     }
     const index = this.read();
-    const key = keyFor(index, id);
+    const key = this.keyFor(index, id);
     const merged = mergePrefs(index.conversations[key], prefs);
     this.write({ ...index, conversations: { ...index.conversations, [key]: merged } });
   }
@@ -131,7 +152,7 @@ export class ConversationIndexStore {
     if (id.length === 0) throw new Error(`id vacio al guardar la sesion del host: ${JSON.stringify(id)}`);
     if (record.accountId.length === 0) throw new Error(`cuenta vacia en la sesion del host ${id}`);
     const index = this.read();
-    const key = keyFor(index, id);
+    const key = this.keyFor(index, id);
     const prefs: ConversationPrefs = {
       accountId: record.accountId,
       model: record.model,
@@ -146,7 +167,7 @@ export class ConversationIndexStore {
   // Olvida una conversacion (la borra `ConversationsDelete`). No-op si no estaba.
   forgetConversation(id: string): void {
     const index = this.read();
-    const key = keyFor(index, id);
+    const key = this.keyFor(index, id);
     if (index.conversations[key] === undefined) return;
     const conversations = { ...index.conversations };
     delete conversations[key];
@@ -159,7 +180,7 @@ export class ConversationIndexStore {
   resolveConversation(ref: NativeSessionRef): { readonly conversationId: ConversationId; readonly lastSeq: number } {
     if (ref.nativeId.length === 0) throw new Error(`nativeId vacio al resolver la conversacion: ${JSON.stringify(ref)}`);
     const index = this.read();
-    const key = keyFor(index, ref.nativeId);
+    const key = this.keyFor(index, ref.nativeId);
     const entry = index.conversations[key];
     if (entry === undefined || !sameRef(entry.nativeRef, ref)) {
       this.write({ ...index, conversations: { ...index.conversations, [key]: { ...entry, nativeRef: ref } } });
@@ -213,6 +234,18 @@ export class ConversationIndexStore {
   // (comportamiento de antes del indice). La v1 se migra en memoria. Nunca lanza por el contenido:
   // perder estas preferencias no puede impedir abrir una conversacion.
   private read(): ConversationIndexFile {
+    this.loaded ??= withNativeIndex(this.readFromDisk());
+    return this.loaded.index;
+  }
+
+  // Clave de la entrada de `id`: la suya si es un ConversationId (el caso común), la de la entrada cuya sesión nativa
+  // es `id`, o `id` si no hay ninguna (conversación nueva o anterior a F2.1). O(1) con el mapa de nativos.
+  private keyFor(index: ConversationIndexFile, id: string): ConversationId {
+    if (index.conversations[id] !== undefined) return id;
+    return this.loaded?.byNative.get(id) ?? id;
+  }
+
+  private readFromDisk(): ConversationIndexFile {
     if (!this.deps.exists(this.deps.filePath)) return EMPTY_INDEX;
     const content = this.readContent();
     let parsed: unknown;
@@ -249,6 +282,7 @@ export class ConversationIndexStore {
   private write(next: ConversationIndexFile): void {
     this.backupLegacy();
     writeAtomic(this.deps, this.deps.filePath, JSON.stringify(next, null, 2));
+    this.loaded = withNativeIndex(next);
   }
 
   private backupLegacy(): void {
@@ -257,14 +291,6 @@ export class ConversationIndexStore {
     if (!this.deps.exists(backup)) writeAtomic(this.deps, backup, this.legacyContent);
     this.legacyContent = null;
   }
-}
-
-// Clave de la entrada de `id`: la suya si es un ConversationId (O(1), el caso comun), la de la entrada
-// cuya sesion nativa es `id`, o `id` si no hay ninguna (conversacion nueva o anterior a F2.1).
-function keyFor(index: ConversationIndexFile, id: string): ConversationId {
-  if (index.conversations[id] !== undefined) return id;
-  const owner = Object.entries(index.conversations).find(([, entry]) => entry.nativeRef?.nativeId === id);
-  return owner === undefined ? id : owner[0];
 }
 
 function sameRef(a: NativeSessionRef | undefined, b: NativeSessionRef): boolean {

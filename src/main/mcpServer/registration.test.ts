@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { join } from 'node:path';
-import { claudeAddArgs, codexAddArgs, mageMcpLaunch, type MageMcpLaunch, type MageMcpLaunchInput } from './registration';
+import { claudeAddArgs, codexAddArgs, MAGE_READ_ONLY_TOOLS, mageMcpLaunch, mageMcpServer, withMageReadOnlyAllow, type MageMcpLaunch, type MageMcpLaunchInput } from './registration';
+import { toClaudeMcpConfig, toCodexOverrides } from '../config/mcpProviderTranslate';
 
 const BASE: MageMcpLaunchInput = {
   isPackaged: true,
@@ -54,5 +55,53 @@ describe('add args', () => {
     const bare: MageMcpLaunch = { command: 'x', args: ['y'], env: {} };
     expect(claudeAddArgs(bare)).not.toContain('-e');
     expect(codexAddArgs(bare)).toEqual(['mcp', 'add', 'mage', '--', 'x', 'y']);
+  });
+});
+
+describe('mageMcpServer', () => {
+  const launch: MageMcpLaunch = { command: 'C:/Mage/Mage.exe', args: ['C:/Mage/resources/cli/mage.mjs', 'mcp', '--user-data-dir', 'C:/perfil'], env: { ELECTRON_RUN_AS_NODE: '1' } };
+
+  it('mageMcpServer_credencial_vaEnElEnvDelServidor', () => {
+    const server = mageMcpServer(launch, 'cred-123');
+
+    expect(server).toMatchObject({ name: 'mage', transport: 'stdio', command: launch.command, args: launch.args, env: { ELECTRON_RUN_AS_NODE: '1', MAGE_MCP_CALLER: 'cred-123' } });
+  });
+
+  it('mageMcpServer_claude_elFicheroNoLlevaLaCredencial', () => {
+    const translated = toClaudeMcpConfig([mageMcpServer(launch, 'cred-123')]);
+
+    expect(JSON.stringify(translated.config)).not.toContain('cred-123');
+    expect(Object.values(translated.env)).toContain('cred-123');
+  });
+
+  it('mageMcpServer_codex_laCredencialSoloEnElEntorno', () => {
+    const overrides = toCodexOverrides([mageMcpServer(launch, 'cred-123')]);
+
+    expect(overrides.args.join(' ')).not.toContain('cred-123');
+    expect(overrides.args).toContain('mcp_servers.mage.env_vars=["ELECTRON_RUN_AS_NODE","MAGE_MCP_CALLER"]');
+    expect(overrides.env).toMatchObject({ MAGE_MCP_CALLER: 'cred-123' });
+  });
+
+  it('mageMcpServer_credencialVacia_lanza', () => {
+    expect(() => mageMcpServer(launch, ' ')).toThrow(/vacia/);
+  });
+});
+
+describe('withMageReadOnlyAllow', () => {
+  it('withMageReadOnlyAllow_sinFragmento_soloLasDeSoloLectura', () => {
+    const fragment = withMageReadOnlyAllow(null);
+
+    expect(fragment).toEqual({ permissions: { allow: MAGE_READ_ONLY_TOOLS.map((tool) => `mcp__mage__${tool}`) } });
+  });
+
+  it('withMageReadOnlyAllow_conReglasYHooks_lasConservaSinDuplicar', () => {
+    const fragment = withMageReadOnlyAllow({ hooks: { Stop: [] }, permissions: { allow: ['Bash(ls)', 'mcp__mage__mage_get_status'], deny: ['Read(.env)'] } });
+
+    expect(fragment.hooks).toEqual({ Stop: [] });
+    expect((fragment.permissions as { deny: string[] }).deny).toEqual(['Read(.env)']);
+    const allow = (fragment.permissions as { allow: string[] }).allow;
+    expect(allow[0]).toBe('Bash(ls)');
+    expect(allow.filter((rule) => rule === 'mcp__mage__mage_get_status')).toHaveLength(1);
+    expect(allow).not.toContain('mcp__mage__mage_create_session');
   });
 });

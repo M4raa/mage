@@ -133,7 +133,9 @@ function BrowserPanelBody({ sessionId, state }: { readonly sessionId: string; re
   const [error, setError] = useState<string | null>(null);
   const penActive = penOpen && state !== null;
   return (
-    <div data-browser-panel className="flex min-h-0 flex-1 flex-col">
+    // `h-full` y no solo `flex-1`: el contenedor de los paneles del dock no es flex, y con `flex-1` el panel medía lo que la
+    // barra de direcciones (39 px) y la vista nativa quedaba en un hueco de 0 px de alto (P-038: «google.com no pinta nada»).
+    <div data-browser-panel className="flex h-full min-h-0 flex-1 flex-col">
       <BrowserToolbar sessionId={sessionId} state={state} onPen={() => setPenOpen(true)} onError={setError} />
       {error !== null && (
         <div role="alert" className="px-[10px] py-[4px] text-[10.5px] text-mg-danger">

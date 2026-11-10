@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   aggregateTokenUsage,
+  contextPctOf,
   buildContextSizeSeries,
   contextInfoFromUsage,
   contextUsageAdvice,
@@ -350,5 +351,24 @@ describe('resolveContext', () => {
 
     expect(resolved.estimated).toBe(true);
     expect(resolved.advice).toEqual({ pct: 0, level: 'ok' });
+  });
+});
+
+describe('contextPctOf', () => {
+  const usage = (percentage: number, maxTokens = 200_000): ContextUsage => ({ totalTokens: 0, maxTokens, percentage, categories: [] });
+
+  it('contextPctOf_sinDato_null', () => {
+    expect(contextPctOf(undefined)).toBeNull();
+  });
+
+  it('contextPctOf_ventanaCeroONaN_null', () => {
+    expect(contextPctOf(usage(40, 0))).toBeNull();
+    expect(contextPctOf(usage(Number.NaN))).toBeNull();
+  });
+
+  it('contextPctOf_fueraDeRango_acotadoYRedondeado', () => {
+    expect(contextPctOf(usage(41.6))).toBe(42);
+    expect(contextPctOf(usage(-3))).toBe(0);
+    expect(contextPctOf(usage(140))).toBe(100);
   });
 });

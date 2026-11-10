@@ -10,6 +10,7 @@ import {
   groupSidebarRows,
   missingOwnerOf as findMissingOwner,
   providerOfRow,
+  rowAccountKnown,
   rowIndicator,
   sidebarRowId,
   EMPTY_SIDEBAR_FILTER,
@@ -93,7 +94,7 @@ export function useSidebarModel(filter: SidebarFilter): SidebarView {
     const filtered = applySidebarFilter(rows, filter, { isWorking, archivedIds, sessionIdByChat });
     const groups = groupSidebarRows(filtered.rows, { projects: settings.chatProjects, pinnedIds: new Set(settings.pinnedConversations), scratchRoots, sessionIdByChat });
     const visibleToChips = applySidebarFilter(rows, EMPTY_SIDEBAR_FILTER, { isWorking, archivedIds, sessionIdByChat }).rows;
-    const accountIds = new Set(rows.map((row) => row.accountId));
+    const accountIds = new Set(rows.filter(rowAccountKnown).map((row) => row.accountId));
     return {
       groups,
       hiddenCount: filtered.hiddenCount,
@@ -104,7 +105,8 @@ export function useSidebarModel(filter: SidebarFilter): SidebarView {
       statusOf,
       indicatorOf,
       backgroundOf,
-      accountOf: (row) => (findMissingOwner(row, (id) => accountById.has(id)) === undefined ? accountById.get(row.accountId) : undefined),
+      // Sin cuenta conocida no se nombra ninguna (antes salía la activa en todas las compartidas sin apuntar).
+      accountOf: (row) => (findMissingOwner(row, (id) => accountById.has(id)) === undefined && rowAccountKnown(row) ? accountById.get(row.accountId) : undefined),
       missingOwnerOf: (row) => findMissingOwner(row, (id) => accountById.has(id)),
     };
   }, [rows, filter, statuses, readOnlyIds, settings, scratchRoots, sessionIdByChat, backgroundSessions, accounts, accountById]);

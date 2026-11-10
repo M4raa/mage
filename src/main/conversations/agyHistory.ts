@@ -17,7 +17,8 @@ const STEP_USER_INPUT = 14;
 const STEP_MODEL_RESPONSE = 15;
 const TOOL_OUTPUT_MAX_CHARS = 8000;
 const TITLE_MAX_CHARS = 80;
-const CONVERSATIONS_DIR = ['.gemini', 'antigravity-cli', 'conversations'] as const;
+export const AGY_CONVERSATIONS_DIR = ['.gemini', 'antigravity-cli', 'conversations'] as const;
+const CONVERSATIONS_DIR = AGY_CONVERSATIONS_DIR;
 const DB_EXT = '.db';
 const MAX_CONVERSATIONS = 300;
 // Campos de nivel superior que NO son la salida de una herramienta: tipo, estado y metadatos.

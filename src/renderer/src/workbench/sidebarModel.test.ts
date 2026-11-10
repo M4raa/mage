@@ -19,6 +19,7 @@ import {
   type AccountConversation,
   type FilterContext,
   type GroupContext,
+  sidebarRowId,
   type SidebarRow,
   recentFolderProjects,
 } from './sidebarModel';
@@ -79,7 +80,7 @@ describe('mergeAccountHistories', () => {
       { accountId: 'acc-b', items: [item] },
     ]);
 
-    expect(merged).toEqual([{ item, accountId: 'acc-b' }]);
+    expect(merged).toEqual([{ item, accountId: 'acc-b', accountKnown: true }]);
   });
 
   it('mergeAccountHistories_unknownLastAccount_keepsFirstList', () => {
@@ -91,6 +92,24 @@ describe('mergeAccountHistories', () => {
     ]);
 
     expect(merged.map((entry) => entry.accountId)).toEqual(['acc-a']);
+    // Sale en las dos y nadie apuntó con cuál se usó: no es de ninguna (antes se enseñaba la primera, la activa).
+    expect(merged[0]?.accountKnown).toBe(false);
+  });
+
+  it('mergeAccountHistories_soloLaListaUnaCuenta_esDeEsaCuenta', () => {
+    const item = summary();
+
+    const merged = mergeAccountHistories([{ accountId: 'acc-a', items: [item] }, { accountId: 'acc-b', items: [] }]);
+
+    expect(merged).toEqual([{ item, accountId: 'acc-a', accountKnown: true }]);
+  });
+
+  it('mergeAccountHistories_ultimaCuentaEsLaPrimeraQueLaLista_conocida', () => {
+    const item = summary({ lastAccountId: 'acc-a' });
+
+    const merged = mergeAccountHistories([{ accountId: 'acc-a', items: [item] }, { accountId: 'acc-b', items: [item] }]);
+
+    expect(merged).toEqual([{ item, accountId: 'acc-a', accountKnown: true }]);
   });
 
   it('mergeAccountHistories_codexSameIdOtherProvider_keepsBoth', () => {
@@ -248,6 +267,15 @@ describe('applySidebarFilter', () => {
 
     expect(result.rows).toHaveLength(1);
     expect(result.hiddenCount).toBe(1);
+  });
+
+  it('applySidebarFilter_cuentaYFilaSinCuentaConocida_laOculta', () => {
+    const known = historyRow({ sessionId: 'a' });
+    const unknown: SidebarRow = { ...historyRow({ sessionId: 'b' }), accountKnown: false } as SidebarRow;
+
+    const result = applySidebarFilter([known, unknown], { ...EMPTY_SIDEBAR_FILTER, accountId: known.accountId }, fctx());
+
+    expect(result.rows.map((row) => sidebarRowId(row, {}))).toEqual(['a']);
   });
 
   it('applySidebarFilter_queryAndAccount_combine', () => {

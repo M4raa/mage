@@ -4,19 +4,18 @@ import { useWorkbenchStore } from '../../workbenchStore';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
 import { useT } from '../../../i18n/uiLanguage';
 import { describeError } from '../../describeError';
+import { MetaChip } from './McpRow';
 
 // «Solo en…» de un comun o de una extension (respuestas 22 y 27, C3-n): una lista de proveedores y,
 // en Claude, de cuentas. Por defecto, todos los compatibles. Es el control de acceso por modelo que
 // tambien respetara el runtime propio.
 
 export function ProviderPills({ providers, testId }: { readonly providers: readonly McpProviderFamily[]; readonly testId?: string }): React.JSX.Element {
-  if (providers.length === 0) return <span className="text-mg-muted">—</span>;
+  if (providers.length === 0) return <></>;
   return (
     <span className="flex flex-wrap gap-[3px]" data-mcp-providers={testId ?? 'true'}>
       {providers.map((family) => (
-        <span key={family} className="rounded-[4px] bg-mg-hover px-[5px] py-[1px] text-[9px] font-semibold text-mg-body2">
-          {MCP_FAMILY_LABELS[family]}
-        </span>
+        <MetaChip key={family}>{MCP_FAMILY_LABELS[family]}</MetaChip>
       ))}
     </span>
   );
@@ -24,7 +23,7 @@ export function ProviderPills({ providers, testId }: { readonly providers: reado
 
 export function OwnedByBadge({ family }: { readonly family: McpProviderFamily }): React.JSX.Element {
   const t = useT();
-  return <span className="rounded-[4px] bg-mg-code px-[5px] py-[1px] text-[9px] font-semibold text-mg-warn-text">{t('mcp.scope.ownedBy', { provider: MCP_FAMILY_LABELS[family] })}</span>;
+  return <MetaChip warn>{t('mcp.scope.ownedBy', { provider: MCP_FAMILY_LABELS[family] })}</MetaChip>;
 }
 
 // Destinos que se ofrecen: cada familia y, debajo de Claude, cada cuenta.

@@ -14,7 +14,13 @@ const DEFAULT_PROVIDER = 'claude';
 
 export interface AccountConversation {
   readonly item: ConversationSummary;
+  // La cuenta con la que se abre. Si no se sabe de quién es, la primera que la listó: sirve para abrirla, no para
+  // decir de quién es (ver `accountKnown`).
   readonly accountId: string;
+  // Se sabe de verdad de qué cuenta es: la lista una sola cuenta (privadas, Codex, agy) o el índice de Mage sabe con cuál
+  // se usó por última vez. Una compartida de Claude que nadie apuntó (antigua, del CLI en la terminal, o de otro perfil
+  // de Mage) sale en TODAS las cuentas y no es de ninguna en concreto (P-038, informe del 10-11).
+  readonly accountKnown?: boolean; // ausente = se sabe
 }
 
 export interface AccountHistory {
@@ -28,7 +34,7 @@ function historyKey(item: ConversationSummary): string {
 
 // Une los historiales de varias cuentas. Una conversación compartida de Claude sale en todas las cuentas de
 // Claude (`projects/` está enlazado): queda UNA vez, con la cuenta con la que se usó por última vez o, si no se
-// sabe, la primera que la listó.
+// sabe, la primera que la listó (y entonces `accountKnown` es false: antes se enseñaba esa, que era la activa).
 export function mergeAccountHistories(lists: readonly AccountHistory[]): AccountConversation[] {
   const byKey = new Map<string, AccountConversation>();
   for (const list of lists) {
@@ -36,9 +42,9 @@ export function mergeAccountHistories(lists: readonly AccountHistory[]): Account
       const key = historyKey(item);
       const current = byKey.get(key);
       const isLastAccount = item.lastAccountId !== undefined && list.accountId === item.lastAccountId;
-      if (current === undefined || (isLastAccount && current.accountId !== item.lastAccountId)) {
-        byKey.set(key, { item, accountId: list.accountId });
-      }
+      if (current === undefined) byKey.set(key, { item, accountId: list.accountId, accountKnown: true });
+      else if (isLastAccount) byKey.set(key, { item, accountId: list.accountId, accountKnown: true });
+      else if (current.accountId !== item.lastAccountId) byKey.set(key, { ...current, accountKnown: false });
     }
   }
   return [...byKey.values()].sort((a, b) => b.item.updatedAtMs - a.item.updatedAtMs);
@@ -46,7 +52,12 @@ export function mergeAccountHistories(lists: readonly AccountHistory[]): Account
 
 export type SidebarRow =
   | { readonly kind: 'tab'; readonly tab: Tab; readonly history?: ConversationSummary; readonly accountId: string }
-  | { readonly kind: 'history'; readonly item: ConversationSummary; readonly accountId: string };
+  | { readonly kind: 'history'; readonly item: ConversationSummary; readonly accountId: string; readonly accountKnown?: boolean };
+
+// Se sabe de qué cuenta es la fila: una pestaña abierta usa la suya; una del historial, si `mergeAccountHistories` lo supo.
+export function rowAccountKnown(row: SidebarRow): boolean {
+  return row.kind === 'tab' || row.accountKnown !== false;
+}
 
 // Id de la conversación de una fila (el que lleva el historial), o undefined si la pestaña aún no tiene.
 export function sidebarRowId(row: SidebarRow, sessionIdByChat: Readonly<Record<string, string>>): string | undefined {
@@ -92,7 +103,7 @@ export function buildSidebarRows(
   });
   const historyRows = history
     .filter((entry) => !openIds.has(entry.item.sessionId))
-    .map((entry): SidebarRow => ({ kind: 'history', item: entry.item, accountId: entry.accountId }));
+    .map((entry): SidebarRow => ({ kind: 'history', item: entry.item, accountId: entry.accountId, accountKnown: entry.accountKnown }));
   return [...tabRows, ...historyRows].sort((a, b) => rowRecency(b) - rowRecency(a));
 }
 
@@ -260,7 +271,7 @@ export interface FilterContext {
 function matchesFilter(row: SidebarRow, filter: SidebarFilter, ctx: FilterContext, needle: string): boolean {
   if (filter.working && !ctx.isWorking(row)) return false;
   if (filter.provider !== null && providerOfRow(row) !== filter.provider) return false;
-  if (filter.accountId !== null && row.accountId !== filter.accountId) return false;
+  if (filter.accountId !== null && (row.accountId !== filter.accountId || !rowAccountKnown(row))) return false;
   return needle.length === 0 || rowTitle(row).toLowerCase().includes(needle);
 }
 

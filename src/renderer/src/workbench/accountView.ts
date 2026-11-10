@@ -29,16 +29,25 @@ export function apiBilledLabel(): string {
 // carpeta sin los puntos del principio). Nunca la ruta entera, que lleva el usuario del equipo.
 export function aliasFromConfigDir(configDir: string): string {
   const last = configDir.split(/[\\/]/).filter((part) => part.length > 0).at(-1) ?? '';
-  return last.replace(/^\.+/, '');
+  return aliasFromName(last);
+}
+
+// Alias de una cuenta a partir del nombre de su carpeta (P-038): sin los puntos del principio y sin el prefijo del
+// proveedor, que ya se ve al lado («.claude-p» → «p»). La principal no tiene más nombre que el prefijo y se queda así.
+export function aliasFromName(name: string): string {
+  const plain = name.replace(/^\.+/, '');
+  const bare = plain.replace(PROVIDER_NAME_PREFIX, '').trim();
+  return bare.length > 0 ? bare : plain;
 }
 
 // Mapea una cuenta de dominio (AccountInfo, segura) a la cuenta de PRESENTACION que consume la UI.
-export function toAccountView(info: AccountInfo, accentOverride?: number): Account {
-  const alias = info.name.replace(/^\.+/, ''); // ".claude-p" -> "claude-p"
+export function toAccountView(info: AccountInfo, accentOverride?: number, aliasOverride?: string): Account {
+  const alias = aliasFromName(info.name);
   return {
     id: info.configDir,
     monogram: deriveMonogram(info.email, alias),
-    alias,
+    alias: aliasOverride ?? alias,
+    baseAlias: alias,
     provider: ACCOUNT_PROVIDER_LABEL[info.providerId] ?? info.providerId,
     providerId: info.providerId,
     apiBilled: info.authKind === 'api-key',
@@ -50,6 +59,22 @@ export function toAccountView(info: AccountInfo, accentOverride?: number): Accou
     loginStatus: info.loginStatus,
     isMain: info.isMain,
   };
+}
+
+// Color y nombre elegidos a mano (PERS-3 y P-038 V16) sobre cuentas ya construidas; sin elección, los de siempre.
+export function applyAccountOverrides(
+  accounts: readonly Account[],
+  overrides: { readonly accentByAccount: Readonly<Record<string, number>>; readonly aliasByAccount: Readonly<Record<string, string>> },
+): Account[] {
+  return applyAccentOverrides(accounts, overrides.accentByAccount).map((account) => ({ ...account, alias: overrides.aliasByAccount[account.id] ?? account.baseAlias ?? account.alias }));
+}
+
+// Las que se enseñan en la barra de cuentas, el selector y el popover de uso (P-038 V16): todas menos las ocultas, y la
+// activa siempre (ocultarla dejaría la ventana sin cuenta a la vista).
+export function visibleAccounts(accounts: readonly Account[], hidden: readonly string[], activeAccountId: string): readonly Account[] {
+  if (hidden.length === 0) return accounts;
+  const hiddenSet = new Set(hidden);
+  return accounts.filter((account) => account.id === activeAccountId || !hiddenSet.has(account.id));
 }
 
 // Reaplica los colores elegidos por el usuario (PERS-3) sobre cuentas ya construidas; sin eleccion, el estable.

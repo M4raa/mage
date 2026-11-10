@@ -8,7 +8,7 @@ import { readOnlyLockMessage } from '@shared/conversationLock';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { McpCallers } from './host/mcpCallers';
 import { codexHomeHasMageServer } from './mcpServer/registrationStatus';
-import { mageMcpLaunch } from './mcpServer/registration';
+import { MAGE_MCP_OFF_NOTICE, mageMcpLaunch, mageMcpServer, withMageReadOnlyAllow } from './mcpServer/registration';
 import { McpRegistrationService, type McpRegistrationDeps } from './mcpServer/registrationService';
 import { DelegationLog } from './mcpServer/delegationLog';
 import { HostSessionsPort } from './mcpServer/hostSessionsPort';
@@ -122,11 +122,12 @@ import type { AppSettings } from '@shared/settings';
 import { IMPORTED_CONTEXT_LIMITS } from '@shared/settings';
 import type { PanelLayoutState } from '@shared/panelLayout';
 import type { MenuItemConstructorOptions } from 'electron';
+import { BACKGROUND_TEST_SWITCHES, isBackgroundTestRun, offScreenPosition } from './windows/backgroundTestWindow';
 import { DebugChannel } from '@shared/debug';
 import type { RendererLogInput } from '@shared/debug';
 import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
 import { BASE_ARGS as CLAUDE_BASE_ARGS, ClaudeAdapter } from './engine/claudeAdapter';
-import { probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
+import { probeModelCatalog, probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
 import { registerMcpIpc } from './config/mcpIpc';
 import { execFileRunner } from './capabilities/commandRunner';
 import { nodeCapabilityFs } from './capabilities/capabilityFs';
@@ -213,7 +214,7 @@ import { codexTranscriptSource, codexTurnsBatches } from './conversations/codexT
 import type { TranscriptSource } from './transcripts/transcriptSource';
 import type { TranscriptBatch } from '@shared/transcripts';
 import { MIGRATE_CONVERSATION_SCHEMA } from './conversations/migrationParams';
-import { AgyHistoryService } from './conversations/agyHistory';
+import { AGY_CONVERSATIONS_DIR, AgyHistoryService } from './conversations/agyHistory';
 import { createAgySqliteStore, writeAgyConversationDb } from './conversations/agySqliteStore';
 import { AGY_TOKEN_PARTS } from './accounts/providerAccounts';
 import { AgyLoginService } from './accounts/agyLoginService';
@@ -232,6 +233,9 @@ import { OpenWithService } from './os/openWithService';
 import { buildJumpListCategories, parseJumpListArgs } from './os/jumpList';
 import { UsageService } from './usage/usageService';
 import { ApiUsageStore } from './usage/apiUsageStore';
+import { UsageHistoryService, type TranscriptRoot } from './usage/usageHistoryService';
+import { listTranscriptsOf, parseUsageHistoryCache, readRange } from './usage/usageHistoryFs';
+import type { UsageInfo } from '@shared/usage';
 import { StatusService } from './status/statusService';
 import { claudeUserAgent } from './os/claudeVersion';
 import { LogBus } from './debug/logBus';
@@ -602,12 +606,35 @@ function loadSharedLaunch(provider: string, accountDir: string, sessionId: strin
   const shared = getMcpServices().sharedMcp();
   for (const warning of shared.warnings) mainLog('warn', warning);
   const settingsCommon = getSharedConfigService().loadSettingsCommon(settingsCommonPath());
+  const settings = getSettingsStore().load();
+  const caller = mageCallerFor(provider, accountDir, sessionId);
+  const servers = withLibraryServers(selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }), family, account);
   return {
-    mcpServers: withLibraryServers(selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }), family, account),
-    settingsFragment: family === 'claude' ? withTaskDirectories(buildSettingsFragment(settingsCommon), launchingTaskExtras) : buildSettingsFragment(settingsCommon),
-    claudeAiConnectors: !getSettingsStore().load().claudeAiConnectorsOff.includes(account),
-    ...mageCallerFor(provider, accountDir, sessionId),
+    mcpServers: withMageServer(servers, settings.mageMcpEnabled, caller.mageCaller),
+    settingsFragment: family === 'claude' ? claudeSettingsFragment(withTaskDirectories(buildSettingsFragment(settingsCommon), launchingTaskExtras), settings.mageMcpEnabled && caller.mageCaller !== undefined) : buildSettingsFragment(settingsCommon),
+    claudeAiConnectors: !settings.claudeAiConnectorsOff.includes(account),
+    // Apagado: el modelo lo sabe y avisa en vez de sustituirlo (solo Claude y Codex, los que hablan con `mage mcp`).
+    ...(!settings.mageMcpEnabled && caller.mageCaller !== undefined ? { systemNotice: MAGE_MCP_OFF_NOTICE } : {}),
+    // Inyectado, el servidor ya lleva la credencial en su `env`: el `env_vars` aparte de Codex lo pisaría.
+    ...(settings.mageMcpEnabled && caller.mageCaller !== undefined ? { mageCaller: { ...caller.mageCaller, forwardToCodexMcp: false } } : caller),
   };
+}
+
+// P-038 V14: con el MCP de Mage cargado, sus herramientas de solo lectura no piden permiso.
+function claudeSettingsFragment(fragment: Readonly<Record<string, unknown>> | null, mageLoaded: boolean): Readonly<Record<string, unknown>> | null {
+  return mageLoaded ? withMageReadOnlyAllow(fragment) : fragment;
+}
+
+// P-038 V7: el MCP de Mage por el mismo camino que los demás MCP comunes. Solo con sesión (hay credencial) y solo
+// Claude y Codex (D-M6); con el mismo nombre que uno común, gana el de Mage (es el que sabe hablar con este host).
+function withMageServer(servers: readonly ResolvedMcpServer[], enabled: boolean, caller: SharedLaunchConfig['mageCaller']): readonly ResolvedMcpServer[] {
+  if (!enabled || caller === undefined) return servers;
+  const launch = mageMcpLaunch({
+    isPackaged: app.isPackaged, execPath: process.execPath, resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(), appImage: process.env['APPIMAGE'], userDataDir: app.getPath('userData'),
+  });
+  const mage = mageMcpServer(launch, caller.credential);
+  return [...servers.filter((server) => server.name !== mage.name), mage];
 }
 
 // Degradación registrada a propósito: un library.json corrupto no impide lanzar ninguna sesión
@@ -1452,6 +1479,61 @@ const apiUsageStore = new ApiUsageStore({
 });
 const statusService = new StatusService({ fetch, now: () => Date.now() });
 
+// «Cuentas y consumo» (P-038 V11). Caché en userData: por transcripción, hasta qué byte se leyó y lo que sumaba.
+const USAGE_HISTORY_FILE = 'usage-history.json';
+const usageHistoryService = new UsageHistoryService({
+  roots: usageHistoryRoots,
+  listTranscripts: listTranscriptsOf,
+  readAgySteps: (path) => createAgySqliteStore().readSteps(path),
+  readRange,
+  loadCache: () => {
+    const path = join(app.getPath('userData'), USAGE_HISTORY_FILE);
+    return parseUsageHistoryCache(existsSync(path) ? readFileSync(path, 'utf8') : null, (message, data) => mainLog('warn', message, data));
+  },
+  saveCache: (cache) => writeAtomic(fileSystemDeps(), join(app.getPath('userData'), USAGE_HISTORY_FILE), JSON.stringify(cache)),
+  accountIds: () => listAllAccounts().map((account) => account.configDir),
+  accountOf: (sessionId) => {
+    const prefs = getConversationIndexStore().loadPrefs(sessionId);
+    return prefs?.hostOwnerAccountId ?? prefs?.accountId;
+  },
+  now: () => Date.now(),
+  offsetMinutes: () => -new Date().getTimezoneOffset(),
+  log: (level, message, data) => mainLog(level, message, data),
+});
+
+// Los `projects/` de Claude: el pozo común (las cuentas lo comparten enlazado: se resuelve para no contarlo dos veces) y
+// el perfil privado de cada cuenta, cuyas conversaciones son de esa cuenta.
+function usageHistoryRoots(): readonly TranscriptRoot[] {
+  const seen = new Set<string>();
+  const roots: TranscriptRoot[] = [];
+  const add = (dir: string, ownerAccountId?: string, format?: 'codex' | 'agy'): void => {
+    if (!existsSync(dir)) return;
+    const key = canonicalPath(dir).toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    roots.push({ dir, ...(ownerAccountId === undefined ? {} : { ownerAccountId }), ...(format === undefined ? {} : { format }) });
+  };
+  for (const account of listAllAccounts()) {
+    // Codex (P-039 F2): cada cuenta es su CODEX_HOME y sus registros son suyos.
+    if (account.providerId === 'codex') add(join(account.configDir, 'sessions'), account.configDir, 'codex');
+    // agy (P-039 F3): las conversaciones de su perfil y, si es de suscripción, las del agy propio del usuario, que gastan de
+    // la misma suscripción (como el historial). Una carpeta ya vista no se cuenta dos veces.
+    const agyProfile = account.providerId === 'agy' ? agyProfileOfAccount(account.configDir) : null;
+    if (agyProfile !== null) for (const profile of [agyProfile, ...agyExternalProfileOf(account.configDir)]) add(join(profile, ...AGY_CONVERSATIONS_DIR), account.configDir, 'agy');
+    if (account.providerId !== 'claude') continue;
+    add(join(account.configDir, 'projects'));
+    add(join(account.configDir, PRIVATE_PROFILE_DIR_NAME, 'projects'), account.configDir);
+  }
+  return roots;
+}
+
+// Foto de las ventanas de la suscripción para el histórico. Una ventana a 0 sin hora de reset es «sin dato».
+function recordUsageWindows(accountId: string, info: UsageInfo | null): void {
+  if (info === null) return;
+  const pctOf = (window: UsageInfo['fiveHour']): number | null => (window.resetsAt === null && window.utilization === 0 ? null : window.utilization);
+  usageHistoryService.recordWindows(accountId, { fiveHourMax: pctOf(info.fiveHour), sevenDayMax: pctOf(info.sevenDay) });
+}
+
 // Mercado de temas Open VSX (M3): busca/trae temas de color de VS Code. Solo lee datos de tema
 // (colores); nunca ejecuta codigo de la extension. La red va en main (CSP del renderer 'self').
 const themeMarketService = new ThemeMarketService({ fetch });
@@ -2188,9 +2270,10 @@ function spawnModelProbe(configDir: string, extraArgs: readonly string[] = [], e
 }
 
 // En segundo plano: un sondeo fallido no se enseña como error, se registra en el log de depuracion.
+const MODEL_PROBE_DEPS = { spawnProbe: spawnModelProbe, timeoutMs: MODEL_PROBE_TIMEOUT_MS, exitGraceMs: MODEL_PROBE_EXIT_GRACE_MS };
+
 function probeModelsInBackground(configDirs: readonly string[]): void {
-  const deps = { spawnProbe: spawnModelProbe, timeoutMs: MODEL_PROBE_TIMEOUT_MS, exitGraceMs: MODEL_PROBE_EXIT_GRACE_MS };
-  void probeModelCatalogs(deps, configDirs, (configDir, models) => {
+  void probeModelCatalogs(MODEL_PROBE_DEPS, configDirs, (configDir, models) => {
     if (models === null || models.length === 0) {
       mainLog('debug', 'Sondeo de modelos sin resultado: se queda la cache anterior', { configDir });
       return;
@@ -2199,10 +2282,12 @@ function probeModelsInBackground(configDirs: readonly string[]): void {
   });
 }
 
+// Las expiradas TAMBIÉN: tienen token de renovación y el `initialize` del sondeo hace que su CLI lo renueve (medido,
+// spike/token-refresh-spike.mjs, 2.1.319). Antes se saltaban y seguían «expiradas» hasta que algo usara la cuenta.
 function probeLoggedInAccounts(): void {
   const dirs = accountService
     .listAccounts()
-    .filter((account) => account.loginStatus === 'logged_in')
+    .filter((account) => account.loginStatus !== 'logged_out')
     .map((account) => account.configDir);
   probeModelsInBackground(dirs);
 }
@@ -2420,6 +2505,13 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
     });
   }
   window.on('ready-to-show', () => {
+    if (backgroundTestRun) {
+      // Las pruebas no saltan delante de la app del usuario: fuera de la pantalla y sin activarla.
+      const { x, y } = offScreenPosition(screen.getAllDisplays().map((display) => display.bounds), window.getBounds().width);
+      window.setPosition(x, y);
+      window.showInactive();
+      return;
+    }
     if (saved?.maximized === true) window.maximize();
     window.show();
   });
@@ -2721,11 +2813,21 @@ function existsDirs(paths: unknown): readonly boolean[] {
 
 // Raiz de los directorios de borrador. Un solo sitio: si la calculan dos, un dia divergen y la fila de
 // informacion deja de reconocer el scratchpad sin que nada falle.
-function scratchRoot(): string {
+function scratchPaths(): Parameters<typeof localScratchRoot>[0] {
   const paths = { platform: process.platform, home: homedir(), userData: app.getPath('userData'), temp: app.getPath('temp'), env: process.env };
-  return localScratchRoot(scratchWorkspacePaths(paths, decideTestHome({ env: process.env, isPackaged: app.isPackaged })));
+  return scratchWorkspacePaths(paths, decideTestHome({ env: process.env, isPackaged: app.isPackaged }));
 }
-function scratchRoots(): readonly string[] { return [scratchRoot(), join(app.getPath('temp'), 'mage-scratch'), join(app.getPath('userData'), 'mage-scratch')].map(root => canonicalPath(root)); }
+function scratchRoot(): string {
+  return localScratchRoot(scratchPaths());
+}
+// La raiz local ENTERA cuenta como borrador: cada perfil (instalada, `pnpm dev`, verify:gui) tiene su
+// `<hash>/mage-scratch`, y un chat sin carpeta de OTRO perfil salia en el lateral como proyecto con nombre de uuid.
+// Cada raiz va tal cual Y canonizada: el temporal de Windows puede venir en forma 8.3 (`DMARAT~1`) y las
+// conversaciones guardan la ruta con la que se lanzaron, no la canonica.
+function scratchRoots(): readonly string[] {
+  const raw = [scratchRoot(), localMageRoot(scratchPaths()), join(app.getPath('temp'), 'mage-scratch'), join(app.getPath('userData'), 'mage-scratch')];
+  return [...new Set([...raw.map(root => canonicalPath(root)), ...raw])];
+}
 
 // Barrido de scratchpads (auditoria B.4.2). La POLITICA la elige el usuario y por defecto es 'never':
 // esto borra ficheros de su disco, asi que no puede pasar sin que lo haya pedido. Quien decide QUE
@@ -3228,6 +3330,13 @@ function registerAccountsIpc1(): void {
   // Cuentas: listar (datos seguros), crear (dir + enlaces + settings) y lanzar login interactivo
   // en terminal externa (headless no puede loguear). El binario se resuelve por SO.
   ipcMain.handle(IpcChannel.AccountsList, () => listAllAccounts());
+  // «Refrescar sesión» (P-038): solo cuentas de Claude por suscripción que Mage conoce. Lo renueva su CLI, no Mage.
+  ipcMain.handle(IpcChannel.AccountsRefreshLogin, async (_e, configDir: unknown): Promise<void> => {
+    const account = accountService.listAccounts().find((candidate) => candidate.configDir === configDir);
+    if (account === undefined) throw new Error(`Cuenta desconocida para refrescar la sesión: ${JSON.stringify(configDir)}`);
+    const models = await probeModelCatalog(MODEL_PROBE_DEPS, account.configDir);
+    if (models !== null && models.length > 0) cacheModelCatalog(account.configDir, models);
+  });
   ipcMain.handle(IpcChannel.AccountsCodexConfirm, () => getCodexAccountCatalog().confirm(getProviderAccounts().list(accountService.listAccounts())));
   ipcMain.handle(IpcChannel.AccountsCreate, (_e, name: string): AccountInfo =>
     accountService.createAccount(name),
@@ -3339,6 +3448,27 @@ function registerAccountsIpc2(): void {
   });
 }
 
+// Uso de una cuenta para `UsageGet`, con la foto de sus ventanas para «Cuentas y consumo» (P-038 V11).
+async function usageOfAccount(configDir: string): Promise<UsageInfo | null> {
+  if (getProviderAccounts().find('claude', configDir)?.authKind === 'api-key') {
+    const apiUsage = apiUsageStore.get(configDir);
+    return { fiveHour: { utilization: 0, resetsAt: null }, sevenDay: { utilization: 0, resetsAt: null },
+      limits: [], apiCreditsMinor: null, fetchedAt: Date.now(), ...(apiUsage === null ? {} : { apiUsage }) };
+  }
+  // Una cuenta de Codex no tiene endpoint de uso de Mage: lo que trajo su sesion (grupo E).
+  if (getProviderAccounts().find('codex', configDir) !== null) {
+    const stream = usageService.getStreamUsage(configDir);
+    recordUsageWindows(configDir, stream);
+    return stream;
+  }
+  if (!isManagedAccountConfigDir(configDir)) {
+    throw new Error(`Cuenta no valida para consultar uso: ${configDir}`);
+  }
+  const info = await usageService.getUsage(configDir);
+  recordUsageWindows(configDir, info);
+  return info;
+}
+
 function registerDialogIpc1(): void {
   // Selector de carpeta de proyecto (cwd de una pestana). Devuelve null si el usuario cancela.
   ipcMain.handle(IpcChannel.DialogPickDirectory, async (): Promise<string | null> => {
@@ -3351,19 +3481,8 @@ function registerDialogIpc1(): void {
   // Whitelisting IPC (auditoria de seguridad, 2026-08-10): sin esto, un configDir arbitrario haria que
   // main leyera .credentials.json de CUALQUIER ruta y usara ese token contra la API de uso — mismo
   // patron que ConversationsList/AccountsDelete.
-  ipcMain.handle(IpcChannel.UsageGet, (_e, configDir: string) => {
-    if (getProviderAccounts().find('claude', configDir)?.authKind === 'api-key') {
-      const apiUsage = apiUsageStore.get(configDir);
-      return { fiveHour: { utilization: 0, resetsAt: null }, sevenDay: { utilization: 0, resetsAt: null },
-        limits: [], apiCreditsMinor: null, fetchedAt: Date.now(), ...(apiUsage === null ? {} : { apiUsage }) };
-    }
-    // Una cuenta de Codex no tiene endpoint de uso de Mage: lo que trajo su sesion (grupo E).
-    if (getProviderAccounts().find('codex', configDir) !== null) return usageService.getStreamUsage(configDir);
-    if (!isManagedAccountConfigDir(configDir)) {
-      throw new Error(`Cuenta no valida para consultar uso: ${configDir}`);
-    }
-    return usageService.getUsage(configDir);
-  });
+  ipcMain.handle(IpcChannel.UsageGet, (_e, configDir: string) => usageOfAccount(configDir));
+  ipcMain.handle(IpcChannel.UsageHistoryGet, () => usageHistoryService.history());
   ipcMain.handle(IpcChannel.StatusGet, () => statusService.getStatus());
   // `app.getVersion()` lee el package.json de la app EMPAQUETADA, que es la version que el usuario
   // tiene instalada — no la del arbol de fuentes.
@@ -4365,6 +4484,12 @@ const runsHeadless = isHeadlessHost({ platform: process.platform, argv: process.
 // pantalla, Chromium elige como siempre (kwallet en KDE): forzarlo dejaría ilegibles las bóvedas que ya existen.
 if (runsHeadless && process.platform === 'linux' && !app.commandLine.hasSwitch('password-store')) {
   app.commandLine.appendSwitch('password-store', 'gnome-libsecret');
+}
+// `pnpm verify:gui` en segundo plano (solo sin empaquetar): la ventana vive fuera de la pantalla y sin foco, y Chromium
+// no la trata como tapada. Antes de `ready`, que es cuando lee los switches.
+const backgroundTestRun = isBackgroundTestRun(app.isPackaged, process.env);
+if (backgroundTestRun) {
+  for (const [name, value] of BACKGROUND_TEST_SWITCHES) app.commandLine.appendSwitch(name, value);
 }
 
 // El host local (F2.6): terminal, widget y MCP hablan con el por un socket privado. Vive en los dos modos.

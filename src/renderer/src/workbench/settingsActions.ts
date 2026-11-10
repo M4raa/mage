@@ -14,7 +14,8 @@ import {
   type KeepAliveSettings,
 } from '@shared/settings';
 import { setAgyCommandVerdict } from '@shared/agyRules';
-import { applyAccentOverrides } from './accountView';
+import { applyAccentOverrides, applyAccountOverrides } from './accountView';
+import { ACCOUNT_ALIAS_MAX, PLAN_PRICE_MAX_MICRO_USD } from '@shared/settings';
 import { effortSettingKey } from './models';
 import { applyBackgroundOpacity, applyThemeFromSettings, systemPrefersDark } from './theme';
 import type { WorkbenchState } from './workbenchStore';
@@ -35,6 +36,11 @@ export type SettingsActionName =
   | 'setUiLanguage'
   | 'setAccountAccent'
   | 'setClaudeAiConnectorsEnabled'
+  | 'setMageMcpEnabled'
+  | 'renameAccount'
+  | 'setPlanPrice'
+  | 'setAdminMode'
+  | 'setAccountHidden'
   | 'setAgyCommandVerdict'
   | 'setAgyLinkedPaths'
   | 'setDefaultProvider'
@@ -159,6 +165,50 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
       set((s) => {
         const rest = s.settings.claudeAiConnectorsOff.filter((id) => id !== accountId);
         return { settings: { ...s.settings, claudeAiConnectorsOff: enabled ? rest : [...rest, accountId] } };
+      });
+      deps.persistSettings();
+    },
+
+    // Se guarda YA: main lee el ajuste en cada lanzamiento, y la siguiente conversación ya debe tenerlo.
+    setMageMcpEnabled: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, mageMcpEnabled: enabled } }));
+      deps.persistSettingsNow();
+    },
+
+    renameAccount: (accountId, alias) => {
+      const name = alias?.trim() ?? '';
+      if (name.length > ACCOUNT_ALIAS_MAX) throw new Error(`Alias demasiado largo (${name.length} > ${ACCOUNT_ALIAS_MAX}): ${JSON.stringify(name)}`);
+      set((s) => {
+        const { [accountId]: _previo, ...rest } = s.settings.aliasByAccount;
+        const aliasByAccount = name.length === 0 ? rest : { ...rest, [accountId]: name };
+        const settings = { ...s.settings, aliasByAccount };
+        return { settings, accounts: applyAccountOverrides(s.accounts, settings) };
+      });
+      deps.persistSettings();
+    },
+
+    // Precio mensual del plan de una cuenta (P-039 D6), en micro-USD; null lo quita.
+    setPlanPrice: (accountId, microUsd) => {
+      if (microUsd !== null && (!Number.isInteger(microUsd) || microUsd < 0 || microUsd > PLAN_PRICE_MAX_MICRO_USD)) {
+        throw new Error(`Precio del plan no valido para ${accountId}: ${microUsd}`);
+      }
+      set((s) => {
+        const { [accountId]: _previo, ...rest } = s.settings.planPriceMicroUsdByAccount;
+        return { settings: { ...s.settings, planPriceMicroUsdByAccount: microUsd === null ? rest : { ...rest, [accountId]: microUsd } } };
+      });
+      deps.persistSettings();
+    },
+
+    // Modo admin (P-039 D5): se guarda ya, para que sobreviva a un cierre inmediato.
+    setAdminMode: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, adminMode: enabled } }));
+      deps.persistSettingsNow();
+    },
+
+    setAccountHidden: (accountId, hidden) => {
+      set((s) => {
+        const rest = s.settings.hiddenAccounts.filter((id) => id !== accountId);
+        return { settings: { ...s.settings, hiddenAccounts: hidden ? [...rest, accountId] : rest } };
       });
       deps.persistSettings();
     },

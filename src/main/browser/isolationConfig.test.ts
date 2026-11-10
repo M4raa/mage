@@ -10,6 +10,7 @@ describe('ISOLATED_WEB_PREFERENCES', () => {
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
       webviewTag: false,
+      backgroundThrottling: false,
     });
     expect('preload' in ISOLATED_WEB_PREFERENCES).toBe(false);
     expect(Object.isFrozen(ISOLATED_WEB_PREFERENCES)).toBe(true);

@@ -62,6 +62,25 @@ describe('setDraft', () => {
 
     expect(store.getState().accounts[0]?.loginStatus).toBe('logged_out');
   });
+  it('refreshLogin_cuentaExpirada_laRenuevaSuCliYSeRelee', async () => {
+    const info: AccountInfo = { configDir: '/claude-p', name: '.claude-p', providerId: 'claude', authKind: 'subscription',
+      isMain: false, email: null, org: null, loginStatus: 'expired', expiresAt: 1, defaultModel: null };
+    let renewed = false;
+    const refreshLogin = vi.fn(async () => { renewed = true; });
+    const store = createWorkbenchStore(fakeMage({
+      listAccounts: async () => [renewed ? { ...info, loginStatus: 'logged_in' } : info],
+      loadModelCatalog: async () => [],
+      confirmCodexAccounts: async () => [],
+      refreshLogin,
+      getUsage: async () => null,
+    }));
+    await store.getState().refreshAccounts();
+
+    await store.getState().refreshLogin('/claude-p');
+
+    expect(refreshLogin).toHaveBeenCalledWith('/claude-p');
+    expect(store.getState().accounts[0]?.loginStatus).toBe('logged_in');
+  });
   it('setDraft_dosPestanas_cadaUnaConservaElSuyo', () => {
     // Arrange
     const store = createWorkbenchStore(fakeMage());
@@ -2043,6 +2062,18 @@ describe('createConversation y el modo de permiso por defecto', () => {
     expect(store.getState().tabs[0]?.permissionMode).toBeUndefined();
   });
 
+  it('newTab_codexConModoEnSuFicha_arrancaConEseModo', async () => {
+    const store = fresh('plan');
+    store.setState((state) => ({
+      accounts: state.accounts.map((item) => item.id === account.id ? { ...item, providerId: 'codex' } : item),
+      settings: { ...state.settings, defaultModelByProvider: { 'codex#permission': ':workspace' } },
+    }));
+
+    await store.getState().newTab({ accountId: account.id, cwd: 'C:/p', model: 'gpt-6.1-sol', provider: 'codex' });
+
+    expect(store.getState().tabs[0]?.permissionMode).toBe(':workspace');
+  });
+
   it('newTab_cuentaDeOtroProveedor_rechazaAntesDeCrearPestana', async () => {
     const store = fresh('');
 
@@ -3341,7 +3372,7 @@ describe('openConversation — dueña del host', () => {
     await store.getState().openConversation(item(), 'acc-active');
 
     const opened = store.getState().tabs.find((t) => t.resumeSessionId === 'n-1');
-    expect(opened).toMatchObject({ accountId: 'C:\\x\\home\\.claude-x-inval', accountPinned: true, accountAlias: 'claude-x-inval' });
+    expect(opened).toMatchObject({ accountId: 'C:\\x\\home\\.claude-x-inval', accountPinned: true, accountAlias: 'x-inval' });
     expect(store.getState().activeAccountId).toBe('acc-active');
     await expect(store.getState().ensureSession(opened?.id ?? '')).rejects.toThrow(/solo lectura/);
     expect(createSession).not.toHaveBeenCalled();
@@ -3355,5 +3386,34 @@ describe('openConversation — dueña del host', () => {
 
     expect(store.getState().tabs).toHaveLength(1);
     expect(store.getState().tabs[0]).toMatchObject({ id: 't1', accountId: 'acc-owner', accountPinned: true });
+  });
+});
+
+// P-039: precio del plan y modo admin, en los ajustes.
+describe('setPlanPrice y setAdminMode', () => {
+  const fresh = () => createWorkbenchStore(fakeMage({ saveSettings: vi.fn().mockResolvedValue(undefined) }));
+
+  it('setPlanPrice_ponerYQuitar_actualizaElMapa', () => {
+    const store = fresh();
+
+    store.getState().setPlanPrice('C:/a', 200_000_000);
+    store.getState().setPlanPrice('C:/b', 20_000_000);
+    store.getState().setPlanPrice('C:/a', null);
+
+    expect(store.getState().settings.planPriceMicroUsdByAccount).toEqual({ 'C:/b': 20_000_000 });
+  });
+
+  it.each([-1, 1.5, 10_000_000_001])('setPlanPrice_%s_lanzaConElValor', (value) => {
+    expect(() => fresh().getState().setPlanPrice('C:/a', value)).toThrow(String(value));
+  });
+
+  it('setAdminMode_activa_seGuardaYa', () => {
+    const saveSettings = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ saveSettings }));
+
+    store.getState().setAdminMode(true);
+
+    expect(store.getState().settings.adminMode).toBe(true);
+    expect(saveSettings).toHaveBeenCalled();
   });
 });

@@ -159,7 +159,7 @@ export function useAgentElapsed(rows: readonly AgentDockRow[]): (row: AgentDockR
   return (row) => row.elapsedMs ?? Math.max(0, now - (FIRST_SEEN_MS.get(row.toolUseId) ?? now));
 }
 
-function useNow(ticking: boolean): number {
+export function useNow(ticking: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!ticking) return;

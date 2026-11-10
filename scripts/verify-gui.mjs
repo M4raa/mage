@@ -20,6 +20,7 @@
 //   pnpm verify:gui             # arranca, comprueba y limpia
 //   pnpm verify:gui --lang=en       # la tanda con la interfaz en inglés (siembra uiLanguage en el perfil)
 //   pnpm verify:gui --keep      # deja la app abierta al terminar (para mirar a ojo)
+//   pnpm verify:gui --foreground # la ventana a la vista y con foco (por defecto va fuera de pantalla y sin foco)
 //   pnpm verify:gui --only=texto # solo las comprobaciones cuyo nombre contenga `texto`
 //   pnpm verify:gui --turn=local # el turno minimo contra el servidor falso, sin gastar cuota
 //   pnpm verify:gui --turn=real  # el turno minimo contra Claude aunque la guarda de uso avise
@@ -74,8 +75,6 @@ const privateLineRegExp = () => new RegExp(`(?:${[
   escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 1 })),
   escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 2 })).replace('2', '\\d+'),
 ].join('|')})`);
-// Indicador de uso de la barra de estado («5h 12% · sem 40% · reset …»): el inicio fijo del mensaje hasta la 2ª variable.
-const statusBarWindowsRegExp = () => new RegExp(`${escapeRegExp(uiSegment('app.statusBar.windows', 0))}\\s*\\d+${escapeRegExp(uiSegment('app.statusBar.windows', 1))}`);
 // Entero con el agrupador del idioma de la tanda (la app formatea igual con Intl).
 const localizedInteger = (value) => new Intl.NumberFormat(getUiLanguage()).format(value);
 // Decimal con un dígito, con el separador del idioma de la tanda (la app formatea igual con Intl).
@@ -88,7 +87,7 @@ const uiAnyOf = (texts, anchored = false) => new RegExp(`${anchored ? '^' : ''}(
 const uiStartsWith = (key) => new RegExp(`^${escapeRegExp(uiPrefix(key))}(?:\\s|$)`);
 // Entradas que el menú ⋯ del prompt ya NO tiene. «Adjuntar» no está en el catálogo (se quitó con la entrada): se
 // busca en los dos idiomas a mano; «Abrir carpeta» es la clave de otro aviso con el mismo texto.
-const removedPromptMenuItems = () => uiAnyOf(['Adjuntar', 'Attach', ui('notifications.worktree.openFolder')]);
+const removedPromptMenuItems = () => uiAnyOf([ui('notifications.worktree.openFolder')]);
 // Botón de abrir pestaña del diálogo de Nueva conversación, con su texto de «Abriendo…».
 const openTabButtonName = () => uiAnyOf([ui('dialogs.newTab.open'), ui('dialogs.newTab.opening')]);
 import { cleanupProfile } from '../spike/f0-profile-cleanup.mjs';
@@ -103,6 +102,10 @@ const requireFromHere = createRequire(import.meta.url);
 // `--prod`: arranca el build de produccion (`electron-vite preview`). Sin puente de desarrollo, asi que
 // solo vale para medir (--perf-baseline), nunca para las comprobaciones.
 const PROD_BUILD = process.argv.includes('--prod');
+// Por defecto la app de prueba corre en SEGUNDO PLANO: fuera de la pantalla, sin robar el foco y con el foco simulado
+// por CDP (MAGE_TEST_BACKGROUND, ver src/main/windows/backgroundTestWindow.ts). `--foreground` la deja a la vista,
+// como antes; la línea base de rendimiento también, porque mide la cadencia real de frames.
+const FOREGROUND = process.argv.includes('--foreground') || process.argv.includes('--perf-baseline') || process.argv.includes('--keep');
 if (PROD_BUILD && !process.argv.includes('--perf-baseline')) throw new Error('--prod solo se admite con --perf-baseline');
 
 // H3 de la devolución 17: la carpeta de locks de conversación (#55) de las instancias que lanza esta tanda. La real del
@@ -165,6 +168,8 @@ const AGY_VG_DENIED_MCP = 'mcp(vg-agy-suyo/vg_tool)';
 const AGY_VG_LINK = '.vg-carpeta';
 // Vallas de codigo para medir el resaltado (F4): `ts` esta en HIGHLIGHT_LANGS (debe tokenizar) y `rust`
 // no lo esta (debe caer a texto plano, que NO es lo mismo que quedarse en blanco).
+// Bloque de código largo: el resaltado llega DESPUÉS de montar la fila y cambia su alto (lo que descoloca el scroll).
+const CODE_FENCE_LONG = ['```ts', ...Array.from({ length: 40 }, (_, i) => `export const valor${i}: number = ${i} * 2; // línea larga para que envuelva en ventanas estrechas del hilo`), '```'].join('\n');
 const TS_FENCE = '```ts\nconst answer: number = 42;\nexport const twice = (n: number): number => n * 2;\n```';
 const RUST_FENCE = '```rust\nfn main() { println!("hola"); }\n```';
 
@@ -271,6 +276,25 @@ async function openLibraryPreview(page) {
 }
 
 const CHECKS = [
+  {
+    // La tanda no salta delante de la app del usuario: la ventana va fuera de todas las pantallas, la página cree tener
+    // el foco (CDP) y sigue pintando frames. Con --foreground no aplica.
+    name: 'verify:gui en segundo plano: ventana fuera de pantalla, con foco simulado y frames',
+    async run(page) {
+      if (FOREGROUND) return { ok: true, detail: 'con --foreground: no aplica' };
+      const medido = await page.evaluate(async () => {
+        const inicio = performance.now();
+        let frames = 0;
+        await new Promise((resolve) => {
+          const paso = () => (++frames >= 20 ? resolve() : requestAnimationFrame(paso));
+          requestAnimationFrame(paso);
+        });
+        return { x: window.screenX, ancho: window.outerWidth, foco: document.hasFocus(), msPor20Frames: Math.round(performance.now() - inicio) };
+      });
+      const ok = medido.x + medido.ancho <= 0 && medido.foco && medido.msPor20Frames < 2000;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
   {
     name: 'La ventana principal arranca',
     async run(page) {
@@ -613,6 +637,44 @@ const CHECKS = [
     },
   },
   {
+    // P-038: las fichas son cards con el logo del proveedor; Codex y agy traen su modo de permiso por defecto y Codex,
+    // además, el esfuerzo. Se elige un modo de Codex en su selector, se mide que se guarda y se restaura.
+    name: 'Proveedores y modelos: cards con logo; Codex y agy con modo por defecto y Codex con esfuerzo (P-038)',
+    state: { settingsSection: ui('settings.sections.providers.nav') },
+    async run(page) {
+      await openSection(page, uiRegExp('settings.sections.providers.nav'));
+      await page.locator('[data-provider-card]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      // Los de serie que no están instalados no salen: se espera a que acaben de sondearse.
+      await page.waitForTimeout(CONFIG.settleMs * 4);
+      const cards = await page.evaluate((textos) => [...document.querySelectorAll('[data-provider-card]')].map((card) => ({
+        id: card.getAttribute('data-provider-card'),
+        logo: card.querySelector('[data-provider-logo]')?.getAttribute('data-provider-logo') ?? null,
+        modo: [...card.querySelectorAll('button[aria-label]')].some((b) => b.getAttribute('aria-label').startsWith(textos.modo) || b.getAttribute('aria-label').startsWith(textos.modoClaude)),
+        esfuerzo: [...card.querySelectorAll('button[aria-label]')].some((b) => b.getAttribute('aria-label').startsWith(textos.esfuerzo)),
+      })), { modo: uiPrefix('settings.providers.permission.providerAria'), modoClaude: ui('settings.providers.permission.aria'), esfuerzo: uiPrefix('settings.providers.effort.aria') });
+      const porId = Object.fromEntries(cards.map((c) => [c.id, c]));
+      const conLogo = cards.filter((c) => c.id === 'claude' || c.id === 'codex' || c.id === 'agy').every((c) => c.logo === c.id);
+      const codex = porId.codex ?? null;
+      const agy = porId.agy ?? null;
+      let guardado = null;
+      if (codex !== null) {
+        const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.defaultModelByProvider['codex#permission'] ?? '');
+        try {
+          await page.locator(`[data-provider-card="codex"] button[aria-label^="${cssAttr(uiPrefix('settings.providers.permission.providerAria'))}"]`).click();
+          await page.locator('[role="listbox"] [data-value=":workspace"]').click();
+          guardado = await page.evaluate(() => window.__mageDev.store.getState().settings.defaultModelByProvider['codex#permission'] ?? '');
+        } finally {
+          await page.evaluate((modo) => window.__mageDev.store.getState().setDefaultModelForProvider('codex#permission', modo), previo);
+        }
+      }
+      const ok = porId.claude?.modo === true && conLogo
+        && (codex === null || (codex.modo && codex.esfuerzo && guardado === ':workspace'))
+        && (agy === null || agy.modo);
+      const nota = codex === null || agy === null ? ' (Codex o agy no están instalados aquí: su parte no se ha medido)' : '';
+      return { ok, detail: `${JSON.stringify({ cards, guardado })}${nota}` };
+    },
+  },
+  {
     // 0.1.1 R2, punto 6: «Omitir permisos» como modo por defecto, con su linea fija en Ajustes. Se elige
     // por la accion del store (no abre ninguna conversacion) y se restaura el que habia.
     name: 'Proveedores y modelos: «Omitir permisos» por defecto enseña su aviso fijo (R2 6)',
@@ -893,7 +955,9 @@ const CHECKS = [
     state: { settingsSection: ui('mcp.section.tabsAria') },
     async run(page, { userDataDir }) {
       const dialogo = page.locator('[data-mcp-server-dialog]');
-      await page.getByRole('button', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
+      // P-038 V12: Editar vive en el «⋯» de la fila.
+      await page.getByRole('button', { name: ui('mcp.row.moreActions', { name: SEEDED_MCP_HTTP }), exact: true }).click();
+      await page.getByRole('menuitem', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
       await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const enmascarado = await page.evaluate(
         (secreto) => !document.documentElement.outerHTML.includes(secreto) && [...document.querySelectorAll('input')].every((i) => !i.value.includes(secreto)),
@@ -902,7 +966,9 @@ const CHECKS = [
       await page.keyboard.press('Escape');
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const configuracionAbierta = (await page.locator('[data-mcp-section]').count()) === 1;
-      await page.getByRole('button', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
+      // P-038 V12: Editar vive en el «⋯» de la fila.
+      await page.getByRole('button', { name: ui('mcp.row.moreActions', { name: SEEDED_MCP_HTTP }), exact: true }).click();
+      await page.getByRole('menuitem', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
       await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await dialogo.getByRole('button', { name: ui('chat.files.save'), exact: true }).click();
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
@@ -969,6 +1035,47 @@ const CHECKS = [
       const sigueSuBoton = (await fila.getByRole('button', { name: etiqueta, exact: true }).count()) > 0;
       const ok = estadoAntes.includes(ui('mcp.status.needsAuth')) && antes >= 1 && vioAutenticando && texto.includes(ui('mcp.auth.connected')) && despues === antes - 1 && !sigueSuBoton;
       return { ok, detail: `estadoAntes=«${estadoAntes}» botones ${antes}→${despues} autenticando=${vioAutenticando} mensaje=«${texto}»` };
+    },
+  },
+  {
+    // P-038 V12: las tres pestañas con la MISMA fila (punto de estado, etiquetas del mismo tamaño, acciones en «⋯»), sin
+    // tablas, la explicación plegada tras «ⓘ» y el MCP de Mage arriba como tarjeta con su interruptor.
+    name: 'P-038 V12: MCP y conectores homogéneo, con el MCP de Mage arriba',
+    state: { settingsSection: ui('mcp.section.tabsAria') },
+    async run(page) {
+      if ((await page.locator(MODAL).count()) === 0) await openSettingsDialog(page);
+      if ((await page.locator('[data-mcp-section]').count()) === 0) await openSection(page, uiRegExp('mcp.section.tabsAria'));
+      const porPestaña = {};
+      for (const tab of ['servers', 'connectors', 'extensions']) {
+        await page.locator(`[data-mcp-tab="${tab}"]`).click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        porPestaña[tab] = await page.evaluate(() => {
+          const section = document.querySelector('[data-mcp-section]');
+          const rows = [...section.querySelectorAll('[role="tabpanel"] [data-mcp-tone]')];
+          const chips = [...section.querySelectorAll('[role="tabpanel"] [data-mcp-tone] + div span.rounded-\\[4px\\]')];
+          return {
+            tablas: section.querySelectorAll('table').length,
+            filas: rows.length,
+            tamañosDeEtiqueta: [...new Set(chips.map((chip) => getComputedStyle(chip).fontSize))],
+          };
+        });
+      }
+      const arriba = await page.evaluate(() => {
+        const section = document.querySelector('[data-mcp-section]');
+        const card = section.querySelector('[data-setting="mage-mcp-enabled"]');
+        const tablist = section.querySelector('[role="tablist"]');
+        return {
+          tarjetaAntesDePestañas: card !== null && tablist !== null && Boolean(card.compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING),
+          interruptor: card?.querySelector('input[type="checkbox"]') !== null,
+        };
+      });
+      await page.locator('[data-mcp-tab="servers"]').click();
+      const textoPlegado = (await page.locator('[data-mcp-section] [role="tabpanel"]').textContent())?.includes(ui('mcp.servers.intro.commons')) ?? true;
+      const ok =
+        arriba.tarjetaAntesDePestañas && arriba.interruptor && !textoPlegado &&
+        Object.values(porPestaña).every((p) => p.tablas === 0 && p.tamañosDeEtiqueta.length <= 1) &&
+        porPestaña.servers.filas > 0 && porPestaña.connectors.filas > 0;
+      return { ok, detail: JSON.stringify({ arriba, textoPlegado, porPestaña }) };
     },
   },
   {
@@ -1065,7 +1172,8 @@ const CHECKS = [
       const importada = page.locator(`[data-mcp-extension="${SEEDED_DESKTOP_EXTENSION}"]`);
       await importada.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const copiada = fs.existsSync(path.join(userDataDir, 'extensions', SEEDED_DESKTOP_EXTENSION, 'manifest.json'));
-      await importada.getByRole('button', { name: uiStartsWith('mcp.extensions.uninstallAria') }).click();
+      await importada.locator('[data-mcp-row-menu]').click();
+      await page.getByRole('menuitem', { name: uiStartsWith('mcp.extensions.uninstallAria') }).click();
       await importada.getByRole('button', { name: ui('mcp.extensions.confirmUninstall'), exact: true }).click();
       await importada.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const limpia = !fs.existsSync(path.join(userDataDir, 'extensions', SEEDED_DESKTOP_EXTENSION));
@@ -2292,7 +2400,7 @@ const CHECKS = [
       await page.locator('[data-step-slider-popover] input[type="range"]').press('ArrowRight');
       await page.keyboard.press('Escape');
       await page.getByRole('button', { name: new RegExp('^' + uiPrefix('prompt.permission.ariaLabel').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).click();
-      await page.locator('[data-step-slider-popover] input[type="range"]').press('ArrowRight');
+      await page.locator('[role="listbox"] [data-value=":workspace|never"]').click();
       const selected = await page.evaluate(() => {
         const state = window.__mageDev.store.getState();
         const tab = state.tabs.find((item) => item.id === state.activeTabId);
@@ -2979,7 +3087,7 @@ const CHECKS = [
     // menu aparecia muy por encima, desconectado. Se mide la separacion REAL entre las dos cajas: da
     // igual si vuelca hacia arriba o hacia abajo, pero tiene que estar PEGADO a una de las dos caras.
     // Solo se ABRE el menu (Escape para cerrarlo): elegir una opcion cambiaria el esfuerzo de verdad.
-    name: 'Esfuerzo y modo: el popover del deslizador nace pegado a su chip y trae sus pasos (StepSlider)',
+    name: 'Esfuerzo: el popover del deslizador nace pegado a su chip y trae sus pasos (StepSlider)',
     async run(page) {
       // P-028 32/33: modo y esfuerzo son deslizadores de pasos. Grupo A (0.1.2, punto 4): se RECORREN todos
       // los pasos con el teclado midiendo que ni el chip ni el popover se mueven (el de modo saltaba 16 px
@@ -2993,7 +3101,6 @@ const CHECKS = [
       if (propia) await openTemporaryConversation(page);
       const casos = [
         { chip: `button[aria-label="${cssAttr(ui('prompt.effort.ariaLabel'))}"]`, pasos: 6 },
-        { chip: `button[aria-label^="${cssAttr(uiPrefix('prompt.permission.ariaLabel'))}"]`, pasos: 5 },
       ];
       const medidas = [];
       try {
@@ -4200,52 +4307,45 @@ const CHECKS = [
     },
   },
   {
-    // P-026, 3.1 (D17): con el texto largo, los selectores bajan a su fila y el editor se queda con el
-    // ancho; con el input vacio, vuelven al lado del texto. Borrador fijado por el store (no se envia).
-    name: 'Prompt: los selectores bajan cuando el texto salta de linea y vuelven con el input vacio',
+    // P-038 (rediseño del 10-11): la caja del input es «+» · editor · enviar, con los dos botones pegados al FONDO (el
+    // texto crece hacia arriba sin moverlos) y el editor sin pasar por encima de enviar. Los selectores (modelo, esfuerzo,
+    // modo) van DEBAJO de la caja. Borrador fijado por el store (no se envía).
+    name: 'Prompt: «+» y enviar al fondo de la caja, nada encima de enviar y los selectores debajo (P-038)',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
       });
       await openTemporaryConversation(page);
-      // Ventana ANCHA: con los dos docks abiertos el chat de la ventana por defecto mide ~500 px, y ahi los
-      // selectores no caben al lado del texto ni vacio (bajan por el flex-wrap, que es el otro mecanismo).
-      const ventanaPrevia = page.viewportSize();
-      await page.setViewportSize({ width: 1800, height: 900 });
-      await page.waitForTimeout(CONFIG.settleMs * 2);
       const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
       const medir = () =>
-        page.evaluate(() => {
-          const host = document.querySelector('[data-prompt-editor="true"]');
-          const editor = host?.querySelector('.cm-editor');
-          const controles = document.querySelector('[data-prompt-controls="true"]');
-          if (!host || !editor || !controles) return null;
-          const e = editor.getBoundingClientRect();
-          const c = controles.getBoundingClientRect();
-          const fila = host.parentElement.getBoundingClientRect();
-          return { editorTop: e.top, editorBottom: e.bottom, controlesTop: c.top, anchoEditor: host.offsetWidth, anchoFila: fila.width, disposicion: host.getAttribute('data-prompt-layout') };
-        });
-      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'a'.repeat(400), attachments: [], mentions: [] }), tabId);
-      await page.waitForTimeout(CONFIG.settleMs * 3);
-      await waitForStillBox(page, '[data-prompt-controls="true"]');
-      const largo = await medir();
-      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, null), tabId);
-      await page.waitForTimeout(CONFIG.settleMs * 3);
-      await waitForStillBox(page, '[data-prompt-controls="true"]');
-      const vacio = await medir();
-      if (ventanaPrevia !== null) await page.setViewportSize(ventanaPrevia);
-      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
-      await page.waitForTimeout(CONFIG.settleMs);
-      const ok =
-        largo !== null &&
-        vacio !== null &&
-        largo.disposicion === 'stacked' &&
-        largo.controlesTop >= largo.editorBottom - 1 &&
-        largo.anchoEditor >= largo.anchoFila * 0.9 &&
-        vacio.disposicion === 'inline' &&
-        Math.abs(vacio.controlesTop - vacio.editorTop) <= 4;
-      return { ok, detail: JSON.stringify({ largo, vacio }) };
+        page.evaluate((id) => {
+          const pane = document.querySelector(`[data-pane-tab-id="${id}"]`);
+          const host = pane?.querySelector('[data-prompt-editor="true"]');
+          const fila = host?.parentElement;
+          const mas = fila?.querySelector('[data-prompt-actions="true"]');
+          const enviar = fila?.lastElementChild;
+          const controles = pane?.querySelector('[data-prompt-controls="true"]');
+          if (!host || !fila || !mas || !enviar || !controles) return null;
+          const [f, h, m, e, c] = [fila, host, mas, enviar, controles].map((n) => n.getBoundingClientRect());
+          return { filaBottom: f.bottom, editorTop: h.top, editorRight: h.right, editorAlto: h.height, masBottom: m.bottom, enviarTop: e.top, enviarLeft: e.left, enviarBottom: e.bottom, controlesTop: c.top };
+        }, tabId);
+      // El editor se carga en diferido: sin esperarlo, la primera medida de una tanda corta sale null.
+      await page.locator(`[data-pane-tab-id="${tabId}"] [data-prompt-editor="true"] .cm-editor`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const caso = (m) => m !== null && Math.abs(m.masBottom - m.enviarBottom) <= 2 && m.editorRight <= m.enviarLeft + 1 && m.controlesTop >= m.filaBottom - 1;
+      try {
+        const vacio = await medir();
+        await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'a '.repeat(400), attachments: [], mentions: [] }), tabId);
+        await page.waitForTimeout(CONFIG.settleMs * 3);
+        const largo = await medir();
+        // Con el texto largo el editor crece hacia arriba: enviar se queda abajo y por encima de él no hay texto.
+        const ok = caso(vacio) && caso(largo) && largo.editorAlto > vacio.editorAlto + 10 && largo.enviarTop > largo.editorTop + 10;
+        return { ok, detail: JSON.stringify({ vacio, largo }) };
+      } finally {
+        await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, null), tabId);
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
     },
   },
   {
@@ -4343,7 +4443,7 @@ const CHECKS = [
     // o bien trae las DOS ventanas con su reset (5 h y 7 d). Nunca un 0 % de relleno.
     name: '22: popover «Uso general» con 5 h y 7 d y su reset por cuenta',
     async run(page) {
-      const disparador = page.locator('span[tabindex="0"]', { hasText: statusBarWindowsRegExp() }).first();
+      const disparador = page.locator('[data-usage-summary]').first();
       if ((await disparador.count()) === 0) return { ok: false, detail: 'sin indicador de uso en la barra' };
       await disparador.hover();
       await page.waitForTimeout(CONFIG.settleMs);
@@ -4495,16 +4595,16 @@ const CHECKS = [
     },
   },
   {
-    // P-026, 2.1: el menu ⋯ del prompt ya no ofrece «Adjuntar una imagen» (se pega con Ctrl+V) ni
-    // «Abrir carpeta» (la insignia de encima del input ya lo hace). Se abre y se cierra con Escape.
-    name: 'Menú ⋯ del prompt: sin «Adjuntar» ni «Abrir carpeta», con «Abrir terminal»',
+    // P-038: el «+» de abajo a la izquierda de la caja agrupa «Adjuntar imagen» (antes un clip suelto) y las acciones
+    // del antiguo «⋯». «Abrir carpeta» sigue fuera: la carpeta se abre desde su insignia. Se abre y se cierra con Escape.
+    name: 'Menú «+» del prompt: con «Adjuntar imagen» y «Abrir terminal», sin «Abrir carpeta»',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
       });
       await openTemporaryConversation(page);
-      const boton = page.locator(`[aria-haspopup="menu"][aria-label="${cssAttr(ui('mcp.servers.column.actions'))}"]`).first();
+      const boton = page.locator('[data-prompt-actions="true"] [aria-haspopup="menu"]').first();
       await boton.click();
       await page.locator('[role="menu"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const items = await page.evaluate(() => [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].map((n) => (n.textContent ?? '').trim()));
@@ -4512,7 +4612,7 @@ const CHECKS = [
       await page.locator('[role="menu"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
-      const ok = items.length >= 1 && !items.some((t) => removedPromptMenuItems().test(t)) && items.some((t) => t.includes(ui('prompt.actions.openTerminal')));
+      const ok = items.length >= 2 && !items.some((t) => removedPromptMenuItems().test(t)) && items[0] === ui('i2.prompt.attachImage') && items.some((t) => t.includes(ui('prompt.actions.openTerminal')));
       return { ok, detail: `items=${JSON.stringify(items)}` };
     },
   },
@@ -7095,7 +7195,7 @@ const CHECKS = [
     // segmento no informa de nada.
     //
     // NO se pulsa la carpeta: abriria el explorador de ficheros del sistema.
-    name: 'Chat: la carpeta va en la sublinea bajo las pestañas (Q03) y es accionable; las etiquetas de encima del input son solo privacidad',
+    name: 'Chat: la carpeta va en la fila de debajo del input (P-038) y es accionable, con la privacidad al lado (V3)',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -7119,8 +7219,8 @@ const CHECKS = [
           cwd,
           hayFila: fila !== null,
           esSublinea: fila?.getAttribute('data-tab-subline') === 'true',
-          // La sublinea va ANTES del input (encima del hilo), medido en pixeles y no por el orden del DOM.
-          antesDelInput: fila !== null && editor !== null ? fila.getBoundingClientRect().bottom <= editor.getBoundingClientRect().top + 1 : null,
+          // La fila va DEBAJO de la caja del input (P-038), medido en pixeles y no por el orden del DOM.
+          debajoDelInput: fila !== null && editor !== null ? fila.getBoundingClientRect().top >= editor.parentElement.getBoundingClientRect().bottom - 1 : null,
           etiquetas,
           pulsables: etiquetas.filter((e) => e.pulsable).length,
           // La fila no puede ensanchar el panel: las rutas largas son la norma.
@@ -7145,12 +7245,15 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
 
       const todo = { ...medido, scratchResuelto, etiquetaScratch };
+      const sharedLabel = ui('chat.info.shared');
       const ok =
         todo.hayFila &&
         todo.esSublinea &&
-        todo.antesDelInput === true &&
-        // Cuenta + carpeta (el scratchpad no es un repositorio: sin rama). El modelo no va (D18).
-        todo.etiquetas.length === 2 &&
+        todo.debajoDelInput === true &&
+        // Cuenta + carpeta + privacidad (P-038 V3; el scratchpad no es un repositorio: sin rama; sin dato aún no hay % de
+        // contexto). El modelo no va (D18).
+        todo.etiquetas.length === 3 &&
+        todo.etiquetas[2]?.texto === sharedLabel &&
         // Solo la carpeta hace algo: un boton que no lleva a ningun sitio es una promesa rota.
         todo.pulsables === 1 &&
         todo.desborda === false &&
@@ -8128,6 +8231,8 @@ const CHECKS = [
       const measureOne = async (text, edge) => {
         await page.evaluate((where) => {
           const scroller = document.querySelector('[data-pane-tab-id] .overflow-y-auto');
+          // Subir como un usuario (rueda): un scroll por programa ya no suelta el final y el hilo volvería abajo al cambiar el tamaño.
+          if (where === 'top') scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
           scroller.scrollTop = where === 'top' ? 0 : scroller.scrollHeight;
         }, edge);
         await page.waitForTimeout(CONFIG.settleMs);
@@ -8405,11 +8510,544 @@ const CHECKS = [
       await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-other-keyboard');
       await waitForDockReady(page, '[data-question-dock="true"]');
       const dock = page.locator('[data-question-dock="true"]'); await dock.focus();
-      for (let i = 0; i < ASK_USER_QUESTION_INPUT.questions[0].options.length; i++) await page.keyboard.press('ArrowDown');
+      // P-038 V5: sin resaltado al abrir; la primera ↓ marca la opción 1, así que «Otra cosa» está a options.length + 1.
+      for (let i = 0; i <= ASK_USER_QUESTION_INPUT.questions[0].options.length; i++) await page.keyboard.press('ArrowDown');
       const other = await dock.getByRole('textbox', { name: ui('prompt.question.other') }).evaluate(element => element === document.activeElement);
       await page.keyboard.press('ArrowUp');
       const back = await dock.evaluate(element => element === document.activeElement);
       return { ok: other && back, detail: JSON.stringify({ otherFocused: other, backToOptions: back }) };
+    },
+  },
+  // --- P-038: parches de la 0.1.5 (lista del usuario del 2026-11-09) ---------------------------------------------
+  {
+    name: 'P-038 V5: preguntas con pasos clicables, «Otra cosa» como fila y nada resaltado al abrir',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const base = ASK_USER_QUESTION_INPUT.questions[0];
+      const tres = { questions: [base, { ...base, question: '¿Cuáles valen?', header: 'Varias', multiSelect: true }, { ...base, question: '¿Y el borde?', header: 'Borde' }] };
+      await injectPermissionRequest(page, tres, 'vg-p038-ask');
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      const alAbrir = await page.evaluate(() => {
+        const dock = document.querySelector('[data-question-dock="true"]');
+        const opciones = [...dock.querySelectorAll('[role="radio"]')];
+        return {
+          pasos: dock.querySelectorAll('[data-question-step-tab]').length,
+          resaltadas: opciones.filter((o) => o.className.includes('border-mg-border-emph') || o.className.includes('border-mg-focus')).length,
+          marcadas: opciones.filter((o) => o.getAttribute('aria-checked') === 'true').length,
+          circulos: dock.querySelectorAll('[data-choice-mark="radio"]').length,
+          otraEnLaLista: dock.querySelector('[role="radiogroup"] [data-question-other]') !== null,
+          tipo: dock.querySelector('[data-question-kind]')?.getAttribute('data-question-kind') ?? null,
+        };
+      });
+      await page.locator('[data-question-step-tab="1"]').click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const enLaSegunda = await page.evaluate(() => {
+        const dock = document.querySelector('[data-question-dock="true"]');
+        return {
+          paso: dock.getAttribute('data-question-step'),
+          casillas: dock.querySelectorAll('[data-choice-mark="checkbox"]').length,
+          tipo: dock.querySelector('[data-question-kind]')?.getAttribute('data-question-kind') ?? null,
+        };
+      });
+      const responder = page.locator('[data-question-dock="true"]').getByRole('button', { name: ui('prompt.question.submit'), exact: true });
+      const responderActivo = await responder.isEnabled();
+      await cancelInjectedPermission(page, 'vg-p038-ask');
+      const ok =
+        alAbrir.pasos === 3 && alAbrir.resaltadas === 0 && alAbrir.marcadas === 0 && alAbrir.circulos === 3 && alAbrir.otraEnLaLista && alAbrir.tipo === 'single' &&
+        enLaSegunda.paso === '1' && enLaSegunda.casillas === 3 && enLaSegunda.tipo === 'multi' && responderActivo;
+      return { ok, detail: JSON.stringify({ alAbrir, enLaSegunda, responderActivo }) };
+    },
+  },
+  {
+    name: 'P-038 V2: el dock de tareas en segundo plano aparece con la lista del CLI y se va al vaciarse',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const enviar = (tasks) => page.evaluate((list) => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        dev.store.setState((state) => dev.reduceEvent(state, tabId, { kind: 'background_tasks', tasks: list }));
+      }, tasks);
+      await enviar([{ taskId: 'vg-b1', type: 'local_bash', description: 'Sleep 8 seconds then echo hecho' }]);
+      const dock = page.locator('[data-tasks-dock="true"]');
+      await dock.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const resumen = (await page.locator('[data-tasks-dock-summary]').textContent())?.trim() ?? '';
+      await page.locator('[data-tasks-dock-summary]').click();
+      const filas = await page.locator('[data-tasks-dock-row]').count();
+      await enviar([]);
+      const fuera = await dock.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const ok = resumen.startsWith(uiPlural('chat.tasks.summary', { count: 1 })) && resumen.includes('Sleep 8 seconds') && filas === 1 && fuera;
+      return { ok, detail: JSON.stringify({ resumen, filas, fuera }) };
+    },
+  },
+  {
+    name: 'P-038 V3: «Compartido» va en la fila de la conversación y el % de contexto en la barra de estado',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await page.evaluate(() => {
+        const store = window.__mageDev.store;
+        const tabId = store.getState().activeTabId;
+        store.setState((s) => ({ contextUsageByChat: { ...s.contextUsageByChat, [tabId]: { totalTokens: 84_800, maxTokens: 200_000, percentage: 42.4, categories: [] } } }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const medido = await page.evaluate((textos) => {
+        const pane = document.querySelector(`[data-pane-tab-id="${window.__mageDev.store.getState().activeTabId}"]`);
+        const sublinea = pane?.querySelector('[data-tab-subline]');
+        const compartidos = [...(pane?.querySelectorAll('span') ?? [])].filter((n) => n.children.length === 0 && n.textContent?.trim() === textos.shared);
+        return {
+          privacidad: sublinea?.querySelector('[data-tab-subline-privacy]')?.getAttribute('data-tab-subline-privacy') ?? null,
+          contexto: document.querySelector('[data-status-context]')?.textContent?.replace('·', '').trim() ?? null,
+          compartidosFueraDeLaSublinea: compartidos.filter((n) => !sublinea?.contains(n)).length,
+        };
+      }, { shared: ui('chat.info.shared') });
+      const ok = medido.privacidad === 'shared' && medido.contexto === ui('tabs.subline.context', { pct: 42 }) && medido.compartidosFueraDeLaSublinea === 0;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    name: 'P-038 V4: la ✕ de una pestaña inactiva sale al pasar el ratón; la de la activa, siempre',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await openTemporaryConversation(page);
+      const ids = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { activa: s.activeTabId, inactiva: s.tabs.find((t) => t.id !== s.activeTabId)?.id ?? null };
+      });
+      const visibilidad = (id) => page.evaluate((tabId) => {
+        const boton = document.querySelector(`[role="tab"][data-tab-id="${tabId}"] button`);
+        return boton === null ? null : getComputedStyle(boton).visibility;
+      }, id);
+      await page.mouse.move(2, 2);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const antes = { activa: await visibilidad(ids.activa), inactiva: await visibilidad(ids.inactiva) };
+      const pestana = page.locator(`[role="tab"][data-tab-id="${ids.inactiva}"]`);
+      const caja = await pestana.boundingBox();
+      // Tres puntos: la letra del proveedor (lleva tooltip), el título y el hueco de la ✕.
+      const puntos = { letra: caja.x + 20, titulo: caja.x + caja.width / 2, cruz: caja.x + caja.width - 16 };
+      const porPunto = {};
+      for (const [nombre, x] of Object.entries(puntos)) {
+        await page.mouse.move(2, 2);
+        await page.waitForTimeout(CONFIG.settleMs);
+        await page.mouse.move(x, caja.y + caja.height / 2, { steps: 4 });
+        await page.waitForTimeout(CONFIG.settleMs * 2);
+        porPunto[nombre] = await visibilidad(ids.inactiva);
+      }
+      const conHover = Object.values(porPunto).every((v) => v === "visible") ? "visible" : JSON.stringify(porPunto);
+      const diagnostico = await page.evaluate(({ tabId, x, y }) => {
+        const tab = document.querySelector(`[role="tab"][data-tab-id="${tabId}"]`);
+        const bajo = document.elementFromPoint(x, y);
+        return { hoverMedia: matchMedia('(hover: hover)').matches, tabHover: tab?.matches(':hover') ?? null, bajo: bajo === null ? null : `${bajo.tagName}.${String(bajo.className).slice(0, 60)}`, dentro: tab?.contains(bajo) ?? null };
+      }, { tabId: ids.inactiva, x: caja.x + caja.width / 2, y: caja.y + caja.height / 2 });
+      const ok = antes.activa === 'visible' && antes.inactiva === 'hidden' && conHover === 'visible';
+      return { ok, detail: JSON.stringify({ ...ids, antes, conHover, diagnostico }) };
+    },
+  },
+  {
+    name: 'P-038: hay aire entre los mensajes del hilo',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await hydrateBlocks(page, [
+        { kind: 'user', id: 'vg-aire-1', text: 'Primera pregunta', time: '12:00', attachments: [] },
+        { kind: 'agent', id: 'vg-aire-2', runs: [{ code: false, text: 'Primera respuesta del agente.' }], streaming: false },
+        { kind: 'user', id: 'vg-aire-3', text: 'Segunda pregunta', time: '12:01', attachments: [] },
+        { kind: 'agent', id: 'vg-aire-4', runs: [{ code: false, text: 'Segunda respuesta del agente.' }], streaming: false },
+      ]);
+      await page.waitForFunction(() => document.querySelectorAll(`[data-pane-tab-id="${window.__mageDev.store.getState().activeTabId}"] [data-chat-row]`).length === 4, null, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      const medido = await page.evaluate(() => {
+        const pane = document.querySelector(`[data-pane-tab-id="${window.__mageDev.store.getState().activeTabId}"]`);
+        const contenido = [...pane.querySelectorAll('[data-chat-row]')].map((fila) => {
+          // El contenido de la fila, sin la barra flotante de copiar (absoluta, asoma 10 px por arriba).
+          const hijos = [fila.firstElementChild].filter((n) => n !== null && n.getBoundingClientRect().height > 0);
+          const tops = hijos.map((n) => n.getBoundingClientRect().top);
+          const bottoms = hijos.map((n) => n.getBoundingClientRect().bottom);
+          return { top: Math.min(...tops), bottom: Math.max(...bottoms), padding: getComputedStyle(fila).paddingBottom };
+        });
+        return { filas: contenido.length, huecos: contenido.slice(1).map((c, i) => Math.round(c.top - contenido[i].bottom)), padding: contenido.map((c) => c.padding) };
+      });
+      const ok = medido.filas === 4 && medido.huecos.every((h) => h >= 10);
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    name: 'P-038: la rueda hacia arriba suelta el final aunque siga llegando texto',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await hydrateBlocks(page, Array.from({ length: 30 }, (_, i) => ({ kind: 'user', id: `vg-iman-${i}`, text: `Fila ${i}\n${'Contenido largo de prueba. '.repeat(20)}`, time: '12:00', attachments: [] })));
+      // El scroller de la pestaña ACTIVA: con otras pestañas abiertas antes, el primero de la página puede ser otro.
+      const activa = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const scroller = page.locator(`[data-pane-tab-id="${activa}"] [data-chat-scroller]`);
+      await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const caja = await scroller.boundingBox();
+      await page.mouse.move(caja.x + caja.width / 2, caja.y + caja.height / 2);
+      // Un golpe CORTO de rueda: antes quedaba dentro del margen de 80 px y el texto nuevo lo devolvía abajo.
+      await page.mouse.wheel(0, -40);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasRueda = await scroller.evaluate((el) => ({ distancia: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight), alto: el.clientHeight, total: el.scrollHeight, bajoRaton: document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2)?.closest('[data-chat-scroller]') === el }));
+      await page.evaluate(() => {
+        const store = window.__mageDev.store;
+        const tabId = store.getState().activeTabId;
+        store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [tabId]: [...s.blocksByChat[tabId], { kind: 'agent', id: 'vg-iman-nuevo', runs: [{ code: false, text: 'Texto que llega. '.repeat(60) }], streaming: true }] } }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const distancia = await scroller.evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
+      // Y al volver al final CON LA RUEDA (un gesto del usuario), vuelve a seguirlo. Un scroll por programa no basta: es
+      // justo el que Virtuoso hace solo y no debe reenganchar.
+      await page.mouse.wheel(0, 100_000);
+      await page.waitForTimeout(CONFIG.settleMs);
+      await page.evaluate(() => {
+        const store = window.__mageDev.store;
+        const tabId = store.getState().activeTabId;
+        store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [tabId]: [...s.blocksByChat[tabId], { kind: 'agent', id: 'vg-iman-otro', runs: [{ code: false, text: 'Más texto. '.repeat(60) }], streaming: true }] } }));
+      });
+      const repegado = await page
+        .waitForFunction((id) => { const el = document.querySelector(`[data-pane-tab-id="${id}"] [data-chat-scroller]`); return el !== null && el.scrollHeight - el.scrollTop - el.clientHeight <= 3; }, activa, { timeout: CONFIG.actionTimeoutMs })
+        .then(() => true, () => false);
+      const ok = distancia > 100 && repegado;
+      return { ok, detail: JSON.stringify({ distancia, repegado, trasRueda, caja }) };
+    },
+  },
+  {
+    // Informe del usuario (10-11): «al volver a un chat no siempre vuelve al final, a veces se queda por medio». Al
+    // remontar la lista, Virtuoso corrige el scroll al medir filas de alturas muy distintas, y ese scroll SIN gesto
+    // despegaba el final. Se va y se vuelve cinco veces (es intermitente) y se mide pasado el asentamiento.
+    name: 'P-038: al volver a un chat largo se queda en el final, no por medio',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const larga = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      // Alturas muy dispares: lo que hace que las estimaciones de Virtuoso fallen al remontar.
+      await hydrateBlocks(page, Array.from({ length: 60 }, (_, i) => (i % 2 === 0
+        ? { kind: 'user', id: `vg-vuelta-${i}`, text: i % 6 === 0 ? `Fila ${i}\n${'Texto largo de prueba. '.repeat(80)}` : `Fila ${i}`, time: '12:00', attachments: [] }
+        : { kind: 'agent', id: `vg-vuelta-${i}`, runs: [{ code: false, text: i % 4 === 1 ? `Mira:\n\n${CODE_FENCE_LONG}` : 'Respuesta larga del agente. '.repeat(120) }], streaming: false })));
+      await openTemporaryConversation(page);
+      const otra = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const distancias = [];
+      try {
+        for (let vuelta = 0; vuelta < 5; vuelta += 1) {
+          await page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), larga);
+          await page.waitForTimeout(1500);
+          distancias.push(await page.evaluate((id) => {
+            const el = document.querySelector(`[data-pane-tab-id="${id}"] [data-chat-scroller]`);
+            return el === null ? null : Math.round(el.scrollHeight - el.scrollTop - el.clientHeight);
+          }, larga));
+          await page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), otra);
+          await page.waitForTimeout(CONFIG.settleMs);
+        }
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      const ok = distancias.length === 5 && distancias.every((d) => d !== null && d <= 3);
+      return { ok, detail: JSON.stringify({ distancias }) };
+    },
+  },
+  {
+    // P-038: al subir en el hilo sale, centrado justo encima del input, un botón que lleva al final y vuelve a seguirlo.
+    name: 'P-038: subir en el hilo enseña «Ir al final» centrado sobre el input y pulsarlo lleva al final',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await hydrateBlocks(page, Array.from({ length: 30 }, (_, i) => ({ kind: 'user', id: `vg-salto-${i}`, text: `Fila ${i}\n${'Contenido largo de prueba. '.repeat(20)}`, time: '12:00', attachments: [] })));
+      const activa = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const pane = `[data-pane-tab-id="${activa}"]`;
+      const scroller = page.locator(`${pane} [data-chat-scroller]`);
+      const boton = page.locator(`${pane} [data-jump-to-end]`);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const alFinal = await boton.count();
+      const caja = await scroller.boundingBox();
+      await page.mouse.move(caja.x + caja.width / 2, caja.y + caja.height / 2);
+      await page.mouse.wheel(0, -600);
+      const sale = await boton.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const posicion = sale ? await page.evaluate((sel) => {
+        const b = document.querySelector(`${sel} [data-jump-to-end]`).getBoundingClientRect();
+        const sc = document.querySelector(`${sel} [data-chat-scroller]`).getBoundingClientRect();
+        const input = document.querySelector(`${sel} [data-prompt-editor="true"]`)?.parentElement?.getBoundingClientRect() ?? null;
+        return { centro: Math.round(b.left + b.width / 2 - (sc.left + sc.width / 2)), sobreElInput: input === null ? null : Math.round(input.top - b.bottom) };
+      }, pane) : null;
+      if (sale) await boton.click();
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const distancia = await scroller.evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
+      const trasPulsar = await boton.count();
+      const ok = alFinal === 0 && sale && Math.abs(posicion.centro) <= 2 && posicion.sobreElInput !== null && posicion.sobreElInput >= 0 && posicion.sobreElInput <= 40 && distancia <= 3 && trasPulsar === 0;
+      return { ok, detail: JSON.stringify({ alFinal, sale, posicion, distancia, trasPulsar }) };
+    },
+  },
+  {
+    // P-038 (captura del usuario, 10-11): con 5h al 43 % y 7d al 80 %, el aviso iba delante de la de 5h y el texto del
+    // consumo quedaba más alto que el resto de la barra. El aviso va con SU ventana y todo centrado en la misma línea.
+    name: 'P-038: barra de estado: el aviso va con su ventana y el consumo, alineado con el resto',
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().accounts);
+      try {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const id = store.getState().activeAccountId;
+          store.setState((s) => ({ accounts: s.accounts.map((a) => (a.id === id ? { ...a, usage: { fiveHour: { pct: 43, label: '2 h 10 m' }, weekly: { pct: 80, label: '8 h 5 m' } } } : a)) }));
+        });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const medido = await page.evaluate(() => {
+          const bar = document.querySelector('[data-status-bar]');
+          const centro = (el) => (el === null ? null : Math.round((el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2) * 2) / 2);
+          const meter = (name) => bar.querySelector(`[data-usage-meter="${name}"]`);
+          return {
+            avisoEn5h: meter('5h')?.querySelector('svg') !== null,
+            avisoEn7d: meter('7d')?.querySelector('svg') !== null,
+            severidad7d: meter('7d')?.getAttribute('data-usage-severity') ?? null,
+            centros: {
+              proveedor: centro(bar.querySelector('[data-status-provider]')),
+              cincoH: centro(meter('5h')?.lastElementChild ?? null),
+              sieteD: centro(meter('7d')?.lastElementChild ?? null),
+              servicio: centro(bar.lastElementChild),
+            },
+          };
+        });
+        const centros = Object.values(medido.centros).filter((c) => c !== null);
+        const ok = !medido.avisoEn5h && medido.avisoEn7d && medido.severidad7d === 'warn' && centros.length === 4 && Math.max(...centros) - Math.min(...centros) <= 1;
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((cuentas) => window.__mageDev.store.setState({ accounts: cuentas }), previo);
+      }
+    },
+  },
+  {
+    // Informe del usuario (10-11): en el lateral todas las conversaciones salían con la cuenta ACTIVA (al cambiar de
+    // cuenta, cambiaban todas). Una compartida que nadie apuntó no es de ninguna: no se nombra. La que sí, con la suya.
+    name: 'P-038: el lateral no atribuye a la cuenta activa una conversación cuya cuenta no se sabe',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { conversationHistory: s.conversationHistory, allConversationHistory: s.allConversationHistory, loadConversationHistory: s.loadConversationHistory, tabs: s.tabs, activeTabId: s.activeTabId };
+      });
+      try {
+        await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          const base = { configDir: '', privacy: 'shared', sizeBytes: 1, isScheduled: false, cwd: 'C:/vg-cuenta' };
+          const conocida = { ...base, sessionId: 'vg-cuenta-conocida', title: 'VG conocida', updatedAtMs: Date.now() - 1000 };
+          const desconocida = { ...base, sessionId: 'vg-cuenta-desconocida', title: 'VG desconocida', updatedAtMs: Date.now() - 2000 };
+          window.__mageDev.store.setState({
+            loadConversationHistory: async () => undefined,
+            tabs: [],
+            activeTabId: '',
+            conversationHistory: [conocida, desconocida],
+            allConversationHistory: [
+              { item: conocida, accountId: s.activeAccountId, accountKnown: true },
+              { item: desconocida, accountId: s.activeAccountId, accountKnown: false },
+            ],
+          });
+        });
+        // Los grupos del lateral nacen plegados: se despliega el de la carpeta de las filas.
+        await page.locator('[data-project-key$="/vg-cuenta"]').click();
+        await page.locator('[data-history-session="vg-cuenta-desconocida"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          const alias = s.accounts.find((a) => a.id === s.activeAccountId)?.alias ?? '';
+          const meta = (id) => document.querySelector(`[data-history-session="${id}"]`)?.textContent ?? null;
+          return { alias, conocida: meta('vg-cuenta-conocida'), desconocida: meta('vg-cuenta-desconocida') };
+        });
+        const ok = medido.alias.length > 0 && (medido.conocida ?? '').includes(medido.alias) && medido.desconocida !== null && !medido.desconocida.includes(medido.alias);
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    name: 'P-038: el popover de uso con muchas cuentas cabe, tiene scroll y se puede entrar en él',
+    async run(page) {
+      const previo = await page.evaluate(() => ({ accounts: window.__mageDev.store.getState().accounts }));
+      try {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const base = store.getState().accounts[0];
+          store.setState({ accounts: [...store.getState().accounts, ...Array.from({ length: 24 }, (_, i) => ({ ...base, id: `vg-uso-${i}`, alias: `Cuenta ${i}`, name: `Cuenta ${i}` }))] });
+        });
+        const disparador = page.locator('[data-usage-summary]').first();
+        if ((await disparador.count()) === 0) return { ok: false, detail: 'sin indicador de uso en la barra' };
+        await disparador.hover();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const pop = page.locator('[data-usage-popover="true"]');
+        const caja = await pop.boundingBox();
+        // Del disparador al popover sin salir de la zona de hover, y una vuelta de rueda dentro.
+        await page.mouse.move(caja.x + caja.width / 2, caja.y + caja.height - 4, { steps: 6 });
+        await page.mouse.wheel(0, 400);
+        await page.waitForTimeout(CONFIG.settleMs);
+        const medido = await pop.evaluate((node) => ({
+          alto: Math.round(node.getBoundingClientRect().height),
+          ventana: window.innerHeight,
+          desplazado: Math.round(node.scrollTop),
+          visible: getComputedStyle(node.parentElement).opacity === '1',
+          dentroDeLaVentana: node.getBoundingClientRect().top >= 0,
+        }));
+        await page.mouse.move(0, 0);
+        const ok = medido.alto <= medido.ventana * 0.7 + 1 && medido.dentroDeLaVentana && medido.desplazado > 0 && medido.visible;
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      }
+    },
+  },
+  {
+    name: 'P-038: los popovers de / y @ salen encima de su carácter, no en el borde de la fila',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const prompt = page.getByRole('textbox', { name: ui('prompt.editor.ariaLabel'), exact: true });
+      const medir = (selector) => page.evaluate((sel) => {
+        const pop = document.querySelector(sel);
+        const fila = document.querySelector('[data-prompt-editor="true"]')?.closest('.relative');
+        return pop === null || fila === null ? null : Math.round(pop.getBoundingClientRect().left - fila.getBoundingClientRect().left);
+      }, selector);
+      await prompt.click();
+      await page.keyboard.type('una frase bastante larga antes /');
+      const slash = page.locator(`[role="listbox"][aria-label="${cssAttr(ui('prompt.slash.listLabel'))}"]`);
+      const slashVisible = await slash.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const slashLeft = await medir(`[role="listbox"][aria-label="${cssAttr(ui('prompt.slash.listLabel'))}"]`);
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+a');
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type('mira este fichero, por favor: @');
+      const mention = page.locator('[data-mention-popover="true"]');
+      const mentionVisible = await mention.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const mentionLeft = await medir('[data-mention-popover="true"]');
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+a');
+      await page.keyboard.press('Backspace');
+      // Con texto delante, el carácter cae bastante a la derecha del borde: el popover tiene que ir con él.
+      const ok = slashVisible && mentionVisible && slashLeft !== null && slashLeft > 100 && mentionLeft !== null && mentionLeft > 100;
+      return { ok, detail: JSON.stringify({ slashVisible, slashLeft, mentionVisible, mentionLeft }) };
+    },
+  },
+  {
+    name: 'P-038: las respuestas a medias de una pregunta sobreviven a cambiar de chat',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const conPregunta = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-p038-persist');
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      await page.locator('[data-question-dock="true"] [role="radio"]').nth(1).click();
+      await openTemporaryConversation(page);
+      await page.locator(`[role="tab"][data-tab-id="${conPregunta}"]`).click();
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      const segunda = await page.locator('[data-question-dock="true"] [role="radio"]').nth(1).getAttribute('aria-checked');
+      await cancelInjectedPermission(page, 'vg-p038-persist');
+      return { ok: segunda === 'true', detail: JSON.stringify({ segundaMarcadaTrasVolver: segunda }) };
+    },
+  },
+  {
+    // P-038 V11/V16, rediseño P-039 F6: lista + detalle. Gráfico por días (30 y 7), una fila por cuenta más «Todas», cifras clave, renombrar y
+    // color en POPOVER (la cabecera no cambia de alto), precio del plan, ocultar, y las secciones admin solo con
+    // Ctrl+Shift+F12 (la versión lo dice). No se pulsa «Añadir cuenta»: solo se mide que está.
+    name: 'P-039 F6: «Cuentas y consumo» lista + detalle, popovers sin agrandar, precio del plan y modo admin',
+    async run(page, { runDir }) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { aliasByAccount: s.settings.aliasByAccount, hiddenAccounts: s.settings.hiddenAccounts, plan: s.settings.planPriceMicroUsdByAccount, admin: s.settings.adminMode, cuentas: s.accounts.map((a) => a.id), activa: s.activeAccountId };
+      });
+      const medido = {};
+      try {
+        await page.evaluate(() => window.__mageDev.store.getState().setAdminMode(false));
+        await page.locator('[data-usage-summary]').first().click();
+        const dialogo = page.locator('[data-accounts-usage]');
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialogo.locator('[data-accounts-usage-chart]').waitFor({ state: 'visible', timeout: 60_000 });
+        medido.barras30 = await dialogo.locator('[data-accounts-usage-chart] [data-day]').count();
+        await dialogo.getByRole('radio', { name: ui('accountsUsage.period', { days: 7 }) }).click();
+        medido.barras7 = await dialogo.locator('[data-accounts-usage-chart] [data-day]').count();
+        medido.filas = await dialogo.locator('[data-account-row]').count();
+        medido.anadir = await dialogo.locator('[data-accounts-usage-add]').count();
+        medido.adminAntes = await dialogo.locator('[data-accounts-usage-admin]').count();
+        await page.keyboard.press('Control+Shift+F12');
+        await dialogo.locator('[data-accounts-usage-admin]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.version = await page.locator('[data-app-version]').getAttribute('data-app-version');
+        // Captura con las secciones admin a la vista: la del final se toma con el diálogo ya cerrado.
+        await page.screenshot({ path: path.join(runDir, 'cuentas-y-consumo-admin.png') });
+        await page.keyboard.press('Control+Shift+F12');
+        await dialogo.locator('[data-accounts-usage-admin]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const otra = previo.cuentas.find((id) => id !== previo.activa) ?? null;
+        if (otra !== null) {
+          await dialogo.locator(`[data-account-row="${cssAttr(otra)}"]`).click();
+          const cabecera = dialogo.locator(`[data-account-card="${cssAttr(otra)}"]`);
+          await cabecera.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          medido.kpis = await dialogo.locator('[data-kpi]').evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-kpi')));
+          const alto0 = (await cabecera.boundingBox()).height;
+          const menu = dialogo.locator(`[data-account-menu="${cssAttr(otra)}"]`);
+          await menu.click();
+          await page.getByRole('menuitem', { name: ui('accountsUsage.rename') }).click();
+          const campo = dialogo.locator(`[data-account-rename="${cssAttr(otra)}"] input`);
+          await campo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          medido.altoConRenombrar = Math.round((await cabecera.boundingBox()).height - alto0);
+          await campo.fill('VG renombrada');
+          await campo.press('Enter');
+          medido.renombrada = await page.evaluate((id) => window.__mageDev.store.getState().accounts.find((a) => a.id === id)?.alias ?? null, otra);
+          await menu.click();
+          await page.getByRole('menuitem', { name: ui('accountsUsage.color') }).click();
+          await dialogo.locator(`[data-account-color="${cssAttr(otra)}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          medido.altoConColor = Math.round((await cabecera.boundingBox()).height - alto0);
+          await menu.click({ force: true });
+          const precio = dialogo.locator(`[data-plan-price="${cssAttr(otra)}"]`);
+          if ((await precio.count()) > 0) {
+            await precio.fill('19,99');
+            await precio.press('Enter');
+            medido.precio = await page.evaluate((id) => window.__mageDev.store.getState().settings.planPriceMicroUsdByAccount[id] ?? null, otra);
+          }
+          await menu.click();
+          await page.getByRole('menuitem', { name: ui('accountsUsage.hide') }).click();
+          medido.oculta = await page.evaluate((id) => window.__mageDev.store.getState().settings.hiddenAccounts.includes(id), otra);
+        }
+        const kpisBase = ['cost', 'tokens', 'turns', 'limits'];
+        const ok = medido.barras30 === 30 && medido.barras7 === 7 && medido.filas === previo.cuentas.length + 1 && medido.anadir === 1
+          && medido.adminAntes === 0 && medido.version === 'admin'
+          && (otra === null || (kpisBase.every((k) => medido.kpis.includes(k)) && medido.altoConRenombrar === 0 && medido.altoConColor === 0
+            && medido.renombrada === 'VG renombrada' && (medido.precio === undefined || medido.precio === 19_990_000) && medido.oculta === true));
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => {
+          const store = window.__mageDev.store;
+          for (const id of store.getState().settings.hiddenAccounts) if (!estado.hiddenAccounts.includes(id)) store.getState().setAccountHidden(id, false);
+          for (const id of estado.cuentas) {
+            store.getState().renameAccount(id, estado.aliasByAccount[id] ?? null);
+            store.getState().setPlanPrice(id, estado.plan[id] ?? null);
+          }
+          store.getState().setAdminMode(estado.admin);
+          store.getState().closeAccountsUsage();
+        }, previo);
+      }
+    },
+  },
+  {
+    name: 'P-038 V6: el lateral enseña 10 proyectos y «Mostrar más»; el scratch de otro perfil no es proyecto',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { allConversationHistory: s.allConversationHistory, settings: s.settings, loadConversationHistory: s.loadConversationHistory };
+      });
+      try {
+        const raizLocal = await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const s = store.getState();
+          const filas = Array.from({ length: 12 }, (_, i) => ({
+            accountId: s.activeAccountId,
+            item: { configDir: '', title: `vg38 ${i}`, privacy: 'shared', sizeBytes: 1, isScheduled: false, sessionId: `vg38-p${i}`, cwd: `C:\\vg38\\proyecto-${String(i).padStart(2, '0')}`, updatedAtMs: Date.now() - i * 1000 },
+          }));
+          // La raíz local entera (`%LOCALAPPDATA%\mage`): un chat sin carpeta de OTRO perfil cuelga de `<hash>\mage-scratch`.
+          const raiz = s.scratchRoots[1] ?? '';
+          filas.push({ accountId: s.activeAccountId, item: { configDir: '', title: 'vg38 scratch ajeno', privacy: 'shared', sizeBytes: 1, isScheduled: false, sessionId: 'vg38-ajeno', cwd: `${raiz}\\0123456789abcdef\\mage-scratch\\4f1c2d3e-0000-4000-8000-000000000038`, updatedAtMs: Date.now() } });
+          store.setState({ loadConversationHistory: async () => undefined, allConversationHistory: filas, settings: { ...s.settings, chatProjects: [] } });
+          return raiz;
+        });
+        await page.waitForTimeout(CONFIG.settleMs * 2);
+        const medido = await page.evaluate(() => {
+          const claves = [...document.querySelectorAll('[data-project-key]')].map((n) => n.getAttribute('data-project-key'));
+          return { proyectos: claves.filter((k) => k.includes('vg38')).length, ajenoComoProyecto: claves.some((k) => k.includes('4f1c2d3e')), sinProyecto: document.querySelector('[data-sidebar-group="unassigned"]')?.textContent?.includes('vg38 scratch ajeno') ?? false };
+        });
+        const masProyectos = await page.locator('[data-chat-sidebar] button', { hasText: ui('sidebar.section.showMore', { count: 2 }) }).count();
+        const ok = raizLocal.length > 0 && medido.proyectos === 10 && !medido.ajenoComoProyecto && medido.sinProyecto && masProyectos >= 1;
+        return { ok, detail: JSON.stringify({ raizLocal, ...medido, masProyectos }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      }
     },
   },
   ...(process.argv.some(arg => arg.startsWith('--trust-stage=')) ? [{
@@ -8754,7 +9392,8 @@ const CHECKS = [
       // la misma condicion de entorno que hacia parpadear a la 2.8. Y se SONDEA el resultado en vez de
       // esperar un tiempo fijo: el desplegable entra con una animacion, y una espera ciega lo pillaba
       // a medias segun lo cargada que estuviera la maquina.
-      await page.bringToFront().catch(() => undefined);
+      // En segundo plano el foco lo simula CDP: traer la ventana al frente es justo lo que no se quiere.
+      if (FOREGROUND) await page.bringToFront().catch(() => undefined);
       await page.evaluate(async () => {
         for (let i = 0; i < 40 && !document.hasFocus(); i += 1) {
           window.focus();
@@ -9858,7 +10497,8 @@ const CHECKS = [
     state: { tabs: 1 },
     async run(page) {
       const carpetas = [];
-      for (let i = 0; i < 12; i += 1) carpetas.push(fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-q03-')));
+      // 18: ocho tarjetas y diez en la lista (su tope), que ya no caben sin scroll (P-038).
+      for (let i = 0; i < 18; i += 1) carpetas.push(fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-q03-')));
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
         return { conversationHistory: s.conversationHistory, allConversationHistory: s.allConversationHistory, loadConversationHistory: s.loadConversationHistory };
@@ -9878,8 +10518,11 @@ const CHECKS = [
         const medido = await page.evaluate(() => ({
           tarjetas: document.querySelectorAll('[data-recent-project]').length,
           lista: document.querySelectorAll('[data-recent-projects-list] [data-recent-folder]').length,
+          alto: document.querySelector('[data-recent-projects-list]')?.clientHeight ?? 0,
+          conScroll: (() => { const el = document.querySelector('[data-recent-projects-list]'); return el !== null && el.scrollHeight > el.clientHeight + 1 && getComputedStyle(el).overflowY === 'auto'; })(),
         }));
-        const ok = medido.tarjetas > 0 && medido.tarjetas <= 8 && medido.lista === 12 - medido.tarjetas;
+        // P-038: la lista no pasa de unas cinco filas; con más, scroll.
+        const ok = medido.tarjetas > 0 && medido.tarjetas <= 8 && medido.lista === Math.min(10, 18 - medido.tarjetas) && medido.alto <= 130 && (medido.lista <= 5 || medido.conScroll);
         return { ok, detail: JSON.stringify(medido) };
       } finally {
         await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
@@ -10058,11 +10701,11 @@ const CHECKS = [
         const chip = page.locator(`button[aria-label^="${cssAttr(uiPrefix('prompt.permission.ariaLabel'))}"]`).first();
         await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         await chip.click();
-        const popover = page.locator('[data-step-slider-popover="true"]');
-        await popover.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-        const pasos = await popover.locator('input[type="range"]').evaluate((el) => Number(el.max) + 1);
+        const lista = page.locator('[role="listbox"]');
+        await lista.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const pasos = await lista.locator('[role="option"]').count();
         await page.keyboard.press('Escape');
-        await popover.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await lista.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         const antes = await permissionModeLabel(page);
         await clearPrompt(page);
         await page.getByRole('textbox', { name: ui('prompt.editor.ariaLabel') }).press('Shift+Tab');
@@ -10887,6 +11530,54 @@ const CHECKS = [
     },
   },
   {
+    // P-038: «escribo https://google.com/ en el navegador y no pinta nada». La página es una vista NATIVA (no sale en
+    // la captura del DOM): se mide el estado que informa main y la captura de la propia vista que usa la pluma.
+    // Necesita red: sin ella, el detalle lo dice y no se da por fallo de Mage.
+    name: 'P-038: el navegador abre una web externa y la vista pinta',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      try {
+        ({ tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: BROWSER_TURN_PROVIDER, model: QUEUE_TURN_MODEL }));
+        const sessionId = await page.evaluate((id) => window.__mageDev.store.getState().ensureSession(id), tabId);
+        await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('browser'));
+        await page.locator('[data-browser-panel]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const address = page.locator('[data-browser-address]');
+        await address.fill('https://google.com/');
+        await address.press('Enter');
+        const conTitulo = await page.waitForFunction((sid) => (window.__mageBrowserDev.getState().states[sid]?.title ?? '').length > 0, sessionId, { polling: 100, timeout: 20_000 }).then(() => true, () => false);
+        const estado = await page.evaluate((sid) => window.__mageBrowserDev.getState().states[sid] ?? null, sessionId);
+        const hueco = await page.evaluate(() => { const r = document.querySelector('[data-browser-host]')?.getBoundingClientRect(); return r === undefined ? null : { w: Math.round(r.width), h: Math.round(r.height) }; });
+        const error = await page.locator('[data-browser-panel] [role="alert"]').textContent({ timeout: 500 }).catch(() => null);
+        let captura = null;
+        if (estado !== null) {
+          await page.locator('[data-browser-pen-button]').click();
+          const img = page.locator('[data-browser-pen] img');
+          await img.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          captura = await img.evaluate(async (node) => {
+            await node.decode();
+            const canvas = document.createElement('canvas');
+            canvas.width = node.naturalWidth; canvas.height = node.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(node, 0, 0);
+            const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const colores = new Set();
+            for (let i = 0; i < data.length; i += 4 * 97) colores.add(`${data[i]},${data[i + 1]},${data[i + 2]}`);
+            return { w: canvas.width, h: canvas.height, colores: colores.size };
+          });
+          await page.keyboard.press('Escape');
+        }
+        // El hueco donde main coloca la vista: con 0 px de alto la página cargaba pero no se veía.
+        const ok = conTitulo && hueco !== null && hueco.h > 100 && captura !== null && captura.w > 0 && captura.colores > 8;
+        return { ok, detail: JSON.stringify({ conTitulo, estado: estado === null ? null : { url: estado.url, title: estado.title, loading: estado.loading }, hueco, error, captura }) };
+      } finally {
+        if (tabId !== null) await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), BROWSER_TURN_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
     // Carril R (R04): la sección «Tareas» del lateral. Solo mide el DOM: no pulsa Enter ni lanza ningún CLI.
     name: 'R: el lateral tiene la sección Tareas con Nueva tarea',
     async run(page) {
@@ -11199,7 +11890,9 @@ const CHECKS = [
       try {
         await openTemporaryConversation(page);
         const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
-        const boton = await page.getByRole('button', { name: ui('i2.prompt.attachImage') }).count();
+        await page.locator(`[data-pane-tab-id="${tabId}"] [data-prompt-actions="true"] [aria-haspopup="menu"]`).click();
+        const boton = await page.getByRole('menuitem', { name: ui('i2.prompt.attachImage') }).count();
+        await page.keyboard.press('Escape');
         const input = page.locator(`[data-pane-tab-id="${tabId}"] input[data-attach-input="image"]`);
         await input.setInputFiles({ name: 'boton.png', mimeType: 'image/png', buffer: Buffer.from(TINY_PNG_BASE64, 'base64') });
         await page.waitForTimeout(CONFIG.settleMs);
@@ -14391,6 +15084,7 @@ function launchApp(userDataDir, extraEnv = {}) {
       VITE_MAGE_RELEASE_NOTES_IN_DEV: '1',
       // Los locks de conversación (#55) van a la carpeta de la tanda, nunca a la real del usuario (H3 de la devolución 17).
       [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR,
+      ...(FOREGROUND ? {} : { MAGE_TEST_BACKGROUND: '1' }),
       // --bench: la casa temporal, sin credenciales del usuario.
       ...extraEnv,
     },
@@ -14424,6 +15118,12 @@ async function waitForCdp() {
 }
 
 // La ventana principal es la de index.html: debug.html y widget.html son otras entradas del build.
+// Con la ventana en segundo plano, la página cree tener el foco del SO (Emulation.setFocusEmulationEnabled).
+async function emulateFocus(page) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+}
+
 async function findMainPage(browser) {
   const deadline = Date.now() + CONFIG.bootTimeoutMs;
   while (Date.now() < deadline) {
@@ -14432,7 +15132,9 @@ async function findMainPage(browser) {
         const url = page.url();
         if (url.includes('debug.html') || url.includes('widget.html')) continue;
         if (url.startsWith('devtools://')) continue;
-        if (url.includes('index.html') || url.endsWith('/')) return page;
+        if (!url.includes('index.html') && !url.endsWith('/')) continue;
+        if (!FOREGROUND) await emulateFocus(page);
+        return page;
       }
     }
     await new Promise((resolve) => setTimeout(resolve, CONFIG.pollIntervalMs));

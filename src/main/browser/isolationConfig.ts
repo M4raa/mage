@@ -8,6 +8,9 @@ export const ISOLATED_WEB_PREFERENCES = Object.freeze({
   nodeIntegration: false,
   nodeIntegrationInSubFrames: false,
   webviewTag: false,
+  // P-038: la vista del agente vive aparcada (oculta) mientras el panel no está abierto; sin esto Chromium deja de pintarla
+  // y ni la captura ni la entrada sintética (clic, escritura) llegan.
+  backgroundThrottling: false,
 } as const);
 
 export const BROWSER_PARTITION_PREFIX = 'mage-browser-';

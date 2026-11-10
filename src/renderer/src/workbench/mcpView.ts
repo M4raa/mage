@@ -45,6 +45,17 @@ export function mcpStatusLabel(status: string): string {
   return key === undefined ? status : t(key);
 }
 
+// Color del punto de estado de una fila (P-038 V12): el mismo criterio en las tres pestañas.
+export type McpTone = 'ok' | 'attention' | 'error' | 'idle';
+
+// Sin dato o desactivado: idle. Alguno falla: error. Alguno pide login o está pendiente (o el estado no es conocido):
+// attention. Todos conectados: ok.
+export function statusTone(statuses: readonly string[], disabled = false): McpTone {
+  if (disabled || statuses.length === 0) return 'idle';
+  if (statuses.includes('failed')) return 'error';
+  return statuses.every((status) => status === 'connected') ? 'ok' : 'attention';
+}
+
 export type McpBadgeKind = McpOriginKind | 'connector' | 'plugin' | 'session';
 
 export interface McpBadge {
@@ -62,6 +73,7 @@ export interface McpTableRow {
   readonly badges: readonly McpBadge[];
   readonly accounts: readonly string[]; // configDir
   readonly statusLabel: string;
+  readonly tone: McpTone;
   readonly inventory: McpInventoryRow | null;
   // Nombre tal cual lo reporta el CLI (`plugin:figma:figma`): es el que entiende `mcp_authenticate`.
   readonly cliName: string;
@@ -127,6 +139,7 @@ function serverRow(row: McpInventoryRow, reports: readonly StatusReport[]): McpT
     badges: row.origins.map((origin) => ({ kind: origin.kind, label: renderLocalized(t, origin.label) })),
     accounts: row.accounts,
     statusLabel: row.disabled ? mcpStatusLabel('disabled') : summarizeStatus(reports),
+    tone: statusTone(reports.map((report) => report.status.status), row.disabled),
     inventory: row,
     cliName: row.name,
     needsAuth: row.disabled ? [] : accountsNeedingAuth(reports),
@@ -138,7 +151,7 @@ function serverRow(row: McpInventoryRow, reports: readonly StatusReport[]): McpT
 function sessionOnlyRow(name: string, reports: readonly StatusReport[]): McpTableRow | null {
   const accounts = [...new Set(reports.map((report) => report.accountId))];
   const statusLabel = summarizeStatus(reports);
-  const live = { cliName: name, needsAuth: accountsNeedingAuth(reports), ...CLAUDE_ONLY };
+  const live = { cliName: name, needsAuth: accountsNeedingAuth(reports), tone: statusTone(reports.map((report) => report.status.status)), ...CLAUDE_ONLY };
   const isConnector = name.startsWith(CONNECTOR_PREFIX) || reports.some((report) => report.status.scope === CONNECTOR_SCOPE);
   if (isConnector) {
     const display = name.startsWith(CONNECTOR_PREFIX) ? name.slice(CONNECTOR_PREFIX.length) : name;
@@ -248,6 +261,7 @@ export interface McpConnectorRow {
   readonly kind: McpConnectorKind;
   readonly typeLabel: string; // Web · Complemento · Escritorio (como Claude Desktop)
   readonly statusLabel: string;
+  readonly tone: McpTone;
   readonly cliName: string | null; // para «Conectar» (mcp_authenticate); null = sin acciones
   readonly needsAuth: boolean;
 }
@@ -282,7 +296,7 @@ export function buildClaudeConnectorGroups(input: ConnectorGroupInput): readonly
     const extensions = input.extensions
       .filter((ext) => ext.enabled && isInMcpScope(ext.onlyIn, { family: 'claude', accountId }))
       .map((ext) => extensionRow(ext, reported));
-    const chrome: McpConnectorRow = { key: 'desktop:chrome', name: CLAUDE_IN_CHROME, kind: 'desktopOnly', typeLabel: t('mcp.connectors.type.desktop'), statusLabel: t(DESKTOP_ONLY_LABEL), cliName: null, needsAuth: false };
+    const chrome: McpConnectorRow = { key: 'desktop:chrome', name: CLAUDE_IN_CHROME, kind: 'desktopOnly', typeLabel: t('mcp.connectors.type.desktop'), statusLabel: t(DESKTOP_ONLY_LABEL), tone: 'idle', cliName: null, needsAuth: false };
     return { accountId, checkedAt: input.cache[accountId]?.checkedAt ?? null, claudeAiEnabled, rows: [...web, ...plugins, ...extensions, chrome] };
   });
 }
@@ -294,7 +308,7 @@ function isConnectorStatus(status: McpLiveStatus): boolean {
 function webRow(status: McpLiveStatus, enabled: boolean): McpConnectorRow {
   const name = status.name.startsWith(CONNECTOR_PREFIX) ? status.name.slice(CONNECTOR_PREFIX.length) : status.name;
   const needsAuth = enabled && status.status === NEEDS_AUTH;
-  return { key: `web:${status.name}`, name, kind: 'web', typeLabel: t('mcp.connectors.type.web'), statusLabel: enabled ? mcpStatusLabel(status.status) : t(CONNECTORS_OFF_LABEL), cliName: status.name, needsAuth };
+  return { key: `web:${status.name}`, name, kind: 'web', typeLabel: t('mcp.connectors.type.web'), statusLabel: enabled ? mcpStatusLabel(status.status) : t(CONNECTORS_OFF_LABEL), tone: statusTone([status.status], !enabled), cliName: status.name, needsAuth };
 }
 
 function pluginRow(status: McpLiveStatus): McpConnectorRow | null {
@@ -306,6 +320,7 @@ function pluginRow(status: McpLiveStatus): McpConnectorRow | null {
     kind: 'plugin',
     typeLabel: t('mcp.connectors.type.plugin'),
     statusLabel: mcpStatusLabel(status.status),
+    tone: statusTone([status.status]),
     cliName: status.name,
     needsAuth: status.status === NEEDS_AUTH,
   };
@@ -315,7 +330,7 @@ function extensionRow(ext: McpExtensionView, reported: readonly McpLiveStatus[])
   const live = reported.find((status) => status.name === ext.id);
   const liveLabel = live === undefined ? t('mcp.connectors.extensionActive') : mcpStatusLabel(live.status);
   const statusLabel = ext.problem === null ? liveLabel : renderLocalized(t, ext.problem);
-  return { key: `ext:${ext.id}`, name: ext.displayName, kind: 'extension', typeLabel: t('mcp.connectors.type.desktop'), statusLabel, cliName: null, needsAuth: false };
+  return { key: `ext:${ext.id}`, name: ext.displayName, kind: 'extension', typeLabel: t('mcp.connectors.type.desktop'), statusLabel, tone: ext.problem === null ? statusTone(live === undefined ? ['connected'] : [live.status]) : 'attention', cliName: null, needsAuth: false };
 }
 
 const MINUTE_MS = 60_000;

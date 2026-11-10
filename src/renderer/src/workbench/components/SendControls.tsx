@@ -40,7 +40,7 @@ function StopButton({ onInterrupt }: { readonly onInterrupt: () => void }): Reac
       onClick={onInterrupt}
       data-tip={t('prompt.stop.tip')}
       aria-label={t('prompt.stop.ariaLabel')}
-      className="shrink-0 cursor-pointer self-center rounded-full border border-mg-danger-border bg-mg-danger-bg px-[9px] py-[2px] text-[10.5px] font-semibold text-mg-danger hover:opacity-90"
+      className="shrink-0 cursor-pointer self-end rounded-full border border-mg-danger-border bg-mg-danger-bg px-[9px] py-[2px] text-[10.5px] font-semibold text-mg-danger hover:opacity-90"
     >
       <Icon name="stop" size={11} /> {t('prompt.stop.button')}
     </button>
@@ -61,9 +61,9 @@ function SendButton({ canSend, onSend }: { readonly canSend: boolean; readonly o
       disabled={!canSend}
       aria-label={t('prompt.send.ariaLabel')}
       data-tip={t('prompt.send.tip')}
-      className="shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl px-[8px] py-[1px] font-mono text-[10.5px] text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover disabled:cursor-default disabled:text-mg-muted disabled:opacity-60 disabled:hover:bg-transparent"
+      className="flex h-[28px] w-[28px] shrink-0 cursor-pointer items-center justify-center rounded-[7px] bg-mg-primary text-mg-primary-ink transition-opacity duration-90 ease-out hover:opacity-90 disabled:cursor-default disabled:bg-mg-hover disabled:text-mg-muted"
     >
-      <AnimatedGlyph animation="lift" trigger={sent}>⏎</AnimatedGlyph>
+      <AnimatedGlyph animation="lift" trigger={sent}><Icon name="enter" size={15} /></AnimatedGlyph>
     </button>
   );
 }
@@ -89,7 +89,7 @@ function SplitSend(props: SendControlsProps): React.JSX.Element {
   };
   const menuTip = t('prompt.sendMenu.ariaLabel');
   return (
-    <div className="relative flex shrink-0 self-center" data-send-split="true" onKeyDown={closeOnEscape}>
+    <div className="relative flex shrink-0 self-end" data-send-split="true" onKeyDown={closeOnEscape}>
       <button
         data-send-queue="true"
         onClick={props.onSend}

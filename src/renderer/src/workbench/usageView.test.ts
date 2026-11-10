@@ -11,6 +11,7 @@ import {
   perModelBars,
   projectWindowExhaustion,
   severityForPct,
+  shortCountdown,
   toUsageWindows,
 } from './usageView';
 
@@ -223,5 +224,18 @@ describe('formatResetAbsolute', () => {
 
   it('formatResetAbsolute_noFinito_lanza', () => {
     expect(() => formatResetAbsolute(Number.NaN, MONDAY_10, false)).toThrow(/NaN/);
+  });
+});
+
+describe('shortCountdown', () => {
+  it('shortCountdown_dosUnidades_soloLaMayorSinEspacio', () => {
+    expect(shortCountdown('2 h 13 m')).toBe('2h');
+    expect(shortCountdown('3 d 4 h')).toBe('3d');
+    expect(shortCountdown('7 m')).toBe('7m');
+  });
+
+  it('shortCountdown_sinUnidad_igual', () => {
+    expect(shortCountdown('—')).toBe('—');
+    expect(shortCountdown('')).toBe('');
   });
 });

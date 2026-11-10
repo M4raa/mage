@@ -31,7 +31,7 @@ import { chatRows, currentTurnSummary, stickResetKey, type ChatRow } from '../ch
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import type { Block, ImageAttachment } from '../types';
 import { classifySystemWrapper } from '@shared/systemWrappers';
-import { INITIAL_ANCHOR, STICK_TO_BOTTOM_PX, appendedTailKeys, nextListAnchor, settleAtBottom, watchChatBottom, type FrameApi, type ListAnchor } from '../chatListAnchor';
+import { AT_BOTTOM_PX, INITIAL_ANCHOR, appendedTailKeys, nextListAnchor, resetAway, settleAtBottom, watchChatBottom, type AwayState, type FrameApi, type ListAnchor } from '../chatListAnchor';
 import { MOTION_S } from '../motionPresets';
 import { RecentProjects } from './RecentProjects';
 import { reportActionError } from '../notificationStore';
@@ -83,7 +83,7 @@ export function BlockChat(): React.JSX.Element {
   const anchor = useListAnchor(activeTabId, rows);
   const enteringKeys = useEnteringRowKeys(`${activeTabId}:${anchor.generation}`, rows);
   const expandedRows = useExpandedRowsStore(activeTabId);
-  const { virtuosoRef, onScrollerRef } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
+  const { virtuosoRef, onScrollerRef, followOutput, away, jumpToEnd } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
   const lastRow = rows[rows.length - 1];
   const lastRowKey = lastRow === undefined ? null : rowKey(lastRow);
   const footerContext = useMemo<ChatListContext>(
@@ -100,7 +100,7 @@ export function BlockChat(): React.JSX.Element {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       {/* Region viva (solo lectores): anuncia el CAMBIO de estado del turno, no cada delta (evita
           ruido). El texto solo cambia en las transiciones, que es cuando el SR lo lee. Va FUERA del
           scroller de la lista virtual. */}
@@ -118,14 +118,29 @@ export function BlockChat(): React.JSX.Element {
           firstItemIndex={anchor.firstIndex}
           initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
           increaseViewportBy={{ top: VIEWPORT_OVERSCAN_PX, bottom: VIEWPORT_OVERSCAN_PX }}
-          atBottomThreshold={STICK_TO_BOTTOM_PX}
-          followOutput={(atBottom) => (atBottom ? 'auto' : false)}
+          // P-038, MEDIDO (verify:gui instrumentado): con 80 px Virtuoso se creía «al final» a 40 px tras un golpe de rueda y
+          // se mantenía ahí al crecer la lista aunque `followOutput` dijera que no. El margen de 80 px lo lleva `watchChatBottom`.
+          atBottomThreshold={AT_BOTTOM_PX}
+          followOutput={followOutput}
           scrollerRef={onScrollerRef}
           components={CHAT_LIST_COMPONENTS}
           context={footerContext}
           itemContent={renderChatItem}
         />
       </ExpandedRowsContext.Provider>
+      {/* P-038: subido a leer, un botón en el centro, justo encima del input, lleva al final y vuelve a seguirlo. */}
+      {away && (
+        <button
+          type="button"
+          onClick={jumpToEnd}
+          data-jump-to-end="true"
+          aria-label={t('chat.jumpToEnd')}
+          data-tip={t('chat.jumpToEnd')}
+          className="mg-enter absolute bottom-[10px] left-1/2 flex h-[30px] w-[30px] -translate-x-1/2 items-center justify-center rounded-full border border-mg-border-ctrl bg-mg-panel text-mg-body2 mg-shadow-pop transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
+        >
+          <Icon name="arrowDown" size={14} />
+        </button>
+      )}
       </ReferenceContext.Provider>
     </div>
   );
@@ -162,7 +177,9 @@ interface ChatListContext {
 function renderChatItem(_index: number, row: ChatRow, context: ChatListContext): React.JSX.Element {
   const key = rowKey(row);
   return (
-    <div data-chat-row="true" data-row-key={key} {...(key === context.lastRowKey ? { 'data-last-row': 'true' } : {})} className={`px-[22px] pb-[14px]${context.enteringKeys.has(key) ? ' mg-enter' : ''}`}>
+    // La clase NO va pegada a `${`: el escáner de Tailwind leía `pb-[14px]${…` como un solo candidato y no generaba
+    // `pb-[14px]` (el hilo se quedó sin aire entre mensajes en la 0.1.4, P-038).
+    <div data-chat-row="true" data-row-key={key} {...(key === context.lastRowKey ? { 'data-last-row': 'true' } : {})} className={`px-[22px] pb-[14px] ${context.enteringKeys.has(key) ? 'mg-enter' : ''}`}>
       <ChatRowView row={row} accent={context.accent} />
     </div>
   );
@@ -237,18 +254,33 @@ function useEnteringRowKeys(resetKey: string, rows: readonly ChatRow[]): Readonl
 function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize: number; readonly turnLive: boolean; readonly resetKey: string }): {
   readonly virtuosoRef: React.RefObject<VirtuosoHandle | null>;
   readonly onScrollerRef: (ref: HTMLElement | Window | null) => void;
+  readonly followOutput: () => 'auto' | false;
+  // El usuario subió a propósito (rueda, teclas, barra): se enseña «ir al final».
+  readonly away: boolean;
+  readonly jumpToEnd: () => void;
 } {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const stuckRef = useRef(true);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const onScrollerRef = useCallback((ref: HTMLElement | Window | null): void => setScroller(ref instanceof HTMLElement ? ref : null), []);
   // Pegado al final REAL: listener de scroll propio y ResizeObserver del scroller y su contenido (V7, R59).
-  useLayoutEffect(() => (scroller === null ? undefined : watchChatBottom(scroller, stuckRef, (onResize) => new ResizeObserver(onResize))), [scroller]);
+  const awayRef = useRef<AwayState>({ away: false, downIntent: false });
+  useLayoutEffect(() => (scroller === null ? undefined : watchChatBottom(scroller, stuckRef, (onResize) => new ResizeObserver(onResize), awayRef.current)), [scroller]);
+  // Detrás del vigilante (se registra después): lee el «se fue» ya actualizado por el mismo scroll.
+  const [away, setAway] = useState(false);
+  useEffect(() => {
+    if (scroller === null) return undefined;
+    const sync = (): void => setAway(awayRef.current.away);
+    scroller.addEventListener('scroll', sync, { passive: true });
+    return () => scroller.removeEventListener('scroll', sync);
+  }, [scroller]);
   useLayoutEffect(() => {
     if (stuckRef.current) scrollToLastRow(virtuosoRef.current);
   }, [tailSize, turnLive]);
   useLayoutEffect(() => {
     stuckRef.current = true;
+    resetAway(awayRef.current);
+    setAway(false);
     scrollToLastRow(virtuosoRef.current);
   }, [resetKey]);
   // Tras cada salto al final (filas nuevas, texto en streaming, cambio de contenido o scroller recién montado), unos
@@ -257,7 +289,17 @@ function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize
     if (scroller === null || !stuckRef.current) return undefined;
     return settleAtBottom(scroller, stuckRef, BROWSER_FRAMES);
   }, [scroller, tailSize, turnLive, resetKey]);
-  return { virtuosoRef, onScrollerRef };
+  // Virtuoso sigue las filas nuevas con SU margen de 80 px; aquí manda el «pegado» propio, que la rueda hacia arriba
+  // suelta en el acto (P-038).
+  const followOutput = useCallback((): 'auto' | false => (stuckRef.current ? 'auto' : false), []);
+  const jumpToEnd = useCallback((): void => {
+    stuckRef.current = true;
+    resetAway(awayRef.current);
+    setAway(false);
+    scrollToLastRow(virtuosoRef.current);
+    if (scroller !== null) settleAtBottom(scroller, stuckRef, BROWSER_FRAMES);
+  }, [scroller]);
+  return { virtuosoRef, onScrollerRef, followOutput, away, jumpToEnd };
 }
 
 const BROWSER_FRAMES: FrameApi = { request: (callback) => requestAnimationFrame(callback), cancel: (id) => cancelAnimationFrame(id) };
@@ -879,6 +921,7 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
   // En directo el comando llega tal cual se tecleo (P-028): mismo chip que al reabrir.
   if (block.attachments.length === 0 && isSlashCommandText(block.text)) return <CommandChip command={block.text.trim()} />;
   if (wrapper.kind === 'scheduled-task') return <ScheduledTaskCard id={block.id} name={wrapper.name} body={wrapper.body} />;
+  if (wrapper.kind === 'mage-session-result') return <SessionResultCard id={block.id} name={wrapper.name} body={wrapper.body} />;
   const copiedImage = firstImageOf(block.attachments);
   return (
     <div className="flex justify-end">
@@ -990,6 +1033,27 @@ function ScheduledTaskCard({ id, name, body }: { readonly id: string; readonly n
           {t('chat.scheduledTask.note')}
         </p>
         <div className="mt-[6px] whitespace-pre-wrap break-words text-mg-muted">{body}</div>
+      </details>
+    </div>
+  );
+}
+
+// P-038 V13: la respuesta de una sesión creada con mage_create_session, que Mage entrega a esta conversación como mensaje.
+// No la escribió el usuario: tarjeta plegada con el nombre de la sesión, como las tareas programadas.
+function SessionResultCard({ id, name, body }: { readonly id: string; readonly name: string; readonly body: string }): React.JSX.Element {
+  const t = useT();
+  const { isExpanded, setExpanded } = useExpandedRows();
+  return (
+    <div className="flex justify-end">
+      <details
+        data-session-result="true"
+        open={isExpanded(`${id}:result`)}
+        onToggle={(event) => setExpanded(`${id}:result`, event.currentTarget.open)}
+        className="max-w-[80%] min-w-0 rounded-[9px] border border-mg-border-subtle bg-mg-block p-[6px_11px] text-[11.5px]">
+        <summary className="cursor-pointer text-mg-sec">
+          {t('chat.sessionResult.label')} <span className="font-semibold text-mg-text">{name.length > 0 ? name : t('chat.sessionResult.unnamed')}</span>
+        </summary>
+        <div className="mt-[6px] whitespace-pre-wrap break-words text-mg-body2">{body}</div>
       </details>
     </div>
   );

@@ -135,6 +135,7 @@ export class CodexAdapter implements ProviderAdapter {
     this.developerInstructions = [
       ...(userFiles.length === 0 ? [] : [bridgeDocument(userFiles)]),
       ...(params.projectInstructions === undefined ? [] : [`# Mage project instructions\n${params.projectInstructions}`]),
+      ...(params.shared?.systemNotice === undefined ? [] : [params.shared.systemNotice]),
     ].join('\n\n') || null;
     const fallback = bridged.some((file) => file.scope === 'project') ? PROJECT_FALLBACK_ARGS : [];
     // Codex solo pasa a un servidor MCP stdio las variables de su lista `env_vars` (lo mismo que hace

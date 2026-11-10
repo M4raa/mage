@@ -7,6 +7,7 @@ import { useWorkbenchStore } from '../../workbenchStore';
 import { Icon } from '../Icon';
 import { McpAuthActions } from './McpSection';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS } from './mcpStyles';
+import { McpRow, MetaChip } from './McpRow';
 import { useT } from '../../../i18n/uiLanguage';
 import type { Translate } from '@shared/i18n/translator';
 
@@ -73,9 +74,9 @@ function CodexAppsResult({ result }: { readonly result: CodexAccountMetadata | u
   if (result.error !== null) return <p role="status">{codexAppsErrorText(result.error, t)}</p>;
   if (result.authenticated !== true) return <p>{t('mcp.codexApps.signIn')}</p>;
   if (result.apps?.length === 0) return <p>{t('mcp.codexApps.empty')}</p>;
-  return <ul>{result.apps?.map((app) => <li key={app.id} className="py-[3px]">
-    <span className="font-medium text-mg-body">{app.name}</span> · {codexAppStatus(app, t)}
-  </li>)}</ul>;
+  return <div role="list" className="flex flex-col border-t border-mg-border-subtle">{result.apps?.map((app) => <div role="listitem" key={app.id}>
+    <McpRow name={app.name} meta={<MetaChip>ChatGPT</MetaChip>} status={codexAppStatus(app, t)} tone={app.accessible && app.enabled ? 'ok' : 'idle'} />
+  </div>)}</div>;
 }
 
 function codexAppStatus(app: { readonly accessible: boolean; readonly enabled: boolean }, t: Translate): string {
@@ -117,20 +118,11 @@ function ClaudeAccountGroup({ group }: { readonly group: McpConnectorGroup }): R
           {t('mcp.connectors.claudeAiToggle')}
         </label>
       </div>
-      <table className="w-full border-collapse text-left text-[11px]">
-        <thead>
-          <tr className="border-b border-mg-border-subtle text-[9.5px] uppercase tracking-[.06em] text-mg-ter">
-            <th className="py-[4px] pr-[8px] font-semibold">{t('mcp.connectors.column.connector')}</th>
-            <th className="py-[4px] pr-[8px] font-semibold">{t('mcp.connectors.column.type')}</th>
-            <th className="py-[4px] font-semibold">{t('mcp.connectors.column.status')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {group.rows.map((row) => (
-            <ConnectorRowView key={row.key} row={row} accountId={group.accountId} />
-          ))}
-        </tbody>
-      </table>
+      <div role="list" className="flex flex-col border-t border-mg-border-subtle">
+        {group.rows.map((row) => (
+          <ConnectorRowView key={row.key} row={row} accountId={group.accountId} />
+        ))}
+      </div>
       <span className="text-[10px] text-mg-muted" data-mcp-checked-at="true">
         {describeCheckedAt(group.checkedAt, new Date())}
       </span>
@@ -138,16 +130,18 @@ function ClaudeAccountGroup({ group }: { readonly group: McpConnectorGroup }): R
   );
 }
 
+// P-038 V12: la misma fila que en Servidores y Extensiones.
 function ConnectorRowView({ row, accountId }: { readonly row: McpConnectorRow; readonly accountId: string }): React.JSX.Element {
   const t = useT();
+  const status = (
+    <>
+      <span data-mcp-status="true">{row.statusLabel}</span>
+      {row.cliName !== null && <McpAuthActions serverName={row.cliName} accountDirs={row.needsAuth ? [accountId] : []} label={t('mcp.connectors.connect')} />}
+    </>
+  );
   return (
-    <tr data-mcp-connector={row.name} data-mcp-connector-kind={row.kind} className="border-b border-mg-border-subtle align-top">
-      <td className="py-[5px] pr-[8px] font-medium text-mg-body">{row.name}</td>
-      <td className="py-[5px] pr-[8px] text-mg-body2">{row.typeLabel}</td>
-      <td className="py-[5px] text-mg-sec">
-        <span data-mcp-status="true">{row.statusLabel}</span>
-        {row.cliName !== null && <McpAuthActions serverName={row.cliName} accountDirs={row.needsAuth ? [accountId] : []} label={t('mcp.connectors.connect')} />}
-      </td>
-    </tr>
+    <div role="listitem">
+      <McpRow name={row.name} meta={<MetaChip>{row.typeLabel}</MetaChip>} status={status} tone={row.tone} dataAttrs={{ 'data-mcp-connector': row.name, 'data-mcp-connector-kind': row.kind }} />
+    </div>
   );
 }

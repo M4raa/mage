@@ -59,12 +59,48 @@ describe('AgentSession directo (F4.1)', () => {
     h.session.steerUserMessage('m1', 'x');
     emitLine(h.children[0]!, [result]);
     const initsAfterFirst = written(h.children[0]!).filter(isInit).length;
-    emitLine(h.children[0]!, [result]);
+    // El CLI acepta el directo (su hook) y cierra su turno.
+    emitLine(h.children[0]!, [{ kind: 'hook_fired', requestId: 'h1', event: 'UserPromptSubmit', detail: null }, result]);
     const initsAfterSecond = written(h.children[0]!).filter(isInit).length;
 
     // Assert
     expect(initsAfterFirst).toBe(initsBefore);
     expect(initsAfterSecond).toBe(initsBefore + 1);
+  });
+
+  // P-038, MEDIDO en 2.1.319 (`spike/resume-hook-spike.mjs --mage-refresh`): al reanudar un chat con una tarea de fondo
+  // muerta, el CLI emite un `result` ADELANTADO antes del hook del mensaje del usuario; refrescar ahí lo descartaba.
+  it('result_adelantadoConMensajeAntesDeSuHook_noReenviaInitialize', () => {
+    // Arrange
+    const h = harness();
+    h.session.start();
+    const result = { kind: 'result', result: { subtype: 'success', isError: false, numTurns: 1 } } as const;
+    const isInit = (line: unknown) => (line as { request?: { subtype?: string } }).request?.subtype === 'initialize';
+    const initsBefore = written(h.children[0]!).filter(isInit).length;
+
+    // Act
+    h.session.sendUserMessage('hola');
+    emitLine(h.children[0]!, [result]);
+    const initsTrasAdelantado = written(h.children[0]!).filter(isInit).length;
+    emitLine(h.children[0]!, [{ kind: 'hook_fired', requestId: 'h2', event: 'UserPromptSubmit', detail: null }, result]);
+    const initsTrasSuTurno = written(h.children[0]!).filter(isInit).length;
+
+    // Assert
+    expect(initsTrasAdelantado).toBe(initsBefore);
+    expect(initsTrasSuTurno).toBe(initsBefore + 1);
+  });
+
+  it('hookDeOtroEvento_noCuentaComoMensajeAceptado', () => {
+    const h = harness();
+    h.session.start();
+    const result = { kind: 'result', result: { subtype: 'success', isError: false, numTurns: 1 } } as const;
+    const isInit = (line: unknown) => (line as { request?: { subtype?: string } }).request?.subtype === 'initialize';
+    const initsBefore = written(h.children[0]!).filter(isInit).length;
+
+    h.session.sendUserMessage('hola');
+    emitLine(h.children[0]!, [{ kind: 'hook_fired', requestId: 'h3', event: 'Stop', detail: null }, result]);
+
+    expect(written(h.children[0]!).filter(isInit).length).toBe(initsBefore);
   });
 
   it('normalize_steerResultInferido_loEmiteYDejaUnWarn', () => {

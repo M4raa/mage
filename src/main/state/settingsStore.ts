@@ -22,6 +22,8 @@ import {
   SEPARATOR_CONTRASTS,
   UI_SCALE_MAX,
   UI_SCALE_MIN,
+  ACCOUNT_ALIAS_MAX,
+  PLAN_PRICE_MAX_MICRO_USD,
 } from '@shared/settings';
 import { UI_LANGUAGE_PREFERENCES } from '@shared/i18n/language';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
@@ -131,6 +133,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   // widgetEnabled opcional en disco: ficheros antiguos (sin la clave) o valores invalidos caen a
   // false via .catch (widget apagado por defecto, opt-in).
   widgetEnabled: z.boolean().catch(false),
+  // Igual que el widget: sin la clave (ficheros anteriores a la 0.1.5) o con basura, apagado.
+  mageMcpEnabled: z.boolean().catch(false),
   // Igual de tolerante: un fichero de una version anterior no la trae, y un valor fuera de rango (o
   // basura) no puede dejar la app ilegible -> se acota al rango util y, si no hay nada, opaca.
   backgroundOpacity: z.number().min(50).max(100).catch(100),
@@ -182,6 +186,11 @@ const APP_SETTINGS_SCHEMA = z.object({
   // Color por cuenta (PERS-3). Ausente o invalido -> {}: las cuentas vuelven al color de su posicion,
   // que es lo de antes de existir el campo.
   accentByAccount: z.record(z.string(), z.number().int().min(0).max(ACCOUNT_ACCENT_COUNT - 1)).catch({}),
+  aliasByAccount: z.record(z.string(), z.string().trim().min(1).max(ACCOUNT_ALIAS_MAX)).catch({}),
+  // Precio del plan (P-039): micro-USD enteros; ausente o basura -> {} (sin «valor»).
+  planPriceMicroUsdByAccount: z.record(z.string(), z.number().int().min(0).max(PLAN_PRICE_MAX_MICRO_USD)).catch({}),
+  adminMode: z.boolean().catch(false),
+  hiddenAccounts: z.array(z.string().min(1)).catch([]),
   // Conectores de claude.ai apagados por cuenta. Ausente o basura -> [] (encendidos, como antes de existir).
   claudeAiConnectorsOff: z.array(z.string().min(1)).catch([]),
   // D5: Artifact. Ausente o basura -> false: el lado que no publica nada.

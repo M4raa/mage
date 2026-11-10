@@ -1,7 +1,7 @@
 // Spike del carril S (S05): el TURNO REAL de Claude con las herramientas `mage_browser_*` de Mage (navegar, leer, pulsar, escribir
 // y capturar) y sus permisos. NO lanza Mage: se usa contra un Mage SIN EMPAQUETAR ya abierto con `--user-data-dir <perfil>`, con una
-// cuenta de Claude (la de la verificación: clave de API desechable o suscripción, sin copiar credenciales) y «Registrar en todas las
-// cuentas» del servidor MCP de Mage hecho en Ajustes. Es un cliente del host (`scripts/mage-cli/hostLink.mjs`, `kind: 'terminal'`):
+// cuenta de Claude (la de la verificación: clave de API desechable o suscripción, sin copiar credenciales) y el MCP de Mage
+// activado (`mageMcpEnabled`, P-038; antes «Registrar en todas las cuentas»). Es un cliente del host (`scripts/mage-cli/hostLink.mjs`, `kind: 'terminal'`):
 // crea UNA sesión de Claude, le manda UN prompt, contesta `allow` SOLO a los permisos de las herramientas `mage_browser_*` (cualquier
 // otro se deniega y se anota) y mide contra un servidor local con la página de prueba (`spike/__fixtures__/browser-test-page.html`).
 //   node spike/browser-agent-e2e.mjs --user-data-dir <dir> --claude-account <configDir> --cwd <carpeta> [--claude-model <id>] --out <fichero.json>

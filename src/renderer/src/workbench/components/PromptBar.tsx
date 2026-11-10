@@ -1,5 +1,5 @@
 import { useLocalPopover } from '../localPopovers';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { readOnlyLockMessage } from '@shared/conversationLock';
 import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
@@ -8,9 +8,7 @@ import { useWorkbenchStore, type SendOptions } from '../workbenchStore';
 import { pinnedAccountMissing } from '../adoptSession';
 import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
-import { motion } from 'motion/react';
-import { COMPOSER_LAYOUT_TRANSITION } from '../motionPresets';
-import { composerLayout, type ComposerLayout } from '../composerLayout';
+import { popoverAnchor } from '../popoverAnchor';
 import type { ProviderModel } from '@shared/providers';
 import { continueListOnNewline, indentLines, outdentLines, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
@@ -30,7 +28,7 @@ import { ChatInfoBar } from './ChatInfoBar';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
 import { notify } from '../notificationStore';
 import { displayTitle } from '../conversationTitle';
-import { Dropdown } from './Dropdown';
+import { Dropdown, type DropdownOption } from './Dropdown';
 import { StepSlider } from './StepSlider';
 import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortStepLabel, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
 import { usePaneTabId } from '../paneContext';
@@ -78,6 +76,13 @@ function permissionChipSkin(mode: string): string {
   return 'border-mg-warn-border bg-mg-warn-bg text-mg-warn-text';
 }
 
+// Opciones del selector de modo: los pasos del CLI y, si el modo actual no es uno de ellos (`dontAsk`), él también, para
+// que el disparador diga su nombre y no el identificador crudo.
+function permissionOptions(steps: readonly { readonly value: string; readonly label: string }[], current: string): readonly DropdownOption[] {
+  const options = steps.map((step) => ({ value: step.value, label: step.label }));
+  return steps.some((step) => step.value === current) ? options : [...options, { value: current, label: permissionModeLabel(current) }];
+}
+
 // Caja de prompt. Enter (sin shift) envia al motor real del chat activo; Shift+Enter salto de linea.
 // Input rico (M3): Shift+Enter continua listas (- / * / + / 1.) y Tab/Shift+Tab indenta/desindenta
 // la(s) linea(s) de la seleccion; la logica vive en el modulo puro promptEditing.
@@ -113,20 +118,6 @@ function mentionFailureMessages(failures: ReadonlyMap<string, MentionFailure>, m
 // Borrador ACTUAL de una pestaña, leido del store (no del render): lo usan los callbacks asincronos.
 function draftOf(tabId: string): PromptDraft {
   return useWorkbenchStore.getState().draftByChat[tabId] ?? EMPTY_DRAFT;
-}
-
-// Constantes de la fila del composer (deben casar con las clases de abajo: `gap-[10px]`, `p-[10px_14px]`).
-const COMPOSER_GAP_PX = 10;
-const COMPOSER_PROMPT_CHEVRON_PX = 8;
-
-// Ancho que tendria el editor con los selectores EN LINEA: el interior de la fila menos el `›` y los
-// controles, con un hueco entre cada par. null si aun no se puede medir (primer render).
-function measureInlineEditorWidth(row: HTMLElement | null, controls: HTMLElement | null): number | null {
-  if (row === null || controls === null) return null;
-  const style = getComputedStyle(row);
-  const inner = row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-  const width = inner - COMPOSER_PROMPT_CHEVRON_PX - controls.offsetWidth - 2 * COMPOSER_GAP_PX;
-  return Number.isFinite(width) ? width : null;
 }
 
 function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: LocalizedText } | null, permissionPending: boolean): string {
@@ -240,20 +231,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   const [preview, setPreview] = useState<string | null>(null); // sugerencia de mejora (editable)
   const [busy, setBusy] = useState(false); // mejorando/rehaciendo
   const [error, setError] = useState<string | null>(null);
-  // Selectores en linea o en su fila (P-026 3.1, D17). `wraps` lo dice el editor; la histeresis vive en
-  // `composerLayout` (apilado solo vuelve con el input vacio).
-  const [wraps, setWraps] = useState(false);
-  const [layout, setLayout] = useState<ComposerLayout>('inline');
-  // Ancho del texto cuando cabe en una linea (P-028 10): con el, apilado vuelve a en-linea en cuanto el
-  // texto cabe en el ancho en-linea, no solo con el input vacio.
-  const [textWidth, setTextWidth] = useState<number | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
-  const controlsRef = useRef<HTMLDivElement>(null);
-  const promptEmpty = text.trim().length === 0;
-  useEffect(() => {
-    const inlineWidth = measureInlineEditorWidth(rowRef.current, controlsRef.current);
-    setLayout((current) => composerLayout(current, { wraps, empty: promptEmpty, textWidth, inlineWidth }));
-  }, [wraps, promptEmpty, textWidth]);
   // La barra no se remonta al cambiar de pestaña (ver el borrador, arriba): sin esto, un error de la
   // pestaña A (p. ej. «mas de 10 imagenes») se quedaba pintado en B para siempre.
   useEffect(() => setError(null), [activeTabId]);
@@ -344,6 +322,9 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   useEffect(() => setMentionFailures(NO_FAILURES), [activeTabId]);
   const previews = useMentionPreviews(mentionTab);
   const mentions = useMentionSuggestions({ tab: mentionTab, text, cursor, blocked: slashOpen || disabled, onPick: pickMention, onError: setError });
+  // P-038: cada popover encima de SU carácter (`/` o `@`), no en el borde izquierdo de la fila.
+  const slashAnchor = usePopoverAnchor(editorRef, rowRef, slashOpen ? (slashQueryAt(text, cursor)?.start ?? null) : null, SLASH_POPOVER_PX);
+  const mentionAnchor = usePopoverAnchor(editorRef, rowRef, mentions.open ? (mentionQueryAt(text, cursor)?.start ?? null) : null, MENTION_POPOVER_PX);
   useLocalPopover(mentions.open);
   const canImprove = !disabled && !busy && text.trim().length > 0 && isClaude;
   // Handoff: necesita una sesion reanudable (viva o restaurada) y solo Claude soporta --resume.
@@ -703,9 +684,6 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
 
   return (
     <div className="border-t border-mg-border p-[12px_22px]">
-      {/* La informacion de la CONVERSACION (creadora, PR, privacidad) va justo bajo la linea del input y a 6 px de
-          la caja (#41): la linea es de esta barra, asi que con la fila vacia sigue estando, sin hueco doble. */}
-      <ChatInfoBar />
       {/* Una sola linea de error para toda la barra: cada origen (mejora del prompt, adjuntos) pone su
           propio prefijo, para que el mensaje describa lo que de verdad ha fallado. */}
       {error !== null && (
@@ -770,15 +748,16 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
         </div>
       )}
 
-      {/* `flex-wrap`: los controles (todos `shrink-0`) bajan a la linea siguiente cuando no caben junto al
-          editor, en vez de estrujarlo a 0 px de ancho — ver el comentario del host en PromptEditor.tsx. */}
-      <div ref={rowRef} className="relative flex flex-wrap items-end gap-[10px] rounded-[9px] border border-mg-border-ctrl bg-mg-panel p-[10px_14px]">
-        {mentions.open && <MentionPopover suggestions={mentions} />}
+      {/* La caja del input: «+» (acciones y adjuntar) · editor · enviar. Los dos botones van pegados al FONDO
+          (`items-end`): el texto crece hacia arriba sin moverlos, y encima de enviar no hay nada. */}
+      <div ref={rowRef} className="relative flex items-end gap-[8px] rounded-[9px] border border-mg-border-ctrl bg-mg-panel p-[8px_8px_8px_6px]">
+        {mentions.open && <MentionPopover suggestions={mentions} anchor={mentionAnchor} />}
         {slashOpen && (
           // Popover de comandos "/" (M2.6): navegable con flechas/Enter/Tab; click completa.
           <div
             role="listbox"
             aria-label={t('prompt.slash.listLabel')}
+            style={slashAnchor}
             className="absolute bottom-full left-0 mb-[6px] w-[300px] overflow-hidden rounded-[8px] border border-mg-border-pop bg-mg-panel py-[4px] mg-shadow-pop"
           >
             {slashSuggestions.map((command, i) => (
@@ -804,53 +783,14 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
             ))}
           </div>
         )}
-        <span className="pt-[1px] font-mono text-mg-ter">›</span>
-        <Suspense fallback={<PromptEditorFallback placeholder={promptPlaceholder(activeTabId, readOnlyLock, permissionPending)} ariaLabel={t('prompt.editor.ariaLabel')} />}>
-          <PromptEditor
-            handleRef={editorRef}
-            value={text}
-            disabled={disabled}
-            ariaLabel={t('prompt.editor.ariaLabel')}
-            placeholder={promptPlaceholder(activeTabId, readOnlyLock, permissionPending)}
-            onChange={onChangeText}
-            onSelectionChange={setCursor}
-            onKeyDown={onKeyDown}
-            onPasteImages={(files) => addFiles(files, 'pasted')}
-            onWrapChange={setWraps}
-            onTextWidthChange={setTextWidth}
-            stacked={layout === 'stacked'}
-          />
-        </Suspense>
-        {/* Los selectores van JUNTOS (P-026 3.1): en linea con el texto mientras cabe, y en su propia fila,
-            a la derecha, cuando el texto salta de linea. `layout="position"` anima el salto (FLIP). */}
-        <motion.div
-          ref={controlsRef}
-          layout="position"
-          transition={COMPOSER_LAYOUT_TRANSITION}
-          data-prompt-controls="true"
-          className={`flex min-w-0 max-w-full flex-wrap items-center justify-end gap-[10px] ${layout === 'stacked' ? 'ml-auto' : ''}`}
-        >
-          {/* «Abrir carpeta» no está en el menú: la carpeta se abre desde su insignia, encima del input. Las imágenes
-              entran pegándolas, soltándolas en el chat o con el botón de adjuntar. */}
-          {activeTab !== undefined && (
-            <>
-              <input ref={imageInputRef} type="file" accept={IMAGE_ACCEPT} multiple hidden data-attach-input="image" onChange={onPickImages} />
-              <button
-                type="button"
-                aria-label={t('i2.prompt.attachImage')}
-                data-tip={t('i2.prompt.attachImageTip')}
-                disabled={disabled}
-                onClick={() => imageInputRef.current?.click()}
-                className="flex h-[22px] w-[24px] shrink-0 items-center justify-center self-center rounded-[6px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body disabled:opacity-40"
-              >
-                <Icon name="paperclip" size={13} />
-              </button>
-            </>
-          )}
-          {activeTab !== undefined && (
+        {activeTab !== undefined && (
+          <>
+            <input ref={imageInputRef} type="file" accept={IMAGE_ACCEPT} multiple hidden data-attach-input="image" onChange={onPickImages} />
             <ActionsMenu
               busy={busy}
               items={[
+                // Las imágenes entran también pegándolas o soltándolas en el chat.
+                { icon: 'paperclip', label: t('i2.prompt.attachImage'), onClick: () => imageInputRef.current?.click(), disabled, title: t('i2.prompt.attachImageTip') },
                 { icon: 'sparkles', label: t('prompt.actions.improve'), onClick: () => void runImprove(), disabled: !canImprove, hidden: !isClaude },
                 {
                   icon: 'handshake',
@@ -890,7 +830,36 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
                     ]),
               ]}
             />
-          )}
+          </>
+        )}
+        <Suspense fallback={<PromptEditorFallback placeholder={promptPlaceholder(activeTabId, readOnlyLock, permissionPending)} ariaLabel={t('prompt.editor.ariaLabel')} />}>
+          <PromptEditor
+            handleRef={editorRef}
+            value={text}
+            disabled={disabled}
+            ariaLabel={t('prompt.editor.ariaLabel')}
+            placeholder={promptPlaceholder(activeTabId, readOnlyLock, permissionPending)}
+            onChange={onChangeText}
+            onSelectionChange={setCursor}
+            onKeyDown={onKeyDown}
+            onPasteImages={(files) => addFiles(files, 'pasted')}
+          />
+        </Suspense>
+        <SendControls
+          running={running}
+          canInterrupt={canInterrupt}
+          canSend={canSend}
+          sendNow={sendNow}
+          queueKeys={queueKeys}
+          sendNowKeys={sendNowKeys}
+          onSend={sendFromButton}
+          onSendNow={sendNowFromUi}
+          onInterrupt={interruptActiveSession}
+        />
+      </div>
+      {/* Debajo de la caja: a la izquierda, de qué va la conversación (proveedor · cuenta, carpeta, rama, privacidad,
+          creadora, PR); a la derecha, con qué se le habla (modelo, esfuerzo y modo de permiso). */}
+      <ChatInfoBar>
           {autoApproved && (
             // Aviso PERMANENTE de "sin control de permisos" (E3). Ocupa el sitio del chip de modo de
             // permiso, que para este proveedor no existe y no puede fingir que si: su CLI no tiene puente
@@ -932,25 +901,20 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
               {t('prompt.codex.allowWrite')}
             </button>
           )}
-          {(isClaude || isRuntime || isAgy || (isCodex && modeSteps.length > 0)) && (
-            // Modo de permiso (M2.6; P-028 32/33: deslizador de pasos). Los pasos son los que EXPONE el CLI
-            // (respuesta 18): en Claude, su `--permission-mode`; en Codex (sin verificar), sus perfiles,
-            // que aplican al siguiente turno. Shift+Tab con el input vacio sigue ciclando en Claude. Un modo
-            // que el CLI reporta y Mage no ofrece (`dontAsk`) sale como etiqueta.
-            <StepSlider
-              steps={modeSteps}
-              value={permissionMode}
-              onChange={(mode) => modeSteps.some((step) => step.value === mode) && setActivePermissionMode(mode)}
-              ariaLabel={t('prompt.permission.ariaLabel', { mode: permissionModeLabel(permissionMode) })}
-              chipLabel={permissionModeLabel(permissionMode)}
-              chipSizers={modeSteps.map((step) => step.label)}
-              heading={t('prompt.permission.heading', { mode: permissionModeLabel(permissionMode) })}
-              endLabels={[t('prompt.permission.moreControl'), t('prompt.permission.moreAutonomy')]}
-              tip={t('prompt.permission.tip')}
-              {...(isRuntime && permissionMode === 'auto' ? { note: t('prompt.providers.runtimeAutoModeNote') } : {})}
-              triggerClassName={permissionChipSkin(permissionMode)}
-              leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
+          {activeModel.length > 0 && (isClaude || isCodex || isAgy) && (
+            // Dropdown de modelo en caliente (M2.4, solo Claude): set_model aplica al siguiente turno.
+            <Dropdown
+              value={displayModelId(activeModel, modelOptions)}
+              onChange={changeModel}
+              options={modelOptions.map((option) => ({ value: option.id, label: option.label }))}
+              // El UNICO sitio del modelo (P-026, D18): lo que resolvio la sesion (el alias apunta a la
+              // ultima version de su familia) vive aqui, y no en una insignia aparte.
+              tip={resolvedModel === null ? t('prompt.model.tip') : t('prompt.model.tipResolved', { model: resolvedModel })}
+              ariaLabel={t('prompt.model.ariaLabel')}
             />
+          )}
+          {activeModel.length > 0 && !isClaude && !isCodex && !isAgy && (
+            <span className="shrink-0 self-center rounded-full border border-mg-border-ctrl px-[8px] py-[2px] text-[10.5px] text-mg-sec">{activeModel}</span>
           )}
           {(isClaude || isCodex || (isAgy && !agyModelFixesEffort(activeModel))) && (
             // Esfuerzo (--effort, M2.4 / B4; P-028 33: deslizador de seis pasos con Auto a la izquierda).
@@ -968,34 +932,23 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
               note={isCodex ? t('prompt.effort.noteNextTurn') : isAgy ? t('prompt.effort.noteNextMessage') : t('prompt.effort.noteOnStart')}
             />
           )}
-          {activeModel.length > 0 && (isClaude || isCodex || isAgy) && (
-            // Dropdown de modelo en caliente (M2.4, solo Claude): set_model aplica al siguiente turno.
+          {(isClaude || isRuntime || isAgy || (isCodex && modeSteps.length > 0)) && (
+            // Modo de permiso: un selector (antes deslizador de pasos, P-028 32/33). Los modos son los que EXPONE el CLI
+            // (respuesta 18): en Claude, su `--permission-mode`; en Codex, sus perfiles, que aplican al siguiente turno.
+            // Shift+Tab con el input vacío sigue ciclando en Claude. Un modo que el CLI reporta y Mage no ofrece
+            // (`dontAsk`) sale con su nombre, sin poder elegirse.
             <Dropdown
-              value={displayModelId(activeModel, modelOptions)}
-              onChange={changeModel}
-              options={modelOptions.map((option) => ({ value: option.id, label: option.label }))}
-              // El UNICO sitio del modelo (P-026, D18): lo que resolvio la sesion (el alias apunta a la
-              // ultima version de su familia) vive aqui, y no en una insignia aparte.
-              tip={resolvedModel === null ? t('prompt.model.tip') : t('prompt.model.tipResolved', { model: resolvedModel })}
-              ariaLabel={t('prompt.model.ariaLabel')}
+              value={permissionMode}
+              onChange={(mode) => modeSteps.some((step) => step.value === mode) && setActivePermissionMode(mode)}
+              options={permissionOptions(modeSteps, permissionMode)}
+              ariaLabel={t('prompt.permission.ariaLabel', { mode: permissionModeLabel(permissionMode) })}
+              tip={isRuntime && permissionMode === 'auto' ? `${t('prompt.permission.tip')} ${t('prompt.providers.runtimeAutoModeNote')}` : t('prompt.permission.tip')}
+              triggerClassName={permissionChipSkin(permissionMode)}
+              triggerData={{ 'data-permission-mode': permissionMode }}
+              leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
             />
           )}
-          {activeModel.length > 0 && !isClaude && !isCodex && !isAgy && (
-            <span className="shrink-0 self-center rounded-full border border-mg-border-ctrl px-[8px] py-[2px] text-[10.5px] text-mg-sec">{activeModel}</span>
-          )}
-          <SendControls
-            running={running}
-            canInterrupt={canInterrupt}
-            canSend={canSend}
-            sendNow={sendNow}
-            queueKeys={queueKeys}
-            sendNowKeys={sendNowKeys}
-            onSend={sendFromButton}
-            onSendNow={sendNowFromUi}
-            onInterrupt={interruptActiveSession}
-          />
-        </motion.div>
-      </div>
+          </ChatInfoBar>
     </div>
   );
 }
@@ -1074,8 +1027,8 @@ interface ActionItem {
   readonly title?: string; // motivo cuando esta deshabilitado
 }
 
-// Menu "⋯" que agrupa las acciones de la barra (mejorar, handoff, compactar, terminal, editor) en un
-// popover, para no llenar la fila del input de iconos sueltos. Popover hacia ARRIBA (la barra esta
+// Menu «+» que agrupa las acciones de la barra (adjuntar, mejorar, handoff, compactar, terminal, editor) en un
+// popover, para no llenar la fila del input de iconos sueltos. Va abajo a la izquierda de la caja. Popover hacia ARRIBA (la barra esta
 // abajo) con cierre al hacer click fuera (backdrop transparente).
 function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; readonly busy: boolean }): React.JSX.Element {
   const t = useT();
@@ -1090,14 +1043,14 @@ function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; r
   };
 
   return (
-    <div className="relative self-center" onKeyDown={(e) => e.key === 'Escape' && open && setOpen(false)}>
+    <div className="relative self-end" data-prompt-actions="true" onKeyDown={(e) => e.key === 'Escape' && open && setOpen(false)}>
       <IconButton title={t('prompt.actions.menu')} onClick={() => setOpen((v) => !v)} ariaHasPopup="menu" ariaExpanded={open}>
-        {busy ? <Spinner /> : '⋯'}
+        {busy ? <Spinner /> : <Icon name="plus" size={14} />}
       </IconButton>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div role="menu" className="absolute bottom-full right-0 z-20 mb-[6px] w-[190px] overflow-hidden rounded-[8px] border border-mg-border-pop bg-mg-panel py-[4px] mg-shadow-pop">
+          <div role="menu" className="absolute bottom-full left-0 z-20 mb-[6px] w-[200px] overflow-hidden rounded-[8px] border border-mg-border-pop bg-mg-panel py-[4px] mg-shadow-pop">
             {visible.map((item) => (
               <button
                 key={item.label}
@@ -1141,7 +1094,7 @@ function IconButton({
       aria-label={title}
       aria-haspopup={ariaHasPopup}
       aria-expanded={ariaExpanded}
-      className="flex h-[22px] w-[24px] shrink-0 items-center justify-center self-center rounded-[6px] text-[12px] text-mg-sec hover:text-mg-body disabled:opacity-40"
+      className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[7px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body disabled:opacity-40"
     >
       {children}
     </button>
@@ -1151,4 +1104,30 @@ function IconButton({
 // Spinner minimo (borde girando) para dar feedback de "trabajando".
 function Spinner(): React.JSX.Element {
   return <span className="inline-block h-[11px] w-[11px] animate-spin rounded-full border border-mg-border-emph border-t-mg-body" />;
+}
+
+// Anchos de los dos popovers de sugerencias (los `w-[…]` de su clase): con ellos se recorta para no salirse de la fila.
+const SLASH_POPOVER_PX = 300;
+const MENTION_POPOVER_PX = 340;
+
+// Posición del popover encima del carácter `start` (`/` o `@`), relativa a la fila del input (P-038). Sin carácter
+// (popover cerrado) o sin pintar, undefined: el popover cae a su sitio de siempre (borde izquierdo).
+function usePopoverAnchor(
+  editorRef: React.RefObject<PromptEditorHandle | null>,
+  rowRef: React.RefObject<HTMLDivElement | null>,
+  start: number | null,
+  width: number,
+): React.CSSProperties | undefined {
+  const [anchor, setAnchor] = useState<React.CSSProperties | undefined>(undefined);
+  useLayoutEffect(() => {
+    const char = start === null ? null : (editorRef.current?.coordsAt(start) ?? null);
+    const row = rowRef.current?.getBoundingClientRect() ?? null;
+    if (char === null || row === null) {
+      setAnchor(undefined);
+      return;
+    }
+    const { left, bottom } = popoverAnchor(char, row, width);
+    setAnchor({ left, bottom, marginBottom: 0 });
+  }, [editorRef, rowRef, start, width]);
+  return anchor;
 }
