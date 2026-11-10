@@ -7141,7 +7141,7 @@ const CHECKS = [
     // segmento no informa de nada.
     //
     // NO se pulsa la carpeta: abriria el explorador de ficheros del sistema.
-    name: 'Chat: la carpeta va en la sublinea bajo las pestañas (Q03) y es accionable; las etiquetas de encima del input son solo privacidad',
+    name: 'Chat: la carpeta va en la sublinea bajo las pestañas (Q03) y es accionable, con la privacidad al lado (P-038 V3)',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -7191,12 +7191,15 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
 
       const todo = { ...medido, scratchResuelto, etiquetaScratch };
+      const sharedLabel = ui('chat.info.shared');
       const ok =
         todo.hayFila &&
         todo.esSublinea &&
         todo.antesDelInput === true &&
-        // Cuenta + carpeta (el scratchpad no es un repositorio: sin rama). El modelo no va (D18).
-        todo.etiquetas.length === 2 &&
+        // Cuenta + carpeta + privacidad (P-038 V3; el scratchpad no es un repositorio: sin rama; sin dato aún no hay % de
+        // contexto). El modelo no va (D18).
+        todo.etiquetas.length === 3 &&
+        todo.etiquetas[2]?.texto === sharedLabel &&
         // Solo la carpeta hace algo: un boton que no lleva a ningun sitio es una promesa rota.
         todo.pulsables === 1 &&
         todo.desborda === false &&
@@ -8613,7 +8616,9 @@ const CHECKS = [
     async run(page) {
       await openTemporaryConversation(page);
       await hydrateBlocks(page, Array.from({ length: 30 }, (_, i) => ({ kind: 'user', id: `vg-iman-${i}`, text: `Fila ${i}\n${'Contenido largo de prueba. '.repeat(20)}`, time: '12:00', attachments: [] })));
-      const scroller = page.locator('[data-pane-tab-id] [data-chat-scroller]').first();
+      // El scroller de la pestaña ACTIVA: con otras pestañas abiertas antes, el primero de la página puede ser otro.
+      const activa = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const scroller = page.locator(`[data-pane-tab-id="${activa}"] [data-chat-scroller]`);
       await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
       await page.waitForTimeout(CONFIG.settleMs);
       const caja = await scroller.boundingBox();
@@ -8621,6 +8626,7 @@ const CHECKS = [
       // Un golpe CORTO de rueda: antes quedaba dentro del margen de 80 px y el texto nuevo lo devolvía abajo.
       await page.mouse.wheel(0, -40);
       await page.waitForTimeout(CONFIG.settleMs);
+      const trasRueda = await scroller.evaluate((el) => ({ distancia: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight), alto: el.clientHeight, total: el.scrollHeight, bajoRaton: document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2)?.closest('[data-chat-scroller]') === el }));
       await page.evaluate(() => {
         const store = window.__mageDev.store;
         const tabId = store.getState().activeTabId;
@@ -8628,18 +8634,20 @@ const CHECKS = [
       });
       await page.waitForTimeout(CONFIG.settleMs * 2);
       const distancia = await scroller.evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
-      // Y al volver al final, vuelve a seguirlo.
-      await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+      // Y al volver al final CON LA RUEDA (un gesto del usuario), vuelve a seguirlo. Un scroll por programa no basta: es
+      // justo el que Virtuoso hace solo y no debe reenganchar.
+      await page.mouse.wheel(0, 100_000);
+      await page.waitForTimeout(CONFIG.settleMs);
       await page.evaluate(() => {
         const store = window.__mageDev.store;
         const tabId = store.getState().activeTabId;
         store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [tabId]: [...s.blocksByChat[tabId], { kind: 'agent', id: 'vg-iman-otro', runs: [{ code: false, text: 'Más texto. '.repeat(60) }], streaming: true }] } }));
       });
       const repegado = await page
-        .waitForFunction(() => { const el = document.querySelector('[data-pane-tab-id] [data-chat-scroller]'); return el !== null && el.scrollHeight - el.scrollTop - el.clientHeight <= 3; }, null, { timeout: CONFIG.actionTimeoutMs })
+        .waitForFunction((id) => { const el = document.querySelector(`[data-pane-tab-id="${id}"] [data-chat-scroller]`); return el !== null && el.scrollHeight - el.scrollTop - el.clientHeight <= 3; }, activa, { timeout: CONFIG.actionTimeoutMs })
         .then(() => true, () => false);
       const ok = distancia > 100 && repegado;
-      return { ok, detail: JSON.stringify({ distancia, repegado }) };
+      return { ok, detail: JSON.stringify({ distancia, repegado, trasRueda, caja }) };
     },
   },
   {
