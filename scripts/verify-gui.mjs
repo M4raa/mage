@@ -8936,45 +8936,81 @@ const CHECKS = [
     },
   },
   {
-    // P-038 V11/V16: «Cuentas y consumo» se abre al pulsar el resumen de uso; gráfico con una barra por día (30 y 7),
-    // una tarjeta por cuenta, renombrar cambia el alias y ocultar la saca de la barra de cuentas. Deja todo como estaba.
-    name: 'P-038 V11: «Cuentas y consumo» con gráfico por días, tarjetas, renombrar y ocultar',
-    async run(page) {
+    // P-038 V11/V16, rediseño P-039 F6: lista + detalle. Gráfico por días (30 y 7), una fila por cuenta más «Todas», cifras clave, renombrar y
+    // color en POPOVER (la cabecera no cambia de alto), precio del plan, ocultar, y las secciones admin solo con
+    // Ctrl+Shift+F12 (la versión lo dice). No se pulsa «Añadir cuenta»: solo se mide que está.
+    name: 'P-039 F6: «Cuentas y consumo» lista + detalle, popovers sin agrandar, precio del plan y modo admin',
+    async run(page, { runDir }) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
-        return { aliasByAccount: s.settings.aliasByAccount, hiddenAccounts: s.settings.hiddenAccounts, cuentas: s.accounts.map((a) => a.id), activa: s.activeAccountId };
+        return { aliasByAccount: s.settings.aliasByAccount, hiddenAccounts: s.settings.hiddenAccounts, plan: s.settings.planPriceMicroUsdByAccount, admin: s.settings.adminMode, cuentas: s.accounts.map((a) => a.id), activa: s.activeAccountId };
       });
+      const medido = {};
       try {
+        await page.evaluate(() => window.__mageDev.store.getState().setAdminMode(false));
         await page.locator('[data-usage-summary]').first().click();
         const dialogo = page.locator('[data-accounts-usage]');
         await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         await dialogo.locator('[data-accounts-usage-chart]').waitFor({ state: 'visible', timeout: 60_000 });
-        const barras30 = await dialogo.locator('[data-accounts-usage-chart] [data-day]').count();
+        medido.barras30 = await dialogo.locator('[data-accounts-usage-chart] [data-day]').count();
         await dialogo.getByRole('radio', { name: ui('accountsUsage.period', { days: 7 }) }).click();
-        const barras7 = await dialogo.locator('[data-accounts-usage-chart] [data-day]').count();
-        const tarjetas = await dialogo.locator('[data-account-card]').count();
+        medido.barras7 = await dialogo.locator('[data-accounts-usage-chart] [data-day]').count();
+        medido.filas = await dialogo.locator('[data-account-row]').count();
+        medido.anadir = await dialogo.locator('[data-accounts-usage-add]').count();
+        medido.adminAntes = await dialogo.locator('[data-accounts-usage-admin]').count();
+        await page.keyboard.press('Control+Shift+F12');
+        await dialogo.locator('[data-accounts-usage-admin]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.version = await page.locator('[data-app-version]').getAttribute('data-app-version');
+        // Captura con las secciones admin a la vista: la del final se toma con el diálogo ya cerrado.
+        await page.screenshot({ path: path.join(runDir, 'cuentas-y-consumo-admin.png') });
+        await page.keyboard.press('Control+Shift+F12');
+        await dialogo.locator('[data-accounts-usage-admin]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         const otra = previo.cuentas.find((id) => id !== previo.activa) ?? null;
-        let renombrada = null;
-        let ocultaFuera = null;
         if (otra !== null) {
-          const tarjeta = dialogo.locator(`[data-account-card="${cssAttr(otra)}"]`);
-          await tarjeta.getByRole('button', { name: ui('accountsUsage.rename'), exact: true }).click();
-          const campo = tarjeta.locator('input[maxlength]');
+          await dialogo.locator(`[data-account-row="${cssAttr(otra)}"]`).click();
+          const cabecera = dialogo.locator(`[data-account-card="${cssAttr(otra)}"]`);
+          await cabecera.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          medido.kpis = await dialogo.locator('[data-kpi]').evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-kpi')));
+          const alto0 = (await cabecera.boundingBox()).height;
+          const menu = dialogo.locator(`[data-account-menu="${cssAttr(otra)}"]`);
+          await menu.click();
+          await page.getByRole('menuitem', { name: ui('accountsUsage.rename') }).click();
+          const campo = dialogo.locator(`[data-account-rename="${cssAttr(otra)}"] input`);
+          await campo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          medido.altoConRenombrar = Math.round((await cabecera.boundingBox()).height - alto0);
           await campo.fill('VG renombrada');
           await campo.press('Enter');
-          renombrada = await page.evaluate((id) => window.__mageDev.store.getState().accounts.find((a) => a.id === id)?.alias ?? null, otra);
-          await tarjeta.getByRole('button', { name: ui('accountsUsage.hide'), exact: true }).click();
-          await page.keyboard.press('Escape');
-          await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-          ocultaFuera = await page.evaluate((id) => !document.querySelector('[data-account-switcher]')?.innerHTML.includes(id) && window.__mageDev.store.getState().settings.hiddenAccounts.includes(id), otra);
+          medido.renombrada = await page.evaluate((id) => window.__mageDev.store.getState().accounts.find((a) => a.id === id)?.alias ?? null, otra);
+          await menu.click();
+          await page.getByRole('menuitem', { name: ui('accountsUsage.color') }).click();
+          await dialogo.locator(`[data-account-color="${cssAttr(otra)}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          medido.altoConColor = Math.round((await cabecera.boundingBox()).height - alto0);
+          await menu.click({ force: true });
+          const precio = dialogo.locator(`[data-plan-price="${cssAttr(otra)}"]`);
+          if ((await precio.count()) > 0) {
+            await precio.fill('19,99');
+            await precio.press('Enter');
+            medido.precio = await page.evaluate((id) => window.__mageDev.store.getState().settings.planPriceMicroUsdByAccount[id] ?? null, otra);
+          }
+          await menu.click();
+          await page.getByRole('menuitem', { name: ui('accountsUsage.hide') }).click();
+          medido.oculta = await page.evaluate((id) => window.__mageDev.store.getState().settings.hiddenAccounts.includes(id), otra);
         }
-        const ok = barras30 === 30 && barras7 === 7 && tarjetas === previo.cuentas.length && (otra === null || (renombrada === 'VG renombrada' && ocultaFuera === true));
-        return { ok, detail: JSON.stringify({ barras30, barras7, tarjetas, cuentas: previo.cuentas.length, renombrada, ocultaFuera }) };
+        const kpisBase = ['cost', 'tokens', 'turns', 'limits'];
+        const ok = medido.barras30 === 30 && medido.barras7 === 7 && medido.filas === previo.cuentas.length + 1 && medido.anadir === 1
+          && medido.adminAntes === 0 && medido.version === 'admin'
+          && (otra === null || (kpisBase.every((k) => medido.kpis.includes(k)) && medido.altoConRenombrar === 0 && medido.altoConColor === 0
+            && medido.renombrada === 'VG renombrada' && (medido.precio === undefined || medido.precio === 19_990_000) && medido.oculta === true));
+        return { ok, detail: JSON.stringify(medido) };
       } finally {
         await page.evaluate((estado) => {
           const store = window.__mageDev.store;
           for (const id of store.getState().settings.hiddenAccounts) if (!estado.hiddenAccounts.includes(id)) store.getState().setAccountHidden(id, false);
-          for (const id of estado.cuentas) store.getState().renameAccount(id, estado.aliasByAccount[id] ?? null);
+          for (const id of estado.cuentas) {
+            store.getState().renameAccount(id, estado.aliasByAccount[id] ?? null);
+            store.getState().setPlanPrice(id, estado.plan[id] ?? null);
+          }
+          store.getState().setAdminMode(estado.admin);
           store.getState().closeAccountsUsage();
         }, previo);
       }
