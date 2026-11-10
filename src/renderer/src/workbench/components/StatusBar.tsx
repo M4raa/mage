@@ -127,8 +127,6 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
   const apiUsage = useWorkbenchStore((s) => s.usageByAccount[account.id]?.apiUsage);
   // Ocupación de la ventana de contexto de la pestaña activa que reporta el CLI; sin dato todavía, no se pinta.
   const contextPct = useWorkbenchStore((s) => contextPctOf(s.contextUsageByChat[s.activeTabId]));
-  // Severidad global de la cuenta: la peor de sus ventanas (para el aviso ⚠/⛔ en la barra).
-  const severity = worst(severityForPct(fiveHour.pct), severityForPct(weekly.pct));
   const refreshUsage = useWorkbenchStore((s) => s.refreshUsage);
   const accounts = useWorkbenchStore((s) => s.accounts);
   const refreshAll = (): void => {
@@ -151,7 +149,7 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
       {/* Al abrir el popover se consulta el uso de TODAS las cuentas con login (P-028, 22): solo se
           consultaba la activa y las demas enseñaban un 0 % que no era verdad. main cachea 180 s y
           tiene lockout, asi que pasar el raton varias veces no dispara peticiones de mas. */}
-      <div className="group relative" onMouseEnter={refreshAll} onFocus={refreshAll}>
+      <div className="group relative flex items-center" onMouseEnter={refreshAll} onFocus={refreshAll}>
         {/* data-volatile-text: uso y estado del servicio REALES de la cuenta; verify:gui --dump-dom-text no los vuelca */}
         {/* P-038 V11: pulsarlo abre «Cuentas y consumo» (el hover sigue con el popover rápido). */}
         <span
@@ -164,9 +162,7 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAccountsUsage(); } }}
           aria-label={account.apiBilled ? undefined : t('app.statusBar.windows', { fiveHour: fiveHour.pct, weekly: weekly.pct, reset: fiveHour.label })}
           className="inline-flex cursor-pointer items-center gap-[10px] hover:text-mg-body"
-          style={severity !== 'ok' ? { color: SEVERITY_COLOR[severity] } : undefined}
         >
-          {severity !== 'ok' && <Icon name={severity === 'critical' ? 'error' : 'warning'} size={12} className="mr-[4px]" />}
           {account.apiBilled ? (apiUsage === undefined ? t('app.statusBar.apiNoTurns')
             : t('app.statusBar.apiUsage', { tokens: formatInteger(apiUsage.totals.totalTokens), cost: formatMicroUsd(apiUsage.totals.costMicroUsd, activeFormatLocale()) }))
             : (
@@ -200,11 +196,13 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
 // severidad; el texto completo va en el nombre accesible del resumen.
 function UsageMeter({ name, window }: { readonly name: string; readonly window: { readonly pct: number; readonly label: string } }): React.JSX.Element {
   const severity = severityForPct(window.pct);
+  const color = severity === 'ok' ? undefined : SEVERITY_COLOR[severity];
   return (
-    <span data-usage-meter={name} aria-hidden="true" className="inline-flex items-center gap-[5px] tabular-nums">
-      <span className="text-mg-muted">{name}</span>
+    <span data-usage-meter={name} data-usage-severity={severity} aria-hidden="true" className="inline-flex items-center gap-[5px] tabular-nums" style={color === undefined ? undefined : { color }}>
+      {severity !== 'ok' && <Icon name={severity === 'critical' ? 'error' : 'warning'} size={12} />}
+      <span className={color === undefined ? 'text-mg-muted' : ''}>{name}</span>
       <span className="relative h-[4px] w-[36px] overflow-hidden rounded-full bg-mg-track">
-        <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${window.pct}%`, background: severity === 'ok' ? 'var(--color-mg-sec)' : SEVERITY_COLOR[severity] }} />
+        <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${window.pct}%`, background: color ?? 'var(--color-mg-sec)' }} />
       </span>
       <span>{window.pct}%</span>
       <span className="text-mg-muted">{shortCountdown(window.label)}</span>
@@ -272,8 +270,3 @@ function StatusPopover({ status }: { readonly status: StatusInfo | null }): Reac
   );
 }
 
-// Devuelve la severidad mas grave de dos (critical > warn > ok).
-function worst(a: UsageSeverity, b: UsageSeverity): UsageSeverity {
-  const rank: Record<UsageSeverity, number> = { ok: 0, warn: 1, critical: 2 };
-  return rank[a] >= rank[b] ? a : b;
-}
