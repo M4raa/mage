@@ -2051,6 +2051,7 @@
   "settings.providers.permission.label": "Modo de permiso",
   "settings.providers.permission.moreAutonomy": "Más autonomía",
   "settings.providers.permission.moreControl": "Más control",
+  "settings.providers.permission.providerAria": "Modo de permiso por defecto de {provider}",
   "settings.providers.permission.tip": "Modo con el que arrancan las conversaciones nuevas. «De la cuenta» adopta el del CLI.",
   "settings.providers.recheck": "Volver a comprobar",
   "settings.providers.recheckAria": "Volver a comprobar {provider}",

@@ -2053,6 +2053,7 @@ export interface MessageValues {
   readonly "settings.providers.permission.label": never;
   readonly "settings.providers.permission.moreAutonomy": never;
   readonly "settings.providers.permission.moreControl": never;
+  readonly "settings.providers.permission.providerAria": { readonly "provider": string | number };
   readonly "settings.providers.permission.tip": never;
   readonly "settings.providers.recheck": never;
   readonly "settings.providers.recheckAria": { readonly "provider": string | number };

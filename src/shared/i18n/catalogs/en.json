@@ -2051,6 +2051,7 @@
   "settings.providers.permission.label": "Permission mode",
   "settings.providers.permission.moreAutonomy": "More autonomy",
   "settings.providers.permission.moreControl": "More control",
+  "settings.providers.permission.providerAria": "Default permission mode for {provider}",
   "settings.providers.permission.tip": "Mode that new conversations start with. “From account” adopts the CLI's.",
   "settings.providers.recheck": "Check again",
   "settings.providers.recheckAria": "Check {provider} again",

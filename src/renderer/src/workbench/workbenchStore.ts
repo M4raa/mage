@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { defaultEffortForProvider, defaultModelForProvider, providerFallbackModel, providerModels, type ApiKeyUpdate } from './models';
+import { defaultEffortForProvider, defaultModelForProvider, defaultPermissionForProvider, providerFallbackModel, providerModels, type ApiKeyUpdate } from './models';
 import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo, TurnUsage } from '@shared/events';
@@ -2144,8 +2144,9 @@ export function createWorkbenchStore(mage: MageClient) {
       }
       const alias = get().accounts.find((a) => a.id === accountId)?.alias ?? (accountId || providerLabel(provider, get().settings.customProviders));
       // TODAS las rutas que crean pestañas pasan por aqui (nueva conversacion, dialogo, clon): el modo por
-      // defecto de Ajustes (P-028 6) se aplica en un solo sitio. Solo Claude tiene modos de permiso.
-      const initialMode = permissionMode ?? (provider === 'claude' ? get().settings.defaultPermissionMode : '');
+      // defecto de Ajustes (P-028 6) se aplica en un solo sitio. Claude tiene el suyo; Codex y agy, el de su ficha (P-038).
+      const settings = get().settings;
+      const initialMode = permissionMode ?? (provider === 'claude' ? settings.defaultPermissionMode : defaultPermissionForProvider(settings.defaultModelByProvider, provider));
       const tab: Tab = {
         id: nextTabId(),
         accountId,

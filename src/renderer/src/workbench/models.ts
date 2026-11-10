@@ -318,6 +318,15 @@ export function effortLevelsForProvider(providerId: string): readonly string[] {
 }
 
 
+// Niveles de esfuerzo que ofrece la ficha de Ajustes (P-038). Claude y agy, los fijos de su CLI. Codex los mide POR
+// MODELO (`supportedEfforts`): los del modelo por defecto y, en «Automático», los de todos sus modelos, en su orden.
+export function settingsEffortLevels(fixed: readonly string[], models: readonly ModelOption[], defaultModel: string): readonly string[] {
+  if (fixed.length > 0) return fixed;
+  const chosen = models.find((model) => model.id === defaultModel)?.supportedEfforts;
+  if (chosen !== undefined) return chosen;
+  return [...new Set(models.flatMap((model) => model.supportedEfforts ?? []))];
+}
+
 // Todos los proveedores configurables, de serie primero. A diferencia de `providerOptions` (que alimenta
 // los selectores de conversacion) aqui NO se descarta ninguno: un proveedor del usuario sin modelos es
 // precisamente el que hay que poder arreglar.
@@ -355,6 +364,19 @@ export function effortSettingKey(providerId: string): string {
   return `${providerId}${EFFORT_KEY_SUFFIX}`;
 }
 
+// Modo de permiso por defecto de Codex y agy (P-038), con el mismo truco que el esfuerzo. Claude tiene el suyo
+// (`defaultPermissionMode`, con «De la cuenta»), que no se mueve.
+const PERMISSION_KEY_SUFFIX = '#permission';
+
+export function permissionSettingKey(providerId: string): string {
+  return `${providerId}${PERMISSION_KEY_SUFFIX}`;
+}
+
+// Modo guardado, o '' (= el de siempre de ese CLI: Codex en solo lectura, agy en «Aceptar ediciones»).
+export function defaultPermissionForProvider(defaults: Readonly<Record<string, string>>, providerId: string): string {
+  return defaults[permissionSettingKey(providerId)] ?? '';
+}
+
 // Esfuerzo por defecto guardado, o '' (= "Automático": se hereda el ultimo usado en la conversacion).
 export function defaultEffortForProvider(
   defaults: Readonly<Record<string, string>>,
@@ -363,12 +385,12 @@ export function defaultEffortForProvider(
   return defaults[effortSettingKey(providerId)] ?? '';
 }
 
-// Modelo por defecto guardado, o '' (= "Automático"). Filtra la clave de esfuerzo: un proveedor que se
+// Modelo por defecto guardado, o '' (= "Automático"). Filtra las claves de esfuerzo y de modo: un proveedor que se
 // llamara igual que la clave compuesta devolveria el nivel de esfuerzo como si fuera un modelo.
 export function defaultModelForProvider(
   defaults: Readonly<Record<string, string>>,
   providerId: string,
 ): string {
-  if (providerId.endsWith(EFFORT_KEY_SUFFIX)) return '';
+  if (providerId.endsWith(EFFORT_KEY_SUFFIX) || providerId.endsWith(PERMISSION_KEY_SUFFIX)) return '';
   return defaults[providerId] ?? '';
 }

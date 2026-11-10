@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import type { ProviderProbeResult } from '@shared/ipc';
 import type { CustomProvider } from '@shared/providers';
 import { formatToolAccessRules, parseToolAccessText } from '@shared/toolAccess';
-import { AGY_PROVIDER_ID, PROVIDER_TEMPLATES, isAutoApprovedProvider } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, PROVIDER_TEMPLATES, isAutoApprovedProvider } from '@shared/providers';
+import { ProviderLogo } from '../ProviderLogo';
 import { AgyProfileLinks } from './AgyProfileLinks';
 import { useWorkbenchStore } from '../../workbenchStore';
 import {
@@ -12,7 +13,10 @@ import {
   draftFromProvider,
   runtimeProbeSummary,
   defaultModelForProvider,
+  defaultPermissionForProvider,
   effortSettingKey,
+  permissionSettingKey,
+  settingsEffortLevels,
   modelsToDraftText,
   probeErrorText,
   providerEntries,
@@ -25,6 +29,9 @@ import {
 } from '../../models';
 import type { DefaultPermissionMode, RuntimeShell } from '@shared/settings';
 import {
+  CODEX_BUILTIN_PROFILES,
+  agyPermissionSteps,
+  codexPermissionSteps,
   defaultPermissionModeAccountLabel,
   defaultPermissionSteps,
   effortStepLabel,
@@ -77,6 +84,7 @@ export function ProvidersSection(): React.JSX.Element {
         {t('settings.providers.intro.end')}
       </p>
 
+      <div data-provider-cards="true" className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] items-start gap-[10px]">
       {providerEntries(customProviders).map((entry) => (
         <ProviderCard
           key={entry.id}
@@ -90,6 +98,7 @@ export function ProvidersSection(): React.JSX.Element {
           customProviders={customProviders}
         />
       ))}
+      </div>
 
       {newDraft !== null && (
         <ProviderForm
@@ -210,6 +219,8 @@ function ProviderCard({
   useEffect(runProbe, [entry.id, entry.baseUrl]);
 
   const models = offeredModels(entry, probe.result);
+  // Codex mide el esfuerzo por modelo: sin esto su ficha no lo ofrecía (P-038).
+  const effortLevels = settingsEffortLevels(entry.effortLevels, models, defaultModel);
 
   // SOLO SE LISTA LO QUE SE PUEDE USAR (peticion del usuario, 2026-09-18): un proveedor de serie que no
   // esta ni instalado ni configurado no aparece. La regla es UNA y sirve para los dos tipos, sin casos
@@ -239,6 +250,7 @@ function ProviderCard({
 
   if (draft !== null) {
     return (
+      <div className="col-span-full">
       <ProviderForm
         idSuffix={entry.id}
         providerId={entry.id}
@@ -256,12 +268,14 @@ function ProviderCard({
           setEditError(null);
         }}
       />
+      </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-[8px] rounded-[9px] border border-mg-border-ctrl bg-mg-code p-[10px]">
-      <div className="flex items-start gap-[8px]">
+    <div data-provider-card={entry.id} className="flex h-full flex-col gap-[10px] rounded-[10px] border border-mg-border-ctrl bg-mg-code p-[12px]">
+      <div className="flex items-start gap-[10px]">
+        <ProviderLogo providerId={entry.id} label={entry.label} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-[6px] text-[11.5px] text-mg-body">
             <span className="truncate font-semibold">{entry.label}</span>
@@ -309,7 +323,7 @@ function ProviderCard({
 
       <ModelsLine count={models.length} probe={probe} />
 
-      <div className="flex flex-wrap items-center gap-[10px]">
+      <div className="flex flex-col gap-[6px] border-t border-mg-border-subtle pt-[10px]">
         <DefaultPicker
           label={t('settings.providers.defaultModel')}
           value={defaultModel}
@@ -317,16 +331,16 @@ function ProviderCard({
           ariaLabel={t('settings.providers.defaultModelAria', { provider: entry.label })}
           onChange={onChangeModel}
         />
-        {entry.effortLevels.length > 0 && (
-          <div className="flex items-center gap-[6px] text-[11px] text-mg-sec">
+        {effortLevels.length > 0 && (
+          <div className="flex items-center justify-between gap-[8px] text-[11px] text-mg-sec">
             <span>{t('settings.providers.effort.label')}</span>
             <StepSlider
-              steps={effortSteps(entry.effortLevels)}
+              steps={effortSteps(effortLevels)}
               value={defaultEffort}
               onChange={onChangeEffort}
               ariaLabel={t('settings.providers.effort.aria', { provider: entry.label })}
               chipLabel={effortStepLabel(defaultEffort)}
-              chipSizers={effortSteps(entry.effortLevels).map((step) => step.label)}
+              chipSizers={effortSteps(effortLevels).map((step) => step.label)}
               heading={t('settings.providers.effort.heading', { level: effortStepLabel(defaultEffort) })}
               endLabels={[t('settings.providers.effort.faster'), t('settings.providers.effort.smarter')]}
               tip={t('settings.providers.effort.tip')}
@@ -334,6 +348,7 @@ function ProviderCard({
           </div>
         )}
         {entry.id === 'claude' && <DefaultPermissionModePicker />}
+        {(entry.id === CODEX_PROVIDER_ID || entry.id === AGY_PROVIDER_ID) && <ProviderPermissionPicker providerId={entry.id} label={entry.label} />}
       </div>
       {entry.custom && <ToolAccessEditor providerId={entry.id} label={entry.label} />}
     </div>
@@ -421,6 +436,26 @@ function DefaultPermissionModePicker(): React.JSX.Element {
   );
 }
 
+// Modo de permiso con el que arrancan las conversaciones nuevas de Codex y agy (P-038). Los modos son los del CLI:
+// los perfiles que Codex expuso al sondearse (sin sondeo todavía, sus tres de serie) y los de agy. «Automático» = el
+// de siempre de ese CLI (Codex en solo lectura, agy en «Aceptar ediciones»).
+function ProviderPermissionPicker({ providerId, label }: { readonly providerId: string; readonly label: string }): React.JSX.Element {
+  const defaults = useWorkbenchStore((s) => s.settings.defaultModelByProvider);
+  const setDefault = useWorkbenchStore((s) => s.setDefaultModelForProvider);
+  const codexProfiles = useWorkbenchStore((s) => s.permissionModes?.codex ?? null);
+  const t = useT();
+  const steps = providerId === CODEX_PROVIDER_ID ? codexPermissionSteps(codexProfiles ?? CODEX_BUILTIN_PROFILES) : agyPermissionSteps;
+  return (
+    <DefaultPicker
+      label={t('settings.providers.permission.label')}
+      value={defaultPermissionForProvider(defaults, providerId)}
+      options={steps.map((step) => ({ value: step.value, label: step.label }))}
+      ariaLabel={t('settings.providers.permission.providerAria', { provider: label })}
+      onChange={(mode) => setDefault(permissionSettingKey(providerId), mode)}
+    />
+  );
+}
+
 function DefaultPermissionModeSlider({
   mode,
   label,
@@ -432,7 +467,7 @@ function DefaultPermissionModeSlider({
 }): React.JSX.Element {
   const t = useT();
   return (
-    <div className="flex items-center gap-[6px] text-[11px] text-mg-sec">
+    <div className="flex items-center justify-between gap-[8px] text-[11px] text-mg-sec">
       <span>{t('settings.providers.permission.label')}</span>
       <StepSlider
         steps={defaultPermissionSteps}
@@ -466,14 +501,14 @@ function DefaultPicker({
 }): React.JSX.Element {
   const t = useT();
   return (
-    <div className="flex items-center gap-[6px] text-[11px] text-mg-sec">
+    <div className="flex items-center justify-between gap-[8px] text-[11px] text-mg-sec">
       <span>{label}</span>
       <Dropdown
         value={value}
         options={[{ value: '', label: t('settings.providers.automatic') }, ...options]}
         onChange={onChange}
         ariaLabel={ariaLabel}
-        triggerClassName="w-[210px]"
+        triggerClassName="w-[180px] text-left"
       />
     </div>
   );

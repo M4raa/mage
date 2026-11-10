@@ -2043,6 +2043,18 @@ describe('createConversation y el modo de permiso por defecto', () => {
     expect(store.getState().tabs[0]?.permissionMode).toBeUndefined();
   });
 
+  it('newTab_codexConModoEnSuFicha_arrancaConEseModo', async () => {
+    const store = fresh('plan');
+    store.setState((state) => ({
+      accounts: state.accounts.map((item) => item.id === account.id ? { ...item, providerId: 'codex' } : item),
+      settings: { ...state.settings, defaultModelByProvider: { 'codex#permission': ':workspace' } },
+    }));
+
+    await store.getState().newTab({ accountId: account.id, cwd: 'C:/p', model: 'gpt-6.1-sol', provider: 'codex' });
+
+    expect(store.getState().tabs[0]?.permissionMode).toBe(':workspace');
+  });
+
   it('newTab_cuentaDeOtroProveedor_rechazaAntesDeCrearPestana', async () => {
     const store = fresh('');
 
