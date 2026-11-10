@@ -8812,6 +8812,49 @@ const CHECKS = [
     },
   },
   {
+    // Informe del usuario (10-11): en el lateral todas las conversaciones salían con la cuenta ACTIVA (al cambiar de
+    // cuenta, cambiaban todas). Una compartida que nadie apuntó no es de ninguna: no se nombra. La que sí, con la suya.
+    name: 'P-038: el lateral no atribuye a la cuenta activa una conversación cuya cuenta no se sabe',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { conversationHistory: s.conversationHistory, allConversationHistory: s.allConversationHistory, loadConversationHistory: s.loadConversationHistory, tabs: s.tabs, activeTabId: s.activeTabId };
+      });
+      try {
+        await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          const base = { configDir: '', privacy: 'shared', sizeBytes: 1, isScheduled: false, cwd: 'C:/vg-cuenta' };
+          const conocida = { ...base, sessionId: 'vg-cuenta-conocida', title: 'VG conocida', updatedAtMs: Date.now() - 1000 };
+          const desconocida = { ...base, sessionId: 'vg-cuenta-desconocida', title: 'VG desconocida', updatedAtMs: Date.now() - 2000 };
+          window.__mageDev.store.setState({
+            loadConversationHistory: async () => undefined,
+            tabs: [],
+            activeTabId: '',
+            conversationHistory: [conocida, desconocida],
+            allConversationHistory: [
+              { item: conocida, accountId: s.activeAccountId, accountKnown: true },
+              { item: desconocida, accountId: s.activeAccountId, accountKnown: false },
+            ],
+          });
+        });
+        // Los grupos del lateral nacen plegados: se despliega el de la carpeta de las filas.
+        await page.locator('[data-project-key$="/vg-cuenta"]').click();
+        await page.locator('[data-history-session="vg-cuenta-desconocida"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          const alias = s.accounts.find((a) => a.id === s.activeAccountId)?.alias ?? '';
+          const meta = (id) => document.querySelector(`[data-history-session="${id}"]`)?.textContent ?? null;
+          return { alias, conocida: meta('vg-cuenta-conocida'), desconocida: meta('vg-cuenta-desconocida') };
+        });
+        const ok = medido.alias.length > 0 && (medido.conocida ?? '').includes(medido.alias) && medido.desconocida !== null && !medido.desconocida.includes(medido.alias);
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
     name: 'P-038: el popover de uso con muchas cuentas cabe, tiene scroll y se puede entrar en él',
     async run(page) {
       const previo = await page.evaluate(() => ({ accounts: window.__mageDev.store.getState().accounts }));
