@@ -122,6 +122,7 @@ import type { AppSettings } from '@shared/settings';
 import { IMPORTED_CONTEXT_LIMITS } from '@shared/settings';
 import type { PanelLayoutState } from '@shared/panelLayout';
 import type { MenuItemConstructorOptions } from 'electron';
+import { BACKGROUND_TEST_SWITCHES, isBackgroundTestRun, offScreenPosition } from './windows/backgroundTestWindow';
 import { DebugChannel } from '@shared/debug';
 import type { RendererLogInput } from '@shared/debug';
 import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
@@ -2494,6 +2495,13 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
     });
   }
   window.on('ready-to-show', () => {
+    if (backgroundTestRun) {
+      // Las pruebas no saltan delante de la app del usuario: fuera de la pantalla y sin activarla.
+      const { x, y } = offScreenPosition(screen.getAllDisplays().map((display) => display.bounds), window.getBounds().width);
+      window.setPosition(x, y);
+      window.showInactive();
+      return;
+    }
     if (saved?.maximized === true) window.maximize();
     window.show();
   });
@@ -4459,6 +4467,12 @@ const runsHeadless = isHeadlessHost({ platform: process.platform, argv: process.
 // pantalla, Chromium elige como siempre (kwallet en KDE): forzarlo dejaría ilegibles las bóvedas que ya existen.
 if (runsHeadless && process.platform === 'linux' && !app.commandLine.hasSwitch('password-store')) {
   app.commandLine.appendSwitch('password-store', 'gnome-libsecret');
+}
+// `pnpm verify:gui` en segundo plano (solo sin empaquetar): la ventana vive fuera de la pantalla y sin foco, y Chromium
+// no la trata como tapada. Antes de `ready`, que es cuando lee los switches.
+const backgroundTestRun = isBackgroundTestRun(app.isPackaged, process.env);
+if (backgroundTestRun) {
+  for (const [name, value] of BACKGROUND_TEST_SWITCHES) app.commandLine.appendSwitch(name, value);
 }
 
 // El host local (F2.6): terminal, widget y MCP hablan con el por un socket privado. Vive en los dos modos.

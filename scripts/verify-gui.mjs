@@ -20,6 +20,7 @@
 //   pnpm verify:gui             # arranca, comprueba y limpia
 //   pnpm verify:gui --lang=en       # la tanda con la interfaz en inglés (siembra uiLanguage en el perfil)
 //   pnpm verify:gui --keep      # deja la app abierta al terminar (para mirar a ojo)
+//   pnpm verify:gui --foreground # la ventana a la vista y con foco (por defecto va fuera de pantalla y sin foco)
 //   pnpm verify:gui --only=texto # solo las comprobaciones cuyo nombre contenga `texto`
 //   pnpm verify:gui --turn=local # el turno minimo contra el servidor falso, sin gastar cuota
 //   pnpm verify:gui --turn=real  # el turno minimo contra Claude aunque la guarda de uso avise
@@ -101,6 +102,10 @@ const requireFromHere = createRequire(import.meta.url);
 // `--prod`: arranca el build de produccion (`electron-vite preview`). Sin puente de desarrollo, asi que
 // solo vale para medir (--perf-baseline), nunca para las comprobaciones.
 const PROD_BUILD = process.argv.includes('--prod');
+// Por defecto la app de prueba corre en SEGUNDO PLANO: fuera de la pantalla, sin robar el foco y con el foco simulado
+// por CDP (MAGE_TEST_BACKGROUND, ver src/main/windows/backgroundTestWindow.ts). `--foreground` la deja a la vista,
+// como antes; la línea base de rendimiento también, porque mide la cadencia real de frames.
+const FOREGROUND = process.argv.includes('--foreground') || process.argv.includes('--perf-baseline') || process.argv.includes('--keep');
 if (PROD_BUILD && !process.argv.includes('--perf-baseline')) throw new Error('--prod solo se admite con --perf-baseline');
 
 // H3 de la devolución 17: la carpeta de locks de conversación (#55) de las instancias que lanza esta tanda. La real del
@@ -271,6 +276,25 @@ async function openLibraryPreview(page) {
 }
 
 const CHECKS = [
+  {
+    // La tanda no salta delante de la app del usuario: la ventana va fuera de todas las pantallas, la página cree tener
+    // el foco (CDP) y sigue pintando frames. Con --foreground no aplica.
+    name: 'verify:gui en segundo plano: ventana fuera de pantalla, con foco simulado y frames',
+    async run(page) {
+      if (FOREGROUND) return { ok: true, detail: 'con --foreground: no aplica' };
+      const medido = await page.evaluate(async () => {
+        const inicio = performance.now();
+        let frames = 0;
+        await new Promise((resolve) => {
+          const paso = () => (++frames >= 20 ? resolve() : requestAnimationFrame(paso));
+          requestAnimationFrame(paso);
+        });
+        return { x: window.screenX, ancho: window.outerWidth, foco: document.hasFocus(), msPor20Frames: Math.round(performance.now() - inicio) };
+      });
+      const ok = medido.x + medido.ancho <= 0 && medido.foco && medido.msPor20Frames < 2000;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
   {
     name: 'La ventana principal arranca',
     async run(page) {
@@ -8207,6 +8231,8 @@ const CHECKS = [
       const measureOne = async (text, edge) => {
         await page.evaluate((where) => {
           const scroller = document.querySelector('[data-pane-tab-id] .overflow-y-auto');
+          // Subir como un usuario (rueda): un scroll por programa ya no suelta el final y el hilo volvería abajo al cambiar el tamaño.
+          if (where === 'top') scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
           scroller.scrollTop = where === 'top' ? 0 : scroller.scrollHeight;
         }, edge);
         await page.waitForTimeout(CONFIG.settleMs);
@@ -9250,7 +9276,8 @@ const CHECKS = [
       // la misma condicion de entorno que hacia parpadear a la 2.8. Y se SONDEA el resultado en vez de
       // esperar un tiempo fijo: el desplegable entra con una animacion, y una espera ciega lo pillaba
       // a medias segun lo cargada que estuviera la maquina.
-      await page.bringToFront().catch(() => undefined);
+      // En segundo plano el foco lo simula CDP: traer la ventana al frente es justo lo que no se quiere.
+      if (FOREGROUND) await page.bringToFront().catch(() => undefined);
       await page.evaluate(async () => {
         for (let i = 0; i < 40 && !document.hasFocus(); i += 1) {
           window.focus();
@@ -14941,6 +14968,7 @@ function launchApp(userDataDir, extraEnv = {}) {
       VITE_MAGE_RELEASE_NOTES_IN_DEV: '1',
       // Los locks de conversación (#55) van a la carpeta de la tanda, nunca a la real del usuario (H3 de la devolución 17).
       [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR,
+      ...(FOREGROUND ? {} : { MAGE_TEST_BACKGROUND: '1' }),
       // --bench: la casa temporal, sin credenciales del usuario.
       ...extraEnv,
     },
@@ -14974,6 +15002,12 @@ async function waitForCdp() {
 }
 
 // La ventana principal es la de index.html: debug.html y widget.html son otras entradas del build.
+// Con la ventana en segundo plano, la página cree tener el foco del SO (Emulation.setFocusEmulationEnabled).
+async function emulateFocus(page) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+}
+
 async function findMainPage(browser) {
   const deadline = Date.now() + CONFIG.bootTimeoutMs;
   while (Date.now() < deadline) {
@@ -14982,7 +15016,9 @@ async function findMainPage(browser) {
         const url = page.url();
         if (url.includes('debug.html') || url.includes('widget.html')) continue;
         if (url.startsWith('devtools://')) continue;
-        if (url.includes('index.html') || url.endsWith('/')) return page;
+        if (!url.includes('index.html') && !url.endsWith('/')) continue;
+        if (!FOREGROUND) await emulateFocus(page);
+        return page;
       }
     }
     await new Promise((resolve) => setTimeout(resolve, CONFIG.pollIntervalMs));
