@@ -4,6 +4,37 @@ Lo que cambia de una versión a otra, contado para quien usa la app. La más rec
 enseña estas mismas notas en su pestaña de novedades al actualizarse, y en Configuración › Notas de
 versión.
 
+## 0.1.5 — 2026-11-10
+
+### Añadido
+- **Cuentas y consumo.** Al pulsar el resumen de uso de la barra de estado se abre una pantalla con todas tus cuentas de Claude, Codex y Gemini (agy): a la izquierda, cada cuenta con sus ventanas de uso y su coste; a la derecha, el detalle de la elegida con el coste equivalente a precios de lista, tokens, respuestas, conversaciones, los topes alcanzados, un gráfico por día y el desglose por modelo. Si apuntas lo que pagas por el plan, Mage calcula cuánto lo aprovechas y cuánto te rinde. Desde ahí también inicias o refrescas sesión, renombras, cambias el color, ocultas o eliminas una cuenta.
+- **Tareas en segundo plano.** Lo que el agente deja corriendo (un comando en segundo plano, un monitor) sale en un dock propio encima del input, con su tiempo y un botón para pararlo, así el chat no parece colgado.
+- **«Refrescar sesión»** en una cuenta expirada, y al arrancar Mage renueva solas las que han caducado.
+- En Ajustes › Proveedores y modelos, cada proveedor es una tarjeta con su logo, y Codex y agy tienen modo de permiso y esfuerzo por defecto.
+
+### Cambiado
+- **El servidor MCP de Mage viene apagado.** Al encenderlo, toda conversación nueva o reabierta de Claude o Codex lo carga, privadas incluidas (las que ya están abiertas no se relanzan). Apagado, el modelo sabe que no tiene sesiones ni navegador de Mage y te lo dice en vez de sustituirlos por otra cosa.
+- **MCP y conectores, rediseñado:** Servidores, Conectores y Extensiones usan la misma fila (estado, nombre, etiquetas y la acción principal), y el MCP de Mage está arriba con su interruptor.
+- **Caja del prompt nueva:** «+» (con las acciones y adjuntar imagen), el texto y enviar; debajo, la cuenta, la carpeta, la rama, «Compartido» y el % de contexto a la izquierda, y el modelo, el esfuerzo y el modo de permiso (ahora un selector) a la derecha.
+- La barra de estado dice «proveedor · cuenta» y enseña el uso en dos barritas con su %.
+- **Preguntas del agente:** puedes saltar a cualquier pregunta con sus pasos, «Otra cosa» es una opción más, se distingue la elección única (círculo) de la múltiple (casilla) y «Responder» está siempre activo: lo que no contestes va como omitido. Las respuestas a medias se conservan al cambiar de chat.
+- Las conversaciones del scratch no pertenecen a ningún proyecto salvo que las muevas tú, y los proyectos se ven de 10 en 10 («Mostrar N más…»), el último tocado primero.
+- Al subir en el chat aparece «Ir al final», centrado encima del input.
+- Las sesiones delegadas avisan a su creadora con la respuesta y la creadora sigue sola. Las herramientas de solo lectura del MCP de Mage no piden permiso.
+
+### Corregido
+- **Lag al escribir, al cambiar de pestaña y durante el streaming:** Mage releía el índice de conversaciones en cada consulta. Ahora lo lee una vez.
+- El chat vuelve a tener aire entre mensajes; la rueda, ↑, RePág o Inicio sueltan el final en el acto, y el chat solo se vuelve a pegar cuando llegas abajo del todo.
+- Al volver a un chat, el mensaje ya no se pierde por «SDK host reconnected».
+- Las herramientas del navegador del agente vuelven a funcionar, y el panel del navegador ocupa su alto (antes salía en blanco).
+- Las sugerencias de `@` y `/` salen encima de su carácter, no al principio del input.
+- El popover de uso de todas las cuentas tiene scroll y se puede entrar en él con el ratón.
+- La etiqueta «Factura API» vuelve a tener color.
+- El alias de una cuenta va sin el prefijo del proveedor.
+- Una conversación compartida sin cuenta apuntada ya no sale con la cuenta activa.
+- En el editor, la viñeta tiene su hueco y las listas llevan sangría francesa.
+- La lista de carpetas recientes del chat nuevo es más baja y tiene scroll.
+
 ## 0.1.4 — 2026-11-08
 
 ### Añadido

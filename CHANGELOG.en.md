@@ -2,6 +2,37 @@
 
 What changes from one version to the next, written for the people who use the app. The most recent version is at the top. Mage shows these same notes in its what's-new tab after an update, and in Settings › Release notes.
 
+## 0.1.5 — 2026-11-10
+
+### Added
+- **Accounts and usage.** Clicking the usage summary in the status bar opens a screen with all your Claude, Codex and Gemini (agy) accounts: on the left, each account with its usage windows and cost; on the right, the selected one in detail with its equivalent cost at list prices, tokens, replies, conversations, the limits hit, a chart by day and a breakdown by model. If you enter what you pay for the plan, Mage works out how much of it you use and how much value you get. From there you can also sign in or refresh the session, rename, change the color, hide or remove an account.
+- **Background tasks.** Whatever the agent leaves running (a background command, a monitor) shows up in its own dock above the input, with its elapsed time and a button to stop it, so the chat no longer looks stuck.
+- **"Refresh session"** on an expired account, and on startup Mage renews the expired ones by itself.
+- In Settings › Providers and models, each provider is a card with its logo, and Codex and agy have a default permission mode and effort.
+
+### Changed
+- **Mage's MCP server is off by default.** Once on, every new or reopened Claude or Codex conversation loads it, private ones included (those already open are not relaunched). When it is off, the model knows it has no Mage sessions or browser and tells you so instead of replacing them with something else.
+- **MCP and connectors, redesigned:** Servers, Connectors and Extensions use the same row (status, name, tags and the main action), and Mage's MCP is at the top with its switch.
+- **New prompt box:** "+" (with the actions and attach image), the text and send; underneath, the account, folder, branch, "Shared" and the context % on the left, and the model, effort and permission mode (now a selector) on the right.
+- The status bar reads "provider · account" and shows usage as two small bars with their %.
+- **Agent questions:** you can jump to any question through its steps, "Something else" is one more option, single choice (circle) and multiple choice (checkbox) look different, and "Submit" is always enabled: whatever you leave unanswered goes as skipped. Half-finished answers are kept when you switch chats.
+- Scratch conversations do not belong to any project unless you move them yourself, and projects are shown 10 at a time ("Show N more…"), the most recently touched first.
+- Scrolling up in the chat shows "Jump to the end", centered above the input.
+- Delegated sessions notify their creator with the reply and the creator carries on by itself. Read-only tools of Mage's MCP do not ask for permission.
+
+### Fixed
+- **Lag while typing, switching tabs and streaming:** Mage was re-reading the conversation index on every query. It now reads it once.
+- The chat has its spacing between messages back; the wheel, ↑, PgUp or Home leave the bottom right away, and the chat only sticks again when you reach the very end.
+- Coming back to a chat no longer loses the message to "SDK host reconnected".
+- The agent's browser tools work again, and the browser panel takes its full height (it used to show blank).
+- `@` and `/` suggestions appear above their character, not at the start of the input.
+- The all-accounts usage popover scrolls and you can move the mouse into it.
+- The "API billed" tag has its color back.
+- An account's alias no longer carries the provider prefix.
+- A shared conversation with no recorded account no longer shows the active account.
+- In the editor, the bullet has its own space and lists use a hanging indent.
+- The new chat's recent folders list is shorter and scrolls.
+
 ## 0.1.4 — 2026-11-08
 
 ### Added
