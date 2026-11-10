@@ -23,6 +23,7 @@ import {
   UI_SCALE_MAX,
   UI_SCALE_MIN,
   ACCOUNT_ALIAS_MAX,
+  PLAN_PRICE_MAX_MICRO_USD,
 } from '@shared/settings';
 import { UI_LANGUAGE_PREFERENCES } from '@shared/i18n/language';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
@@ -186,6 +187,9 @@ const APP_SETTINGS_SCHEMA = z.object({
   // que es lo de antes de existir el campo.
   accentByAccount: z.record(z.string(), z.number().int().min(0).max(ACCOUNT_ACCENT_COUNT - 1)).catch({}),
   aliasByAccount: z.record(z.string(), z.string().trim().min(1).max(ACCOUNT_ALIAS_MAX)).catch({}),
+  // Precio del plan (P-039): micro-USD enteros; ausente o basura -> {} (sin «valor»).
+  planPriceMicroUsdByAccount: z.record(z.string(), z.number().int().min(0).max(PLAN_PRICE_MAX_MICRO_USD)).catch({}),
+  adminMode: z.boolean().catch(false),
   hiddenAccounts: z.array(z.string().min(1)).catch([]),
   // Conectores de claude.ai apagados por cuenta. Ausente o basura -> [] (encendidos, como antes de existir).
   claudeAiConnectorsOff: z.array(z.string().min(1)).catch([]),

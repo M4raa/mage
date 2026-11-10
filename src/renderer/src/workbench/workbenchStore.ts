@@ -502,6 +502,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setClaudeAiConnectorsEnabled: (accountId: string, enabled: boolean) => void;
   // Nombre propio de una cuenta (null = el de su carpeta) y ocultarla o no (P-038 V16).
   renameAccount: (accountId: string, alias: string | null) => void;
+  setPlanPrice: (accountId: string, microUsd: number | null) => void;
+  setAdminMode: (enabled: boolean) => void;
   setAccountHidden: (accountId: string, hidden: boolean) => void;
   // MCP de Mage en todas las conversaciones (P-038 V7): aplica a las que se lancen o reabran después.
   setMageMcpEnabled: (enabled: boolean) => void;

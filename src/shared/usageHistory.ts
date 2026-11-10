@@ -68,7 +68,7 @@ export function maxPeaks(a: DayPeaks | undefined, b: DayPeaks | undefined): DayP
 
 export interface DailyDetail extends DayDetail {
   readonly day: DayKey;
-  readonly conversations: number; // conversaciones con actividad ese día
+  readonly sessions: readonly string[]; // conversaciones con actividad ese día (ids): el periodo cuenta las distintas
   readonly projects: Readonly<Record<string, number>>; // carpeta -> tokens ese día
 }
 

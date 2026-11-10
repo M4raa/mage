@@ -3388,3 +3388,32 @@ describe('openConversation — dueña del host', () => {
     expect(store.getState().tabs[0]).toMatchObject({ id: 't1', accountId: 'acc-owner', accountPinned: true });
   });
 });
+
+// P-039: precio del plan y modo admin, en los ajustes.
+describe('setPlanPrice y setAdminMode', () => {
+  const fresh = () => createWorkbenchStore(fakeMage({ saveSettings: vi.fn().mockResolvedValue(undefined) }));
+
+  it('setPlanPrice_ponerYQuitar_actualizaElMapa', () => {
+    const store = fresh();
+
+    store.getState().setPlanPrice('C:/a', 200_000_000);
+    store.getState().setPlanPrice('C:/b', 20_000_000);
+    store.getState().setPlanPrice('C:/a', null);
+
+    expect(store.getState().settings.planPriceMicroUsdByAccount).toEqual({ 'C:/b': 20_000_000 });
+  });
+
+  it.each([-1, 1.5, 10_000_000_001])('setPlanPrice_%s_lanzaConElValor', (value) => {
+    expect(() => fresh().getState().setPlanPrice('C:/a', value)).toThrow(String(value));
+  });
+
+  it('setAdminMode_activa_seGuardaYa', () => {
+    const saveSettings = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ saveSettings }));
+
+    store.getState().setAdminMode(true);
+
+    expect(store.getState().settings.adminMode).toBe(true);
+    expect(saveSettings).toHaveBeenCalled();
+  });
+});

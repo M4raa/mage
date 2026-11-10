@@ -15,7 +15,7 @@ import {
 } from '@shared/settings';
 import { setAgyCommandVerdict } from '@shared/agyRules';
 import { applyAccentOverrides, applyAccountOverrides } from './accountView';
-import { ACCOUNT_ALIAS_MAX } from '@shared/settings';
+import { ACCOUNT_ALIAS_MAX, PLAN_PRICE_MAX_MICRO_USD } from '@shared/settings';
 import { effortSettingKey } from './models';
 import { applyBackgroundOpacity, applyThemeFromSettings, systemPrefersDark } from './theme';
 import type { WorkbenchState } from './workbenchStore';
@@ -38,6 +38,8 @@ export type SettingsActionName =
   | 'setClaudeAiConnectorsEnabled'
   | 'setMageMcpEnabled'
   | 'renameAccount'
+  | 'setPlanPrice'
+  | 'setAdminMode'
   | 'setAccountHidden'
   | 'setAgyCommandVerdict'
   | 'setAgyLinkedPaths'
@@ -183,6 +185,24 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
         return { settings, accounts: applyAccountOverrides(s.accounts, settings) };
       });
       deps.persistSettings();
+    },
+
+    // Precio mensual del plan de una cuenta (P-039 D6), en micro-USD; null lo quita.
+    setPlanPrice: (accountId, microUsd) => {
+      if (microUsd !== null && (!Number.isInteger(microUsd) || microUsd < 0 || microUsd > PLAN_PRICE_MAX_MICRO_USD)) {
+        throw new Error(`Precio del plan no valido para ${accountId}: ${microUsd}`);
+      }
+      set((s) => {
+        const { [accountId]: _previo, ...rest } = s.settings.planPriceMicroUsdByAccount;
+        return { settings: { ...s.settings, planPriceMicroUsdByAccount: microUsd === null ? rest : { ...rest, [accountId]: microUsd } } };
+      });
+      deps.persistSettings();
+    },
+
+    // Modo admin (P-039 D5): se guarda ya, para que sobreviva a un cierre inmediato.
+    setAdminMode: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, adminMode: enabled } }));
+      deps.persistSettingsNow();
     },
 
     setAccountHidden: (accountId, hidden) => {

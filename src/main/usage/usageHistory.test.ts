@@ -158,7 +158,7 @@ describe('aggregateHistory', () => {
 
     const a = history.accounts[0];
     expect(a?.days).toEqual([{ day: '2026-11-01', ...totals(3) }]);
-    expect(a?.detail[0]).toMatchObject({ day: '2026-11-01', conversations: 2, projects: { 'C:/p': 3 } });
+    expect(a?.detail[0]).toMatchObject({ day: '2026-11-01', sessions: ['s1', 's2'], projects: { 'C:/p': 3 } });
     expect(a?.windows).toEqual([{ day: '2026-11-02', fiveHourMax: 40, sevenDayMax: 10 }]);
     expect(history.accounts[1]?.days).toEqual([{ day: '2026-11-03', ...totals(3) }]);
     expect(history.unattributed).toEqual([{ day: '2026-11-04', ...totals(4) }]);
@@ -169,7 +169,7 @@ describe('aggregateHistory', () => {
 
     const history = aggregateHistory({ files: [{ sessionId: 's1', days: { '2026-11-01': limited } }], accountIds: ['a'], accountOf: () => 'a', windows: {}, fromDay: '2026-10-01', generatedAt: 1 });
 
-    expect(history.accounts[0]?.detail[0]).toMatchObject({ limits: { fiveHour: 1 }, conversations: 0 });
+    expect(history.accounts[0]?.detail[0]).toMatchObject({ limits: { fiveHour: 1 }, sessions: [] });
   });
 
   it('mergeDayMaps_mismoDia_suma', () => {

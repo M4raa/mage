@@ -36,6 +36,8 @@ const VALID: AppSettings = {
   defaultProvider: 'claude',
   accentByAccount: { 'C:/Users/u/.claude-p': 3 },
   aliasByAccount: { 'C:/cuentas/.claude-p': 'Personal' },
+  planPriceMicroUsdByAccount: { 'C:/cuentas/.claude-p': 200_000_000 },
+  adminMode: true,
   hiddenAccounts: ['C:/cuentas/.claude-x'],
   claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
   artifactEnabled: true,

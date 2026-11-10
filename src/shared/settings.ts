@@ -36,6 +36,8 @@ export const APP_SETTINGS_VERSION = 1;
 
 // Largo máximo de un alias de cuenta (P-038 V16): cabe en la barra de cuentas y en la sublínea.
 export const ACCOUNT_ALIAS_MAX = 40;
+// Tope del precio del plan que se acepta (10 000 $ al mes en micro-USD): por encima es un error de teclado.
+export const PLAN_PRICE_MAX_MICRO_USD = 10_000_000_000;
 
 // Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6). '' = el de la cuenta
 // (Mage adopta el que reporta el CLI). «Omitir permisos» se ofrece desde la 0.1.1 R2 (punto 6): medido en el
@@ -191,6 +193,12 @@ export interface AppSettings {
   readonly accentByAccount: Readonly<Record<string, number>>;
   // Nombre elegido a mano para una cuenta («Cuentas y consumo», P-038 V16). Sin entrada, el de su carpeta.
   readonly aliasByAccount: Readonly<Record<string, string>>;
+  // Precio mensual del plan de cada cuenta en micro-USD enteros (P-039 D6): con él, «Cuentas y consumo» dice cuántas
+  // veces lo que se paga vale el consumo a precio de API. Sin entrada, no se calcula. Default {}.
+  readonly planPriceMicroUsdByAccount: Readonly<Record<string, number>>;
+  // Modo admin (P-039 D5): enseña las métricas de actividad, proyectos y herramientas y picos de ventana. Se recuerda
+  // entre arranques. Default false.
+  readonly adminMode: boolean;
   // Cuentas ocultas (P-038 V16): fuera de la barra de cuentas, del selector y del popover de uso; su sesión,
   // conversaciones y ficheros no se tocan. Se reactivan desde «Cuentas y consumo».
   readonly hiddenAccounts: readonly string[];
@@ -318,6 +326,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultProvider: 'claude',
   accentByAccount: {},
   aliasByAccount: {},
+  planPriceMicroUsdByAccount: {},
+  adminMode: false,
   hiddenAccounts: [],
   claudeAiConnectorsOff: [],
   artifactEnabled: false,

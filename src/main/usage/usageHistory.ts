@@ -229,7 +229,7 @@ function accumulate(byAccount: Map<string, Map<DayKey, DayAccumulator>>, key: st
 function dailyDetails(days: Map<DayKey, DayAccumulator> | undefined): DailyDetail[] {
   return [...(days ?? new Map<DayKey, DayAccumulator>()).entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([day, slot]) => ({ day, ...slot.detail, conversations: slot.sessions.size, projects: slot.projects }));
+    .map(([day, slot]) => ({ day, ...slot.detail, sessions: [...slot.sessions], projects: slot.projects }));
 }
 
 const toTokens = (detail: readonly DailyDetail[]): DailyTokens[] => detail.map((day) => ({ day: day.day, ...detailTokens(day) }));
