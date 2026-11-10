@@ -613,6 +613,44 @@ const CHECKS = [
     },
   },
   {
+    // P-038: las fichas son cards con el logo del proveedor; Codex y agy traen su modo de permiso por defecto y Codex,
+    // además, el esfuerzo. Se elige un modo de Codex en su selector, se mide que se guarda y se restaura.
+    name: 'Proveedores y modelos: cards con logo; Codex y agy con modo por defecto y Codex con esfuerzo (P-038)',
+    state: { settingsSection: ui('settings.sections.providers.nav') },
+    async run(page) {
+      await openSection(page, uiRegExp('settings.sections.providers.nav'));
+      await page.locator('[data-provider-card]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      // Los de serie que no están instalados no salen: se espera a que acaben de sondearse.
+      await page.waitForTimeout(CONFIG.settleMs * 4);
+      const cards = await page.evaluate((textos) => [...document.querySelectorAll('[data-provider-card]')].map((card) => ({
+        id: card.getAttribute('data-provider-card'),
+        logo: card.querySelector('[data-provider-logo]')?.getAttribute('data-provider-logo') ?? null,
+        modo: [...card.querySelectorAll('button[aria-label]')].some((b) => b.getAttribute('aria-label').startsWith(textos.modo) || b.getAttribute('aria-label').startsWith(textos.modoClaude)),
+        esfuerzo: [...card.querySelectorAll('button[aria-label]')].some((b) => b.getAttribute('aria-label').startsWith(textos.esfuerzo)),
+      })), { modo: uiPrefix('settings.providers.permission.providerAria'), modoClaude: ui('settings.providers.permission.aria'), esfuerzo: uiPrefix('settings.providers.effort.aria') });
+      const porId = Object.fromEntries(cards.map((c) => [c.id, c]));
+      const conLogo = cards.filter((c) => c.id === 'claude' || c.id === 'codex' || c.id === 'agy').every((c) => c.logo === c.id);
+      const codex = porId.codex ?? null;
+      const agy = porId.agy ?? null;
+      let guardado = null;
+      if (codex !== null) {
+        const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.defaultModelByProvider['codex#permission'] ?? '');
+        try {
+          await page.locator(`[data-provider-card="codex"] button[aria-label^="${cssAttr(uiPrefix('settings.providers.permission.providerAria'))}"]`).click();
+          await page.locator('[role="listbox"] [data-value=":workspace"]').click();
+          guardado = await page.evaluate(() => window.__mageDev.store.getState().settings.defaultModelByProvider['codex#permission'] ?? '');
+        } finally {
+          await page.evaluate((modo) => window.__mageDev.store.getState().setDefaultModelForProvider('codex#permission', modo), previo);
+        }
+      }
+      const ok = porId.claude?.modo === true && conLogo
+        && (codex === null || (codex.modo && codex.esfuerzo && guardado === ':workspace'))
+        && (agy === null || agy.modo);
+      const nota = codex === null || agy === null ? ' (Codex o agy no están instalados aquí: su parte no se ha medido)' : '';
+      return { ok, detail: `${JSON.stringify({ cards, guardado })}${nota}` };
+    },
+  },
+  {
     // 0.1.1 R2, punto 6: «Omitir permisos» como modo por defecto, con su linea fija en Ajustes. Se elige
     // por la accion del store (no abre ninguna conversacion) y se restaura el que habia.
     name: 'Proveedores y modelos: «Omitir permisos» por defecto enseña su aviso fijo (R2 6)',
@@ -8681,6 +8719,36 @@ const CHECKS = [
     },
   },
   {
+    // P-038: al subir en el hilo sale, centrado justo encima del input, un botón que lleva al final y vuelve a seguirlo.
+    name: 'P-038: subir en el hilo enseña «Ir al final» centrado sobre el input y pulsarlo lleva al final',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await hydrateBlocks(page, Array.from({ length: 30 }, (_, i) => ({ kind: 'user', id: `vg-salto-${i}`, text: `Fila ${i}\n${'Contenido largo de prueba. '.repeat(20)}`, time: '12:00', attachments: [] })));
+      const activa = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const pane = `[data-pane-tab-id="${activa}"]`;
+      const scroller = page.locator(`${pane} [data-chat-scroller]`);
+      const boton = page.locator(`${pane} [data-jump-to-end]`);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const alFinal = await boton.count();
+      const caja = await scroller.boundingBox();
+      await page.mouse.move(caja.x + caja.width / 2, caja.y + caja.height / 2);
+      await page.mouse.wheel(0, -600);
+      const sale = await boton.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const posicion = sale ? await page.evaluate((sel) => {
+        const b = document.querySelector(`${sel} [data-jump-to-end]`).getBoundingClientRect();
+        const sc = document.querySelector(`${sel} [data-chat-scroller]`).getBoundingClientRect();
+        const input = document.querySelector(`${sel} [data-prompt-editor="true"]`)?.parentElement?.getBoundingClientRect() ?? null;
+        return { centro: Math.round(b.left + b.width / 2 - (sc.left + sc.width / 2)), sobreElInput: input === null ? null : Math.round(input.top - b.bottom) };
+      }, pane) : null;
+      if (sale) await boton.click();
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const distancia = await scroller.evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
+      const trasPulsar = await boton.count();
+      const ok = alFinal === 0 && sale && Math.abs(posicion.centro) <= 2 && posicion.sobreElInput !== null && posicion.sobreElInput >= 0 && posicion.sobreElInput <= 40 && distancia <= 3 && trasPulsar === 0;
+      return { ok, detail: JSON.stringify({ alFinal, sale, posicion, distancia, trasPulsar }) };
+    },
+  },
+  {
     name: 'P-038: el popover de uso con muchas cuentas cabe, tiene scroll y se puede entrar en él',
     async run(page) {
       const previo = await page.evaluate(() => ({ accounts: window.__mageDev.store.getState().accounts }));
@@ -10286,7 +10354,8 @@ const CHECKS = [
     state: { tabs: 1 },
     async run(page) {
       const carpetas = [];
-      for (let i = 0; i < 12; i += 1) carpetas.push(fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-q03-')));
+      // 18: ocho tarjetas y diez en la lista (su tope), que ya no caben sin scroll (P-038).
+      for (let i = 0; i < 18; i += 1) carpetas.push(fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-q03-')));
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
         return { conversationHistory: s.conversationHistory, allConversationHistory: s.allConversationHistory, loadConversationHistory: s.loadConversationHistory };
@@ -10306,8 +10375,11 @@ const CHECKS = [
         const medido = await page.evaluate(() => ({
           tarjetas: document.querySelectorAll('[data-recent-project]').length,
           lista: document.querySelectorAll('[data-recent-projects-list] [data-recent-folder]').length,
+          alto: document.querySelector('[data-recent-projects-list]')?.clientHeight ?? 0,
+          conScroll: (() => { const el = document.querySelector('[data-recent-projects-list]'); return el !== null && el.scrollHeight > el.clientHeight + 1 && getComputedStyle(el).overflowY === 'auto'; })(),
         }));
-        const ok = medido.tarjetas > 0 && medido.tarjetas <= 8 && medido.lista === 12 - medido.tarjetas;
+        // P-038: la lista no pasa de unas cinco filas; con más, scroll.
+        const ok = medido.tarjetas > 0 && medido.tarjetas <= 8 && medido.lista === Math.min(10, 18 - medido.tarjetas) && medido.alto <= 130 && (medido.lista <= 5 || medido.conScroll);
         return { ok, detail: JSON.stringify(medido) };
       } finally {
         await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
