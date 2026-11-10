@@ -215,6 +215,7 @@
   "app.statusBar.statusUnavailable": "Estado no disponible.",
   "app.statusBar.updateReady": "{version} lista · Reiniciar",
   "app.statusBar.updateReadyLabel": "Mage {version} está lista para instalarse. Ver y reiniciar",
+  "app.statusBar.versionAdmin": "v{version} · admin",
   "app.statusBar.versionShort": "v{version}",
   "app.statusBar.versionTitle": "Mage {version}",
   "app.statusBar.windows": "5h {fiveHour}% · sem {weekly}% · reset {reset}",

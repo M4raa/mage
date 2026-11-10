@@ -217,6 +217,7 @@ export interface MessageValues {
   readonly "app.statusBar.statusUnavailable": never;
   readonly "app.statusBar.updateReady": { readonly "version": string | number };
   readonly "app.statusBar.updateReadyLabel": { readonly "version": string | number };
+  readonly "app.statusBar.versionAdmin": { readonly "version": string | number };
   readonly "app.statusBar.versionShort": { readonly "version": string | number };
   readonly "app.statusBar.versionTitle": { readonly "version": string | number };
   readonly "app.statusBar.windows": { readonly "fiveHour": string | number; readonly "reset": string | number; readonly "weekly": string | number };

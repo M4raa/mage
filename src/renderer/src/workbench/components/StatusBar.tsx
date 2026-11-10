@@ -14,6 +14,8 @@ import type { Account } from '../types';
 import type { StatusIndicator, StatusInfo } from '@shared/status';
 import { formatMicroUsd } from '@shared/usage';
 import { activeFormatLocale, formatInteger } from '../../i18n/format';
+import { isAdminToggle } from '../adminMode';
+import { isMacPlatform } from '../keybindings/platform';
 
 type StatusTextKey = 'app.statusBar.statusOperational' | 'app.statusBar.statusMinor' | 'app.statusBar.statusMajor' | 'app.statusBar.statusCritical' | 'app.statusBar.statusMaintenance';
 
@@ -86,8 +88,26 @@ function UpdateIndicator(): React.JSX.Element | null {
 // placeholder que aparece y desaparece en la barra de estado se ve como un parpadeo.
 let appVersionPromise: Promise<string> | null = null;
 
+// Ctrl+Shift+F12 (⌘+⇧+F12 en macOS) activa y desactiva el modo admin (P-039 D5). La barra de estado está siempre
+// montada: es el sitio de la escucha. En captura, para que ningún control con el foco se la quede.
+function useAdminModeShortcut(): void {
+  const setAdminMode = useWorkbenchStore((s) => s.setAdminMode);
+  useEffect(() => {
+    const isMac = isMacPlatform();
+    const onKey = (event: KeyboardEvent): void => {
+      if (!isAdminToggle(event, isMac)) return;
+      event.preventDefault();
+      setAdminMode(!useWorkbenchStore.getState().settings.adminMode);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [setAdminMode]);
+}
+
 function AppVersion(): React.JSX.Element | null {
   const t = useT();
+  useAdminModeShortcut();
+  const adminMode = useWorkbenchStore((s) => s.settings.adminMode);
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -108,8 +128,8 @@ function AppVersion(): React.JSX.Element | null {
 
   if (version === null) return null;
   return (
-    <span className="font-mono text-mg-muted" title={t('app.statusBar.versionTitle', { version })}>
-      {t('app.statusBar.versionShort', { version })}
+    <span data-app-version={adminMode ? 'admin' : 'normal'} className="font-mono text-mg-muted" title={t('app.statusBar.versionTitle', { version })}>
+      {adminMode ? t('app.statusBar.versionAdmin', { version }) : t('app.statusBar.versionShort', { version })}
     </span>
   );
 }
