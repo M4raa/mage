@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react';
 import { useT } from '../../i18n/uiLanguage';
 import { Icon } from './Icon';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
-import { severityForPct, type UsageSeverity } from '../usageView';
+import { severityForPct, shortCountdown, type UsageSeverity } from '../usageView';
 import { UsagePopover } from './UsagePopover';
 import { reportActionError } from '../notificationStore';
 import { providerLabel } from '../accountView';
 import { conversationIdOfTab } from '../conversationId';
 import { conversationSizeById } from '../sidebarModel';
 import { formatSize } from '../conversationList';
+import { contextPctOf } from '../contextView';
 import type { Account } from '../types';
 import type { StatusIndicator, StatusInfo } from '@shared/status';
 import { formatMicroUsd } from '@shared/usage';
@@ -124,6 +125,8 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
     return id === undefined ? 0 : (conversationSizeById(s.allConversationHistory).get(id) ?? 0);
   });
   const apiUsage = useWorkbenchStore((s) => s.usageByAccount[account.id]?.apiUsage);
+  // Ocupación de la ventana de contexto de la pestaña activa que reporta el CLI; sin dato todavía, no se pinta.
+  const contextPct = useWorkbenchStore((s) => contextPctOf(s.contextUsageByChat[s.activeTabId]));
   // Severidad global de la cuenta: la peor de sus ventanas (para el aviso ⚠/⛔ en la barra).
   const severity = worst(severityForPct(fiveHour.pct), severityForPct(weekly.pct));
   const refreshUsage = useWorkbenchStore((s) => s.refreshUsage);
@@ -135,7 +138,7 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
     <>
       <span className="flex items-center gap-[6px]" style={{ color: account.accent.tint }}>
         <span className="h-[7px] w-[7px] rounded-[2px]" style={{ background: account.accent.base }} />
-        {account.alias} · <span data-status-provider="true">{provider}</span> ▾
+        <span data-status-provider="true">{provider}</span> · {account.alias} ▾
       </span>
       {/* Sin el modelo por defecto de la cuenta (P-026, D18): no era el del chat, su ▾ no abria nada y
           el modelo ya se ve —y se cambia— en el selector del input. */}
@@ -159,13 +162,19 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
           data-tip={t('accountsUsage.openAria')}
           onClick={openAccountsUsage}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAccountsUsage(); } }}
-          className="cursor-pointer border-b border-dotted border-mg-idle hover:text-mg-body"
+          aria-label={account.apiBilled ? undefined : t('app.statusBar.windows', { fiveHour: fiveHour.pct, weekly: weekly.pct, reset: fiveHour.label })}
+          className="inline-flex cursor-pointer items-center gap-[10px] hover:text-mg-body"
           style={severity !== 'ok' ? { color: SEVERITY_COLOR[severity] } : undefined}
         >
           {severity !== 'ok' && <Icon name={severity === 'critical' ? 'error' : 'warning'} size={12} className="mr-[4px]" />}
           {account.apiBilled ? (apiUsage === undefined ? t('app.statusBar.apiNoTurns')
             : t('app.statusBar.apiUsage', { tokens: formatInteger(apiUsage.totals.totalTokens), cost: formatMicroUsd(apiUsage.totals.costMicroUsd, activeFormatLocale()) }))
-            : t('app.statusBar.windows', { fiveHour: fiveHour.pct, weekly: weekly.pct, reset: fiveHour.label })}
+            : (
+              <>
+                <UsageMeter name="5h" window={fiveHour} />
+                <UsageMeter name="7d" window={weekly} />
+              </>
+            )}
         </span>
         {/* `pb-[8px]` y no un `bottom` desplazado: el hueco entre el resumen y el popover es parte de la zona de hover, y
             el ratón puede entrar a desplazar la lista (P-038: con muchas cuentas se cortaba y no se llegaba a ella). */}
@@ -178,7 +187,28 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
           <span aria-hidden="true">· </span>{formatSize(sizeBytes)}
         </span>
       )}
+      {contextPct !== null && (
+        <span data-status-context={contextPct} data-tip={t('tabs.subline.contextTip')} className="-ml-[8px] cursor-help tabular-nums">
+          <span aria-hidden="true">· </span>{t('tabs.subline.context', { pct: contextPct })}
+        </span>
+      )}
     </>
+  );
+}
+
+// Una ventana de uso en pequeño (P-038): nombre, barra, % y lo que falta para el reset. La barra toma el color de su
+// severidad; el texto completo va en el nombre accesible del resumen.
+function UsageMeter({ name, window }: { readonly name: string; readonly window: { readonly pct: number; readonly label: string } }): React.JSX.Element {
+  const severity = severityForPct(window.pct);
+  return (
+    <span data-usage-meter={name} aria-hidden="true" className="inline-flex items-center gap-[5px] tabular-nums">
+      <span className="text-mg-muted">{name}</span>
+      <span className="relative h-[4px] w-[36px] overflow-hidden rounded-full bg-mg-track">
+        <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${window.pct}%`, background: severity === 'ok' ? 'var(--color-mg-sec)' : SEVERITY_COLOR[severity] }} />
+      </span>
+      <span>{window.pct}%</span>
+      <span className="text-mg-muted">{shortCountdown(window.label)}</span>
+    </span>
   );
 }
 

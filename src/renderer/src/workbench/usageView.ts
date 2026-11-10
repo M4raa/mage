@@ -163,6 +163,12 @@ export function formatResetAbsolute(resetsAt: number | null, now: number, withWe
 
 // Cuenta atras legible desde un epoch ms de reset. null => "—"; <=0 => "ahora"; si no, la unidad
 // mas gruesa relevante ("2 d 3 h", "1 h 24 m", "24 m").
+// La cuenta atrás en corto para la barra de estado (P-038): solo la unidad mayor y sin espacio («2 h 13 m» → «2h»).
+export function shortCountdown(label: string): string {
+  const [amount, unit] = label.split(' ');
+  return unit === undefined ? label : `${amount}${unit}`;
+}
+
 export function formatCountdown(resetsAt: number | null, now: number): string {
   if (resetsAt === null) return '—';
   const remainingMs = resetsAt - now;
