@@ -89,7 +89,8 @@ export function RecentProjects({
         ))}
       </div>
       {folders.length > 0 && (
-        <div data-recent-projects-list="true" className="flex flex-col">
+        // P-038: unas cinco filas a la vista y el resto con scroll; antes alargaba la pantalla de nuevo chat.
+        <div data-recent-projects-list="true" className="flex max-h-[128px] flex-col overflow-y-auto">
           {folders.map((folder) => (
             <button
               key={folder.cwd}
