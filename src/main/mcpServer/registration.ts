@@ -69,6 +69,14 @@ export function mageMcpServer(launch: MageMcpLaunch, credential: string): Resolv
   };
 }
 
+// P-038 (informe del usuario, 10-11): con el MCP de Mage APAGADO, el modelo no tiene sesiones ni navegador de Mage y,
+// sin saberlo, los sustituía en silencio por subagentes y Playwright. Lo lee el modelo (castellano, como el resto).
+export const MAGE_MCP_OFF_NOTICE = [
+  'Esta conversación corre dentro de Mage, pero el MCP de Mage está DESACTIVADO: no tienes herramientas para crear sesiones de Mage (subsesiones o sesiones delegadas) ni el navegador integrado de Mage.',
+  'Si el usuario pide subsesiones, sesiones o conversaciones nuevas de Mage, o usar el navegador de Mage, dile que no puedes porque el MCP de Mage está desactivado y que se activa en Ajustes › MCP y conectores › Servidor MCP de Mage.',
+  'No lo sustituyas por subagentes (Agent/Task), por el CLI desde la consola (claude -p, codex exec) ni por otro navegador (Playwright, Chrome) salvo que el usuario te lo pida expresamente.',
+].join('\n');
+
 // P-038 V14: las herramientas de Mage que solo LEEN no piden permiso (consultar sesiones, leer su respuesta, leer o
 // capturar la página). Crear, mandar, cancelar, navegar, pulsar y escribir siguen preguntando. Formato de regla del
 // CLI de Claude para una herramienta MCP: `mcp__<servidor>__<herramienta>`.

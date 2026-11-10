@@ -14,6 +14,8 @@ export interface SharedLaunchConfig {
   // Identidad de esta sesion ante el servidor MCP `mage` (D-M6). `forwardToCodexMcp`: `mage` esta
   // registrado en el CODEX_HOME de la cuenta y Codex tiene que reenviarle la variable.
   readonly mageCaller?: { readonly credential: string; readonly forwardToCodexMcp: boolean };
+  // Texto de sistema que Mage añade a la conversación (P-038): hoy, el aviso de que el MCP de Mage está apagado.
+  readonly systemNotice?: string;
 }
 
 // Parametros para arrancar una sesion de agente (neutros de proveedor).

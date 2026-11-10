@@ -13,6 +13,20 @@ describe('ClaudeAdapter', () => {
     expect(plan.args.slice(plan.args.indexOf('--append-system-prompt'))).toContain('Eres experto en Python');
   });
 
+  // P-038: con el MCP de Mage apagado, el aviso va al prompt de sistema junto a las reglas del proyecto, en UN solo flag.
+  it('buildSpawnPlan_avisoDeMageYReglasDelProyecto_unSoloAppendSystemPromptConLosDos', () => {
+    const shared = { mcpServers: [], settingsFragment: null, claudeAiConnectors: true, systemNotice: 'MCP de Mage apagado' };
+
+    const plan = adapter.buildSpawnPlan({ ...launch, projectInstructions: 'Eres experto en Python', shared });
+
+    expect(plan.args.filter((arg) => arg === '--append-system-prompt')).toHaveLength(1);
+    expect(plan.args[plan.args.indexOf('--append-system-prompt') + 1]).toBe('Eres experto en Python\n\nMCP de Mage apagado');
+  });
+
+  it('buildSpawnPlan_sinInstruccionesNiAviso_sinAppendSystemPrompt', () => {
+    expect(adapter.buildSpawnPlan(launch).args).not.toContain('--append-system-prompt');
+  });
+
   it('encodeUserMessage_text_returnsMinimalUserEnvelope', () => {
     expect(adapter.encodeUserMessage('hola')).toEqual({
       type: 'user',
