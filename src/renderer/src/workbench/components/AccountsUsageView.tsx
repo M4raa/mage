@@ -308,11 +308,22 @@ function AccountActions({ account, hidden }: { readonly account: Account; readon
   const [deleting, setDeleting] = useState(false);
   const [name, setName] = useState(account.alias);
   const button = 'rounded-[6px] border border-mg-border-ctrl px-[8px] py-[2px] text-[10.5px] text-mg-body2 hover:bg-mg-hover disabled:opacity-40';
-  const canLogin = account.providerId === 'claude' && !account.apiBilled;
+  // «Iniciar sesión» solo sin sesión; con el token caducado basta con que su CLI lo renueve (P-038).
+  const canLogin = account.providerId === 'claude' && !account.apiBilled && account.loginStatus === 'logged_out';
+  const canRefresh = account.providerId === 'claude' && !account.apiBilled && account.loginStatus === 'expired';
+  const refreshLogin = useWorkbenchStore((s) => s.refreshLogin);
+  const [refreshing, setRefreshing] = useState(false);
+  const runRefresh = (): void => {
+    setRefreshing(true);
+    refreshLogin(account.id)
+      .catch((err: unknown) => reportActionError(t('accountsUsage.refreshLoginFailed'), err, 'accounts'))
+      .finally(() => setRefreshing(false));
+  };
   return (
     <div className="flex flex-col gap-[6px] border-t border-mg-border-subtle pt-[8px]">
       <div className="flex flex-wrap gap-[6px]">
         {canLogin && <button className={button} onClick={() => login.begin(account.id, account.email)} disabled={login.phase === 'starting' || login.phase === 'submitting'}>{t('accountsUsage.login')}</button>}
+        {canRefresh && <button className={button} onClick={runRefresh} disabled={refreshing} data-refresh-login={account.id} data-tip={t('accountsUsage.refreshLoginTip')}>{refreshing ? t('accountsUsage.refreshLoginBusy') : t('accountsUsage.refreshLogin')}</button>}
         <button className={button} onClick={() => setEditing(editing === 'rename' ? 'none' : 'rename')}>{t('accountsUsage.rename')}</button>
         <button className={button} onClick={() => setEditing(editing === 'color' ? 'none' : 'color')}>{t('accountsUsage.color')}</button>
         <button className={button} onClick={() => setAccountHidden(account.id, !hidden)} disabled={!hidden && isActive} data-tip={!hidden && isActive ? t('accountsUsage.hideActiveTip') : undefined}>

@@ -127,7 +127,7 @@ import { DebugChannel } from '@shared/debug';
 import type { RendererLogInput } from '@shared/debug';
 import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
 import { BASE_ARGS as CLAUDE_BASE_ARGS, ClaudeAdapter } from './engine/claudeAdapter';
-import { probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
+import { probeModelCatalog, probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
 import { registerMcpIpc } from './config/mcpIpc';
 import { execFileRunner } from './capabilities/commandRunner';
 import { nodeCapabilityFs } from './capabilities/capabilityFs';
@@ -2263,9 +2263,10 @@ function spawnModelProbe(configDir: string, extraArgs: readonly string[] = [], e
 }
 
 // En segundo plano: un sondeo fallido no se enseña como error, se registra en el log de depuracion.
+const MODEL_PROBE_DEPS = { spawnProbe: spawnModelProbe, timeoutMs: MODEL_PROBE_TIMEOUT_MS, exitGraceMs: MODEL_PROBE_EXIT_GRACE_MS };
+
 function probeModelsInBackground(configDirs: readonly string[]): void {
-  const deps = { spawnProbe: spawnModelProbe, timeoutMs: MODEL_PROBE_TIMEOUT_MS, exitGraceMs: MODEL_PROBE_EXIT_GRACE_MS };
-  void probeModelCatalogs(deps, configDirs, (configDir, models) => {
+  void probeModelCatalogs(MODEL_PROBE_DEPS, configDirs, (configDir, models) => {
     if (models === null || models.length === 0) {
       mainLog('debug', 'Sondeo de modelos sin resultado: se queda la cache anterior', { configDir });
       return;
@@ -2274,10 +2275,12 @@ function probeModelsInBackground(configDirs: readonly string[]): void {
   });
 }
 
+// Las expiradas TAMBIÉN: tienen token de renovación y el `initialize` del sondeo hace que su CLI lo renueve (medido,
+// spike/token-refresh-spike.mjs, 2.1.319). Antes se saltaban y seguían «expiradas» hasta que algo usara la cuenta.
 function probeLoggedInAccounts(): void {
   const dirs = accountService
     .listAccounts()
-    .filter((account) => account.loginStatus === 'logged_in')
+    .filter((account) => account.loginStatus !== 'logged_out')
     .map((account) => account.configDir);
   probeModelsInBackground(dirs);
 }
@@ -3320,6 +3323,13 @@ function registerAccountsIpc1(): void {
   // Cuentas: listar (datos seguros), crear (dir + enlaces + settings) y lanzar login interactivo
   // en terminal externa (headless no puede loguear). El binario se resuelve por SO.
   ipcMain.handle(IpcChannel.AccountsList, () => listAllAccounts());
+  // «Refrescar sesión» (P-038): solo cuentas de Claude por suscripción que Mage conoce. Lo renueva su CLI, no Mage.
+  ipcMain.handle(IpcChannel.AccountsRefreshLogin, async (_e, configDir: unknown): Promise<void> => {
+    const account = accountService.listAccounts().find((candidate) => candidate.configDir === configDir);
+    if (account === undefined) throw new Error(`Cuenta desconocida para refrescar la sesión: ${JSON.stringify(configDir)}`);
+    const models = await probeModelCatalog(MODEL_PROBE_DEPS, account.configDir);
+    if (models !== null && models.length > 0) cacheModelCatalog(account.configDir, models);
+  });
   ipcMain.handle(IpcChannel.AccountsCodexConfirm, () => getCodexAccountCatalog().confirm(getProviderAccounts().list(accountService.listAccounts())));
   ipcMain.handle(IpcChannel.AccountsCreate, (_e, name: string): AccountInfo =>
     accountService.createAccount(name),

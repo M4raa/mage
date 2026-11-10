@@ -62,6 +62,25 @@ describe('setDraft', () => {
 
     expect(store.getState().accounts[0]?.loginStatus).toBe('logged_out');
   });
+  it('refreshLogin_cuentaExpirada_laRenuevaSuCliYSeRelee', async () => {
+    const info: AccountInfo = { configDir: '/claude-p', name: '.claude-p', providerId: 'claude', authKind: 'subscription',
+      isMain: false, email: null, org: null, loginStatus: 'expired', expiresAt: 1, defaultModel: null };
+    let renewed = false;
+    const refreshLogin = vi.fn(async () => { renewed = true; });
+    const store = createWorkbenchStore(fakeMage({
+      listAccounts: async () => [renewed ? { ...info, loginStatus: 'logged_in' } : info],
+      loadModelCatalog: async () => [],
+      confirmCodexAccounts: async () => [],
+      refreshLogin,
+      getUsage: async () => null,
+    }));
+    await store.getState().refreshAccounts();
+
+    await store.getState().refreshLogin('/claude-p');
+
+    expect(refreshLogin).toHaveBeenCalledWith('/claude-p');
+    expect(store.getState().accounts[0]?.loginStatus).toBe('logged_in');
+  });
   it('setDraft_dosPestanas_cadaUnaConservaElSuyo', () => {
     // Arrange
     const store = createWorkbenchStore(fakeMage());

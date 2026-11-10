@@ -416,6 +416,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // --- Shell (cuentas y pestanas reales) ---
   init: () => void;
   refreshAccounts: () => Promise<void>;
+  // Renueva el token caducado de una cuenta de Claude con su CLI, sin turno, y relee su estado (P-038).
+  refreshLogin: (accountId: string) => Promise<void>;
   // #46/H3: guarda un acento (el menos usado) para cada cuenta que aún no tiene uno. Solo con los ajustes
   // ya cargados: antes, persistir pisaría los colores elegidos a mano.
   assignAccountAccents: () => void;
@@ -2034,6 +2036,10 @@ export function createWorkbenchStore(mage: MageClient) {
       // El sondeo de modelos de arranque (P-026 2.4) termina cuando el selector ya esta pintado.
       mage.onModelCatalogChanged(({ configDir, models }) => {
         set((s) => ({ modelCatalogByAccount: { ...s.modelCatalogByAccount, [configDir]: models } }));
+        // El sondeo de arranque también renueva el token de una cuenta expirada (P-038): se relee su estado.
+        if (get().accounts.some((account) => account.id === configDir && account.loginStatus === 'expired')) {
+          void get().refreshAccounts().catch((err: unknown) => console.warn('No se pudo releer las cuentas:', err));
+        }
       });
     },
 

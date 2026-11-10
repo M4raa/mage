@@ -153,6 +153,8 @@ export const IpcChannel = {
   OpenEditor: 'openWith:editor',
   EditorsList: 'openWith:editorsList',
   AccountsList: 'accounts:list',
+  // Renueva el token caducado de una cuenta de Claude con su propio CLI (un `initialize` sin turno, P-038).
+  AccountsRefreshLogin: 'accounts:refresh-login',
   AccountsCodexConfirm: 'accounts:codex-confirm',
   AccountsCreate: 'accounts:create',
   // Login por el CLI (Fase 9.2): tres pasos, porque el usuario tiene que pegar el *code* en medio.
@@ -1084,6 +1086,8 @@ export interface MageApi {
   onSessionAdoptable(listener: (session: AdoptableSession) => void): () => void;
   // Cuentas: descubrir en disco, crear una nueva, y lanzar el login interactivo (terminal externa).
   listAccounts(): Promise<readonly AccountInfo[]>;
+  // «Refrescar sesión»: el CLI de la cuenta renueva su token de acceso con el de renovación, sin gastar un turno.
+  refreshLogin(configDir: string): Promise<void>;
   confirmCodexAccounts(): Promise<readonly AccountInfo[]>;
   createAccount(name: string): Promise<AccountInfo>;
   // Login por el CLI (Fase 9.2). Tres pasos porque el usuario pega el *code* en medio:

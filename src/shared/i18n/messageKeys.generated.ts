@@ -149,6 +149,10 @@ export interface MessageValues {
   readonly "accountsUsage.period": { readonly "days": string | number };
   readonly "accountsUsage.periodAria": never;
   readonly "accountsUsage.refresh": never;
+  readonly "accountsUsage.refreshLogin": never;
+  readonly "accountsUsage.refreshLoginBusy": never;
+  readonly "accountsUsage.refreshLoginFailed": never;
+  readonly "accountsUsage.refreshLoginTip": never;
   readonly "accountsUsage.rename": never;
   readonly "accountsUsage.renameAria": { readonly "alias": string | number };
   readonly "accountsUsage.resetName": never;

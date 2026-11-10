@@ -12,7 +12,7 @@ import { describeError } from './describeError';
 // tal cual. Este modulo es el UNICO que escribe `accounts`, `usageByAccount`, `modelCatalogByAccount` y `status`
 // (borrar una cuenta, que cierra sus pestañas, sigue en el store).
 
-export type AccountsActions = Pick<WorkbenchState, 'loadModelCatalog' | 'refreshAccounts' | 'assignAccountAccents' | 'refreshUsage' | 'refreshActiveUsage' | 'refreshStatus'>;
+export type AccountsActions = Pick<WorkbenchState, 'loadModelCatalog' | 'refreshAccounts' | 'refreshLogin' | 'assignAccountAccents' | 'refreshUsage' | 'refreshActiveUsage' | 'refreshStatus'>;
 
 export interface AccountsDeps {
   readonly mage: MageApi;
@@ -33,6 +33,13 @@ export function createAccountsActions(deps: AccountsDeps): AccountsActions {
       const models = await mage.loadModelCatalog(configDir);
       if (models.length === 0 || get().modelCatalogByAccount[configDir] !== undefined) return;
       set((s) => ({ modelCatalogByAccount: { ...s.modelCatalogByAccount, [configDir]: models } }));
+    },
+
+    // «Refrescar sesión» (P-038): el CLI de la cuenta renueva su token y se relee su estado y su uso.
+    refreshLogin: async (accountId) => {
+      await mage.refreshLogin(accountId);
+      await get().refreshAccounts();
+      if (get().accounts.some((account) => account.id === accountId && account.loginStatus === 'logged_in')) await get().refreshUsage(accountId);
     },
 
     refreshAccounts: async () => {
