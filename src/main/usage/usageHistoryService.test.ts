@@ -3,7 +3,7 @@ import { EMPTY_CACHE, UsageHistoryService, type TranscriptFile, type UsageHistor
 
 const NOW = Date.parse('2026-11-09T12:00:00.000Z');
 const line = (id: string, at: string, input = 10): string =>
-  `${JSON.stringify({ type: 'assistant', timestamp: at, message: { id, usage: { input_tokens: input, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } })}\n`;
+  `${JSON.stringify({ type: 'assistant', timestamp: at, message: { id, model: 'claude-opus-5-5', usage: { input_tokens: input, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } })}\n`;
 
 function setup(initial: Record<string, string>, options: { mtimeMs?: number; accountOf?: (id: string) => string | undefined } = {}) {
   const files = new Map(Object.entries(initial));

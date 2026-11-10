@@ -8,8 +8,8 @@ const HISTORY: UsageHistory = {
   generatedAt: 0,
   fromDay: '2026-10-11',
   accounts: [
-    { accountId: 'a', days: [day('2026-11-08', 10), day('2026-11-09', 5)], windows: [] },
-    { accountId: 'b', days: [day('2026-11-09', 7)], windows: [] },
+    { accountId: 'a', days: [day('2026-11-08', 10), day('2026-11-09', 5)], detail: [], windows: [] },
+    { accountId: 'b', days: [day('2026-11-09', 7)], detail: [], windows: [] },
   ],
   unattributed: [day('2026-11-01', 3)],
 };

@@ -1,5 +1,5 @@
-import type { DayKey, DayTokens, UsageHistory } from '@shared/usageHistory';
-import { aggregateHistory, INITIAL_PARSE_STATE, localDayKey, mergeDayMaps, parseUsageLines, pruneWindowPeaks, recordWindowPeak, type FileUsage, type ParseState, type WindowPeaks } from './usageHistory';
+import type { DayDetail, DayKey, UsageHistory } from '@shared/usageHistory';
+import { aggregateHistory, INITIAL_PARSE_STATE, localDayKey, localTimeOf, mergeDayMaps, parseUsageLines, pruneWindowPeaks, recordWindowPeak, type FileUsage, type ParseState, type WindowPeaks } from './usageHistory';
 
 // Servicio de «Cuentas y consumo» (P-038 V11): consumo por días leyendo las transcripciones de Claude y foto diaria de
 // las ventanas de la suscripción. MEDIDO en la máquina del usuario: 615 transcripciones y 850 MB solo del último mes,
@@ -26,21 +26,25 @@ export interface TranscriptFile {
   readonly mtimeMs: number;
 }
 
-interface CachedFile {
+export interface CachedFile {
   readonly offset: number;
   readonly sessionId: string;
   readonly ownerAccountId?: string;
   readonly state: ParseState;
-  readonly days: Readonly<Record<DayKey, DayTokens>>;
+  readonly days: Readonly<Record<DayKey, DayDetail>>;
 }
 
+// Versión 2 (P-039): el día guarda el detalle por modelo, topes, horas y herramientas. Una caché v1 no casa con el
+// esquema y se reconstruye releyendo las transcripciones (una vez).
+export const USAGE_HISTORY_CACHE_VERSION = 2;
+
 export interface UsageHistoryCache {
-  readonly version: 1;
+  readonly version: typeof USAGE_HISTORY_CACHE_VERSION;
   readonly files: Readonly<Record<string, CachedFile>>;
   readonly windows: Readonly<Record<string, Readonly<Record<DayKey, WindowPeaks>>>>;
 }
 
-export const EMPTY_CACHE: UsageHistoryCache = { version: 1, files: {}, windows: {} };
+export const EMPTY_CACHE: UsageHistoryCache = { version: USAGE_HISTORY_CACHE_VERSION, files: {}, windows: {} };
 
 export interface UsageHistoryDeps {
   readonly roots: () => readonly TranscriptRoot[];
@@ -110,7 +114,7 @@ export class UsageHistoryService {
       const bytes = await this.deps.readRange(file.path, entry.offset, end);
       const lastNewline = bytes.lastIndexOf(NEWLINE);
       if (lastNewline < 0) break; // una línea a medio escribir (o más larga que el trozo): se lee la próxima vez
-      const parsed = parseUsageLines(bytes.subarray(0, lastNewline).toString('utf8').split('\n'), entry.state, (ms) => this.dayOf(ms));
+      const parsed = parseUsageLines(bytes.subarray(0, lastNewline).toString('utf8').split('\n'), entry.state, (ms) => localTimeOf(ms, this.deps.offsetMinutes()));
       invalid += parsed.invalidLines;
       entry = { ...entry, offset: entry.offset + lastNewline + 1, state: parsed.state, days: mergeDayMaps(entry.days, parsed.days) };
     }
@@ -118,7 +122,12 @@ export class UsageHistoryService {
   }
 
   private aggregate(files: Readonly<Record<string, CachedFile>>): UsageHistory {
-    const list: FileUsage[] = Object.values(files).map((file) => ({ sessionId: file.sessionId, days: file.days, ...(file.ownerAccountId === undefined ? {} : { ownerAccountId: file.ownerAccountId }) }));
+    const list: FileUsage[] = Object.values(files).map((file) => ({
+      sessionId: file.sessionId,
+      days: file.days,
+      ...(file.ownerAccountId === undefined ? {} : { ownerAccountId: file.ownerAccountId }),
+      ...(file.state.cwd === undefined ? {} : { cwd: file.state.cwd }),
+    }));
     return aggregateHistory({
       files: list,
       accountIds: this.deps.accountIds(),
@@ -149,6 +158,6 @@ export class UsageHistoryService {
   }
 }
 
-function pruneDays(days: Readonly<Record<DayKey, DayTokens>>, fromDay: DayKey): Record<DayKey, DayTokens> {
+function pruneDays(days: Readonly<Record<DayKey, DayDetail>>, fromDay: DayKey): Record<DayKey, DayDetail> {
   return Object.fromEntries(Object.entries(days).filter(([day]) => day >= fromDay));
 }

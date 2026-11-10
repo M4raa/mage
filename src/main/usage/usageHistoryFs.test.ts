@@ -45,13 +45,20 @@ describe('parseUsageHistoryCache', () => {
     const warn = vi.fn();
 
     expect(parseUsageHistoryCache('{', warn)).toBe(EMPTY_CACHE);
-    expect(parseUsageHistoryCache('{"version":2}', warn)).toBe(EMPTY_CACHE);
+    expect(parseUsageHistoryCache('{"version":3}', warn)).toBe(EMPTY_CACHE);
     expect(warn).toHaveBeenCalledTimes(2);
   });
 
   it('parseUsageHistoryCache_valida_laDevuelve', () => {
-    const cache = { version: 1, files: {}, windows: { a: { '2026-11-09': { fiveHourMax: 30, sevenDayMax: null } } } };
+    const cache = { version: 2, files: {}, windows: { a: { '2026-11-09': { fiveHourMax: 30, sevenDayMax: null } } } };
 
     expect(parseUsageHistoryCache(JSON.stringify(cache), vi.fn())).toEqual(cache);
+  });
+
+  it('parseUsageHistoryCache_versionAnteriorAlDetalle_seReconstruye', () => {
+    // La v1 (0.1.5 antes de P-039) guardaba solo totales por día: no casa y se relee todo una vez.
+    const v1 = { version: 1, files: { f: { offset: 1, sessionId: 's', state: { recentIds: [] }, days: { d: { inputTokens: 1, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, turns: 1 } } } }, windows: {} };
+
+    expect(parseUsageHistoryCache(JSON.stringify(v1), vi.fn())).toBe(EMPTY_CACHE);
   });
 });

@@ -1,7 +1,8 @@
 import { open, readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { z } from 'zod';
-import { EMPTY_CACHE, type TranscriptFile, type UsageHistoryCache } from './usageHistoryService';
+import { HOURS_PER_DAY } from '@shared/usageHistory';
+import { EMPTY_CACHE, USAGE_HISTORY_CACHE_VERSION, type TranscriptFile, type UsageHistoryCache } from './usageHistoryService';
 
 // El disco de «Cuentas y consumo» (P-038 V11): listar transcripciones, leer un rango de bytes y validar la caché. Todo
 // asíncrono: la primera pasada lee cientos de MB y no puede parar el hilo de main.
@@ -66,16 +67,22 @@ export async function readRange(path: string, start: number, end: number): Promi
 }
 
 const count = z.number().int().min(0);
-const dayTokens = z.object({ inputTokens: count, outputTokens: count, cacheReadTokens: count, cacheCreationTokens: count, turns: count });
+const modelUsage = z.object({ inputTokens: count, outputTokens: count, cacheReadTokens: count, cacheWrite5mTokens: count, cacheWrite1hTokens: count, turns: count });
+const dayDetail = z.object({
+  byModel: z.record(modelUsage),
+  limits: z.object({ fiveHour: count, weekly: count, other: count }),
+  hours: z.array(count).length(HOURS_PER_DAY),
+  tools: z.record(count),
+});
 const pct = z.number().min(0).max(100).nullable();
 const CacheSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(USAGE_HISTORY_CACHE_VERSION),
   files: z.record(z.object({
     offset: count,
     sessionId: z.string().min(1),
     ownerAccountId: z.string().min(1).optional(),
-    state: z.object({ recentIds: z.array(z.string()) }),
-    days: z.record(dayTokens),
+    state: z.object({ recentIds: z.array(z.string()), cwd: z.string().optional() }),
+    days: z.record(dayDetail),
   })),
   windows: z.record(z.record(z.object({ fiveHourMax: pct, sevenDayMax: pct }))),
 });
