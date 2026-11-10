@@ -116,12 +116,35 @@ describe('watchChatBottom', () => {
     expect(scroller.scrollTop).toBe(100);
   });
 
-  it('watchChatBottom_userScrollsFarUp_unsticks', () => {
+  it('watchChatBottom_scrollLejosSinGesto_siguePegado', () => {
+    // Virtuoso corrigiendo `scrollTop` al remontar la lista (volver a un chat): no es el usuario.
     const scroller = fakeScroller({ scrollTop: 0, scrollHeight: 1000, clientHeight: 500 });
     const stuck = { current: true };
     watchChatBottom(scroller, stuck, fakeObserver().create);
     scroller.listener?.();
+    expect(stuck.current).toBe(true);
+  });
+
+  it('watchChatBottom_arrastrarLaBarraHaciaArriba_despega', () => {
+    const scroller = fakeScroller({ scrollTop: 500, scrollHeight: 1000, clientHeight: 500 });
+    const stuck = { current: true };
+    watchChatBottom(scroller, stuck, fakeObserver().create);
+    scroller.listeners.get('pointerdown')?.({});
+    scroller.scrollTop = 100;
+    scroller.listener?.();
     expect(stuck.current).toBe(false);
+    expect(scroller.scrollTop).toBe(100);
+  });
+
+  it('watchChatBottom_soltarLaBarraYScrollAjeno_noDespega', () => {
+    const scroller = fakeScroller({ scrollTop: 500, scrollHeight: 1000, clientHeight: 500 });
+    const stuck = { current: true };
+    watchChatBottom(scroller, stuck, fakeObserver().create);
+    scroller.listeners.get('pointerdown')?.({});
+    scroller.listeners.get('pointerup')?.({});
+    scroller.scrollTop = 100;
+    scroller.listener?.();
+    expect(stuck.current).toBe(true);
   });
 
   it('watchChatBottom_scrollWithinMargin_sticks', () => {
