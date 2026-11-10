@@ -74,8 +74,6 @@ const privateLineRegExp = () => new RegExp(`(?:${[
   escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 1 })),
   escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 2 })).replace('2', '\\d+'),
 ].join('|')})`);
-// Indicador de uso de la barra de estado («5h 12% · sem 40% · reset …»): el inicio fijo del mensaje hasta la 2ª variable.
-const statusBarWindowsRegExp = () => new RegExp(`${escapeRegExp(uiSegment('app.statusBar.windows', 0))}\\s*\\d+${escapeRegExp(uiSegment('app.statusBar.windows', 1))}`);
 // Entero con el agrupador del idioma de la tanda (la app formatea igual con Intl).
 const localizedInteger = (value) => new Intl.NumberFormat(getUiLanguage()).format(value);
 // Decimal con un dígito, con el separador del idioma de la tanda (la app formatea igual con Intl).
@@ -88,7 +86,7 @@ const uiAnyOf = (texts, anchored = false) => new RegExp(`${anchored ? '^' : ''}(
 const uiStartsWith = (key) => new RegExp(`^${escapeRegExp(uiPrefix(key))}(?:\\s|$)`);
 // Entradas que el menú ⋯ del prompt ya NO tiene. «Adjuntar» no está en el catálogo (se quitó con la entrada): se
 // busca en los dos idiomas a mano; «Abrir carpeta» es la clave de otro aviso con el mismo texto.
-const removedPromptMenuItems = () => uiAnyOf(['Adjuntar', 'Attach', ui('notifications.worktree.openFolder')]);
+const removedPromptMenuItems = () => uiAnyOf([ui('notifications.worktree.openFolder')]);
 // Botón de abrir pestaña del diálogo de Nueva conversación, con su texto de «Abriendo…».
 const openTabButtonName = () => uiAnyOf([ui('dialogs.newTab.open'), ui('dialogs.newTab.opening')]);
 import { cleanupProfile } from '../spike/f0-profile-cleanup.mjs';
@@ -165,6 +163,8 @@ const AGY_VG_DENIED_MCP = 'mcp(vg-agy-suyo/vg_tool)';
 const AGY_VG_LINK = '.vg-carpeta';
 // Vallas de codigo para medir el resaltado (F4): `ts` esta en HIGHLIGHT_LANGS (debe tokenizar) y `rust`
 // no lo esta (debe caer a texto plano, que NO es lo mismo que quedarse en blanco).
+// Bloque de código largo: el resaltado llega DESPUÉS de montar la fila y cambia su alto (lo que descoloca el scroll).
+const CODE_FENCE_LONG = ['```ts', ...Array.from({ length: 40 }, (_, i) => `export const valor${i}: number = ${i} * 2; // línea larga para que envuelva en ventanas estrechas del hilo`), '```'].join('\n');
 const TS_FENCE = '```ts\nconst answer: number = 42;\nexport const twice = (n: number): number => n * 2;\n```';
 const RUST_FENCE = '```rust\nfn main() { println!("hola"); }\n```';
 
@@ -2338,7 +2338,7 @@ const CHECKS = [
       await page.locator('[data-step-slider-popover] input[type="range"]').press('ArrowRight');
       await page.keyboard.press('Escape');
       await page.getByRole('button', { name: new RegExp('^' + uiPrefix('prompt.permission.ariaLabel').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).click();
-      await page.locator('[data-step-slider-popover] input[type="range"]').press('ArrowRight');
+      await page.locator('[role="listbox"] [data-value=":workspace|never"]').click();
       const selected = await page.evaluate(() => {
         const state = window.__mageDev.store.getState();
         const tab = state.tabs.find((item) => item.id === state.activeTabId);
@@ -3025,7 +3025,7 @@ const CHECKS = [
     // menu aparecia muy por encima, desconectado. Se mide la separacion REAL entre las dos cajas: da
     // igual si vuelca hacia arriba o hacia abajo, pero tiene que estar PEGADO a una de las dos caras.
     // Solo se ABRE el menu (Escape para cerrarlo): elegir una opcion cambiaria el esfuerzo de verdad.
-    name: 'Esfuerzo y modo: el popover del deslizador nace pegado a su chip y trae sus pasos (StepSlider)',
+    name: 'Esfuerzo: el popover del deslizador nace pegado a su chip y trae sus pasos (StepSlider)',
     async run(page) {
       // P-028 32/33: modo y esfuerzo son deslizadores de pasos. Grupo A (0.1.2, punto 4): se RECORREN todos
       // los pasos con el teclado midiendo que ni el chip ni el popover se mueven (el de modo saltaba 16 px
@@ -3039,7 +3039,6 @@ const CHECKS = [
       if (propia) await openTemporaryConversation(page);
       const casos = [
         { chip: `button[aria-label="${cssAttr(ui('prompt.effort.ariaLabel'))}"]`, pasos: 6 },
-        { chip: `button[aria-label^="${cssAttr(uiPrefix('prompt.permission.ariaLabel'))}"]`, pasos: 5 },
       ];
       const medidas = [];
       try {
@@ -4246,52 +4245,43 @@ const CHECKS = [
     },
   },
   {
-    // P-026, 3.1 (D17): con el texto largo, los selectores bajan a su fila y el editor se queda con el
-    // ancho; con el input vacio, vuelven al lado del texto. Borrador fijado por el store (no se envia).
-    name: 'Prompt: los selectores bajan cuando el texto salta de linea y vuelven con el input vacio',
+    // P-038 (rediseño del 10-11): la caja del input es «+» · editor · enviar, con los dos botones pegados al FONDO (el
+    // texto crece hacia arriba sin moverlos) y el editor sin pasar por encima de enviar. Los selectores (modelo, esfuerzo,
+    // modo) van DEBAJO de la caja. Borrador fijado por el store (no se envía).
+    name: 'Prompt: «+» y enviar al fondo de la caja, nada encima de enviar y los selectores debajo (P-038)',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
       });
       await openTemporaryConversation(page);
-      // Ventana ANCHA: con los dos docks abiertos el chat de la ventana por defecto mide ~500 px, y ahi los
-      // selectores no caben al lado del texto ni vacio (bajan por el flex-wrap, que es el otro mecanismo).
-      const ventanaPrevia = page.viewportSize();
-      await page.setViewportSize({ width: 1800, height: 900 });
-      await page.waitForTimeout(CONFIG.settleMs * 2);
       const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
       const medir = () =>
-        page.evaluate(() => {
-          const host = document.querySelector('[data-prompt-editor="true"]');
-          const editor = host?.querySelector('.cm-editor');
-          const controles = document.querySelector('[data-prompt-controls="true"]');
-          if (!host || !editor || !controles) return null;
-          const e = editor.getBoundingClientRect();
-          const c = controles.getBoundingClientRect();
-          const fila = host.parentElement.getBoundingClientRect();
-          return { editorTop: e.top, editorBottom: e.bottom, controlesTop: c.top, anchoEditor: host.offsetWidth, anchoFila: fila.width, disposicion: host.getAttribute('data-prompt-layout') };
-        });
-      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'a'.repeat(400), attachments: [], mentions: [] }), tabId);
-      await page.waitForTimeout(CONFIG.settleMs * 3);
-      await waitForStillBox(page, '[data-prompt-controls="true"]');
-      const largo = await medir();
-      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, null), tabId);
-      await page.waitForTimeout(CONFIG.settleMs * 3);
-      await waitForStillBox(page, '[data-prompt-controls="true"]');
-      const vacio = await medir();
-      if (ventanaPrevia !== null) await page.setViewportSize(ventanaPrevia);
-      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
-      await page.waitForTimeout(CONFIG.settleMs);
-      const ok =
-        largo !== null &&
-        vacio !== null &&
-        largo.disposicion === 'stacked' &&
-        largo.controlesTop >= largo.editorBottom - 1 &&
-        largo.anchoEditor >= largo.anchoFila * 0.9 &&
-        vacio.disposicion === 'inline' &&
-        Math.abs(vacio.controlesTop - vacio.editorTop) <= 4;
-      return { ok, detail: JSON.stringify({ largo, vacio }) };
+        page.evaluate((id) => {
+          const pane = document.querySelector(`[data-pane-tab-id="${id}"]`);
+          const host = pane?.querySelector('[data-prompt-editor="true"]');
+          const fila = host?.parentElement;
+          const mas = fila?.querySelector('[data-prompt-actions="true"]');
+          const enviar = fila?.lastElementChild;
+          const controles = pane?.querySelector('[data-prompt-controls="true"]');
+          if (!host || !fila || !mas || !enviar || !controles) return null;
+          const [f, h, m, e, c] = [fila, host, mas, enviar, controles].map((n) => n.getBoundingClientRect());
+          return { filaBottom: f.bottom, editorTop: h.top, editorRight: h.right, editorAlto: h.height, masBottom: m.bottom, enviarTop: e.top, enviarLeft: e.left, enviarBottom: e.bottom, controlesTop: c.top };
+        }, tabId);
+      const caso = (m) => m !== null && Math.abs(m.masBottom - m.enviarBottom) <= 2 && m.editorRight <= m.enviarLeft + 1 && m.controlesTop >= m.filaBottom - 1;
+      try {
+        const vacio = await medir();
+        await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'a '.repeat(400), attachments: [], mentions: [] }), tabId);
+        await page.waitForTimeout(CONFIG.settleMs * 3);
+        const largo = await medir();
+        // Con el texto largo el editor crece hacia arriba: enviar se queda abajo y por encima de él no hay texto.
+        const ok = caso(vacio) && caso(largo) && largo.editorAlto > vacio.editorAlto + 10 && largo.enviarTop > largo.editorTop + 10;
+        return { ok, detail: JSON.stringify({ vacio, largo }) };
+      } finally {
+        await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, null), tabId);
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
     },
   },
   {
@@ -4389,7 +4379,7 @@ const CHECKS = [
     // o bien trae las DOS ventanas con su reset (5 h y 7 d). Nunca un 0 % de relleno.
     name: '22: popover «Uso general» con 5 h y 7 d y su reset por cuenta',
     async run(page) {
-      const disparador = page.locator('span[tabindex="0"]', { hasText: statusBarWindowsRegExp() }).first();
+      const disparador = page.locator('[data-usage-summary]').first();
       if ((await disparador.count()) === 0) return { ok: false, detail: 'sin indicador de uso en la barra' };
       await disparador.hover();
       await page.waitForTimeout(CONFIG.settleMs);
@@ -4541,16 +4531,16 @@ const CHECKS = [
     },
   },
   {
-    // P-026, 2.1: el menu ⋯ del prompt ya no ofrece «Adjuntar una imagen» (se pega con Ctrl+V) ni
-    // «Abrir carpeta» (la insignia de encima del input ya lo hace). Se abre y se cierra con Escape.
-    name: 'Menú ⋯ del prompt: sin «Adjuntar» ni «Abrir carpeta», con «Abrir terminal»',
+    // P-038: el «+» de abajo a la izquierda de la caja agrupa «Adjuntar imagen» (antes un clip suelto) y las acciones
+    // del antiguo «⋯». «Abrir carpeta» sigue fuera: la carpeta se abre desde su insignia. Se abre y se cierra con Escape.
+    name: 'Menú «+» del prompt: con «Adjuntar imagen» y «Abrir terminal», sin «Abrir carpeta»',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
       });
       await openTemporaryConversation(page);
-      const boton = page.locator(`[aria-haspopup="menu"][aria-label="${cssAttr(ui('mcp.servers.column.actions'))}"]`).first();
+      const boton = page.locator('[data-prompt-actions="true"] [aria-haspopup="menu"]').first();
       await boton.click();
       await page.locator('[role="menu"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const items = await page.evaluate(() => [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].map((n) => (n.textContent ?? '').trim()));
@@ -4558,7 +4548,7 @@ const CHECKS = [
       await page.locator('[role="menu"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
-      const ok = items.length >= 1 && !items.some((t) => removedPromptMenuItems().test(t)) && items.some((t) => t.includes(ui('prompt.actions.openTerminal')));
+      const ok = items.length >= 2 && !items.some((t) => removedPromptMenuItems().test(t)) && items[0] === ui('i2.prompt.attachImage') && items.some((t) => t.includes(ui('prompt.actions.openTerminal')));
       return { ok, detail: `items=${JSON.stringify(items)}` };
     },
   },
@@ -7141,7 +7131,7 @@ const CHECKS = [
     // segmento no informa de nada.
     //
     // NO se pulsa la carpeta: abriria el explorador de ficheros del sistema.
-    name: 'Chat: la carpeta va en la sublinea bajo las pestañas (Q03) y es accionable, con la privacidad al lado (P-038 V3)',
+    name: 'Chat: la carpeta va en la fila de debajo del input (P-038) y es accionable, con la privacidad al lado (V3)',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -7165,8 +7155,8 @@ const CHECKS = [
           cwd,
           hayFila: fila !== null,
           esSublinea: fila?.getAttribute('data-tab-subline') === 'true',
-          // La sublinea va ANTES del input (encima del hilo), medido en pixeles y no por el orden del DOM.
-          antesDelInput: fila !== null && editor !== null ? fila.getBoundingClientRect().bottom <= editor.getBoundingClientRect().top + 1 : null,
+          // La fila va DEBAJO de la caja del input (P-038), medido en pixeles y no por el orden del DOM.
+          debajoDelInput: fila !== null && editor !== null ? fila.getBoundingClientRect().top >= editor.parentElement.getBoundingClientRect().bottom - 1 : null,
           etiquetas,
           pulsables: etiquetas.filter((e) => e.pulsable).length,
           // La fila no puede ensanchar el panel: las rutas largas son la norma.
@@ -7195,7 +7185,7 @@ const CHECKS = [
       const ok =
         todo.hayFila &&
         todo.esSublinea &&
-        todo.antesDelInput === true &&
+        todo.debajoDelInput === true &&
         // Cuenta + carpeta + privacidad (P-038 V3; el scratchpad no es un repositorio: sin rama; sin dato aún no hay % de
         // contexto). El modelo no va (D18).
         todo.etiquetas.length === 3 &&
@@ -8524,7 +8514,7 @@ const CHECKS = [
     },
   },
   {
-    name: 'P-038 V3: «Compartido» y el % de contexto van en la sublínea, no encima del input',
+    name: 'P-038 V3: «Compartido» va en la fila de la conversación y el % de contexto en la barra de estado',
     async run(page) {
       await openTemporaryConversation(page);
       await page.evaluate(() => {
@@ -8539,7 +8529,7 @@ const CHECKS = [
         const compartidos = [...(pane?.querySelectorAll('span') ?? [])].filter((n) => n.children.length === 0 && n.textContent?.trim() === textos.shared);
         return {
           privacidad: sublinea?.querySelector('[data-tab-subline-privacy]')?.getAttribute('data-tab-subline-privacy') ?? null,
-          contexto: sublinea?.querySelector('[data-tab-subline-context]')?.textContent?.trim() ?? null,
+          contexto: document.querySelector('[data-status-context]')?.textContent?.replace('·', '').trim() ?? null,
           compartidosFueraDeLaSublinea: compartidos.filter((n) => !sublinea?.contains(n)).length,
         };
       }, { shared: ui('chat.info.shared') });
@@ -8651,6 +8641,44 @@ const CHECKS = [
     },
   },
   {
+    // Informe del usuario (10-11): «al volver a un chat no siempre vuelve al final, a veces se queda por medio». Al
+    // remontar la lista, Virtuoso corrige el scroll al medir filas de alturas muy distintas, y ese scroll SIN gesto
+    // despegaba el final. Se va y se vuelve cinco veces (es intermitente) y se mide pasado el asentamiento.
+    name: 'P-038: al volver a un chat largo se queda en el final, no por medio',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const larga = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      // Alturas muy dispares: lo que hace que las estimaciones de Virtuoso fallen al remontar.
+      await hydrateBlocks(page, Array.from({ length: 60 }, (_, i) => (i % 2 === 0
+        ? { kind: 'user', id: `vg-vuelta-${i}`, text: i % 6 === 0 ? `Fila ${i}\n${'Texto largo de prueba. '.repeat(80)}` : `Fila ${i}`, time: '12:00', attachments: [] }
+        : { kind: 'agent', id: `vg-vuelta-${i}`, runs: [{ code: false, text: i % 4 === 1 ? `Mira:\n\n${CODE_FENCE_LONG}` : 'Respuesta larga del agente. '.repeat(120) }], streaming: false })));
+      await openTemporaryConversation(page);
+      const otra = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const distancias = [];
+      try {
+        for (let vuelta = 0; vuelta < 5; vuelta += 1) {
+          await page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), larga);
+          await page.waitForTimeout(1500);
+          distancias.push(await page.evaluate((id) => {
+            const el = document.querySelector(`[data-pane-tab-id="${id}"] [data-chat-scroller]`);
+            return el === null ? null : Math.round(el.scrollHeight - el.scrollTop - el.clientHeight);
+          }, larga));
+          await page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), otra);
+          await page.waitForTimeout(CONFIG.settleMs);
+        }
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      const ok = distancias.length === 5 && distancias.every((d) => d !== null && d <= 3);
+      return { ok, detail: JSON.stringify({ distancias }) };
+    },
+  },
+  {
     name: 'P-038: el popover de uso con muchas cuentas cabe, tiene scroll y se puede entrar en él',
     async run(page) {
       const previo = await page.evaluate(() => ({ accounts: window.__mageDev.store.getState().accounts }));
@@ -8660,7 +8688,7 @@ const CHECKS = [
           const base = store.getState().accounts[0];
           store.setState({ accounts: [...store.getState().accounts, ...Array.from({ length: 24 }, (_, i) => ({ ...base, id: `vg-uso-${i}`, alias: `Cuenta ${i}`, name: `Cuenta ${i}` }))] });
         });
-        const disparador = page.locator('span[tabindex="0"]', { hasText: statusBarWindowsRegExp() }).first();
+        const disparador = page.locator('[data-usage-summary]').first();
         if ((await disparador.count()) === 0) return { ok: false, detail: 'sin indicador de uso en la barra' };
         await disparador.hover();
         await page.waitForTimeout(CONFIG.settleMs);
@@ -10456,11 +10484,11 @@ const CHECKS = [
         const chip = page.locator(`button[aria-label^="${cssAttr(uiPrefix('prompt.permission.ariaLabel'))}"]`).first();
         await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         await chip.click();
-        const popover = page.locator('[data-step-slider-popover="true"]');
-        await popover.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-        const pasos = await popover.locator('input[type="range"]').evaluate((el) => Number(el.max) + 1);
+        const lista = page.locator('[role="listbox"]');
+        await lista.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const pasos = await lista.locator('[role="option"]').count();
         await page.keyboard.press('Escape');
-        await popover.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await lista.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         const antes = await permissionModeLabel(page);
         await clearPrompt(page);
         await page.getByRole('textbox', { name: ui('prompt.editor.ariaLabel') }).press('Shift+Tab');
@@ -11645,7 +11673,9 @@ const CHECKS = [
       try {
         await openTemporaryConversation(page);
         const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
-        const boton = await page.getByRole('button', { name: ui('i2.prompt.attachImage') }).count();
+        await page.locator(`[data-pane-tab-id="${tabId}"] [data-prompt-actions="true"] [aria-haspopup="menu"]`).click();
+        const boton = await page.getByRole('menuitem', { name: ui('i2.prompt.attachImage') }).count();
+        await page.keyboard.press('Escape');
         const input = page.locator(`[data-pane-tab-id="${tabId}"] input[data-attach-input="image"]`);
         await input.setInputFiles({ name: 'boton.png', mimeType: 'image/png', buffer: Buffer.from(TINY_PNG_BASE64, 'base64') });
         await page.waitForTimeout(CONFIG.settleMs);
