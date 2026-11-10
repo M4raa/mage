@@ -31,7 +31,7 @@ import { chatRows, currentTurnSummary, stickResetKey, type ChatRow } from '../ch
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import type { Block, ImageAttachment } from '../types';
 import { classifySystemWrapper } from '@shared/systemWrappers';
-import { INITIAL_ANCHOR, STICK_TO_BOTTOM_PX, appendedTailKeys, nextListAnchor, settleAtBottom, watchChatBottom, type FrameApi, type ListAnchor } from '../chatListAnchor';
+import { AT_BOTTOM_PX, INITIAL_ANCHOR, appendedTailKeys, nextListAnchor, resetAway, settleAtBottom, watchChatBottom, type AwayState, type FrameApi, type ListAnchor } from '../chatListAnchor';
 import { MOTION_S } from '../motionPresets';
 import { RecentProjects } from './RecentProjects';
 import { reportActionError } from '../notificationStore';
@@ -118,7 +118,9 @@ export function BlockChat(): React.JSX.Element {
           firstItemIndex={anchor.firstIndex}
           initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
           increaseViewportBy={{ top: VIEWPORT_OVERSCAN_PX, bottom: VIEWPORT_OVERSCAN_PX }}
-          atBottomThreshold={STICK_TO_BOTTOM_PX}
+          // P-038, MEDIDO (verify:gui instrumentado): con 80 px Virtuoso se creía «al final» a 40 px tras un golpe de rueda y
+          // se mantenía ahí al crecer la lista aunque `followOutput` dijera que no. El margen de 80 px lo lleva `watchChatBottom`.
+          atBottomThreshold={AT_BOTTOM_PX}
           followOutput={followOutput}
           scrollerRef={onScrollerRef}
           components={CHAT_LIST_COMPONENTS}
@@ -246,12 +248,14 @@ function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const onScrollerRef = useCallback((ref: HTMLElement | Window | null): void => setScroller(ref instanceof HTMLElement ? ref : null), []);
   // Pegado al final REAL: listener de scroll propio y ResizeObserver del scroller y su contenido (V7, R59).
-  useLayoutEffect(() => (scroller === null ? undefined : watchChatBottom(scroller, stuckRef, (onResize) => new ResizeObserver(onResize))), [scroller]);
+  const awayRef = useRef<AwayState>({ away: false, downIntent: false });
+  useLayoutEffect(() => (scroller === null ? undefined : watchChatBottom(scroller, stuckRef, (onResize) => new ResizeObserver(onResize), awayRef.current)), [scroller]);
   useLayoutEffect(() => {
     if (stuckRef.current) scrollToLastRow(virtuosoRef.current);
   }, [tailSize, turnLive]);
   useLayoutEffect(() => {
     stuckRef.current = true;
+    resetAway(awayRef.current);
     scrollToLastRow(virtuosoRef.current);
   }, [resetKey]);
   // Tras cada salto al final (filas nuevas, texto en streaming, cambio de contenido o scroller recién montado), unos

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIRST_ITEM_INDEX_BASE, INITIAL_ANCHOR, SETTLE_FRAMES, appendedTailKeys, nextListAnchor, pinToBottom, settleAtBottom, watchChatBottom, type FrameApi, type ListAnchor, type ScrollIntentEvent, type SizeObserver, type WatchedScroller } from './chatListAnchor';
+import { FIRST_ITEM_INDEX_BASE, INITIAL_ANCHOR, SETTLE_FRAMES, appendedTailKeys, nextListAnchor, pinToBottom, settleAtBottom, watchChatBottom, type FrameApi, type ListAnchor, type ScrollIntentEvent, type SizeObserver, type WatchedScroller, resetAway } from './chatListAnchor';
 
 const keyOf = (s: string): string => s;
 
@@ -175,6 +175,31 @@ describe('watchChatBottom', () => {
     scroller.scrollTop = 470;
     scroller.listener?.();
     expect(stuck.current).toBe(false);
+    scroller.listeners.get('wheel')?.({ deltaY: 40 });
+    scroller.scrollTop = 500;
+    scroller.listener?.();
+    expect(stuck.current).toBe(true);
+  });
+
+  // MEDIDO en verify:gui: Virtuoso emite un scroll al final (distancia 0) al medir el texto que llega, sin que el
+  // usuario haya hecho nada. Eso no puede reenganchar.
+  it('watchChatBottom_trasSubirUnScrollAlFinalSinGesto_noVuelveAPegar', () => {
+    const scroller = fakeScroller({ scrollTop: 460, scrollHeight: 1000, clientHeight: 500 });
+    const stuck = { current: true };
+    watchChatBottom(scroller, stuck, fakeObserver().create);
+    scroller.listeners.get('wheel')?.({ deltaY: -40 });
+    scroller.scrollTop = 500;
+    scroller.listener?.();
+    expect(stuck.current).toBe(false);
+  });
+
+  it('watchChatBottom_resetAwayTrasEnviar_vuelveAPegarConElSiguienteScroll', () => {
+    const scroller = fakeScroller({ scrollTop: 400, scrollHeight: 1000, clientHeight: 500 });
+    const stuck = { current: true };
+    const state = { away: false, downIntent: false };
+    watchChatBottom(scroller, stuck, fakeObserver().create, state);
+    scroller.listeners.get('wheel')?.({ deltaY: -40 });
+    resetAway(state);
     scroller.scrollTop = 500;
     scroller.listener?.();
     expect(stuck.current).toBe(true);
