@@ -481,6 +481,7 @@
   "chat.instructions.open": "Abrir",
   "chat.instructions.scopeProject": "Proyecto",
   "chat.instructions.scopeUser": "Usuario",
+  "chat.jumpToEnd": "Ir al final",
   "chat.keepAlive.rewindFailed": "No se pudo retirar un mensaje de mantenimiento de la caché; el mantenimiento queda apagado en esta conversación.",
   "chat.load.failed": "No se pudo cargar la conversación: {error}",
   "chat.load.loading": "Cargando conversación…",

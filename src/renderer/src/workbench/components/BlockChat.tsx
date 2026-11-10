@@ -83,7 +83,7 @@ export function BlockChat(): React.JSX.Element {
   const anchor = useListAnchor(activeTabId, rows);
   const enteringKeys = useEnteringRowKeys(`${activeTabId}:${anchor.generation}`, rows);
   const expandedRows = useExpandedRowsStore(activeTabId);
-  const { virtuosoRef, onScrollerRef, followOutput } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
+  const { virtuosoRef, onScrollerRef, followOutput, away, jumpToEnd } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
   const lastRow = rows[rows.length - 1];
   const lastRowKey = lastRow === undefined ? null : rowKey(lastRow);
   const footerContext = useMemo<ChatListContext>(
@@ -100,7 +100,7 @@ export function BlockChat(): React.JSX.Element {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       {/* Region viva (solo lectores): anuncia el CAMBIO de estado del turno, no cada delta (evita
           ruido). El texto solo cambia en las transiciones, que es cuando el SR lo lee. Va FUERA del
           scroller de la lista virtual. */}
@@ -128,6 +128,19 @@ export function BlockChat(): React.JSX.Element {
           itemContent={renderChatItem}
         />
       </ExpandedRowsContext.Provider>
+      {/* P-038: subido a leer, un botón en el centro, justo encima del input, lleva al final y vuelve a seguirlo. */}
+      {away && (
+        <button
+          type="button"
+          onClick={jumpToEnd}
+          data-jump-to-end="true"
+          aria-label={t('chat.jumpToEnd')}
+          data-tip={t('chat.jumpToEnd')}
+          className="mg-enter absolute bottom-[10px] left-1/2 flex h-[30px] w-[30px] -translate-x-1/2 items-center justify-center rounded-full border border-mg-border-ctrl bg-mg-panel text-mg-body2 mg-shadow-pop transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
+        >
+          <Icon name="arrowDown" size={14} />
+        </button>
+      )}
       </ReferenceContext.Provider>
     </div>
   );
@@ -242,6 +255,9 @@ function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize
   readonly virtuosoRef: React.RefObject<VirtuosoHandle | null>;
   readonly onScrollerRef: (ref: HTMLElement | Window | null) => void;
   readonly followOutput: () => 'auto' | false;
+  // El usuario subió a propósito (rueda, teclas, barra): se enseña «ir al final».
+  readonly away: boolean;
+  readonly jumpToEnd: () => void;
 } {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const stuckRef = useRef(true);
@@ -250,12 +266,21 @@ function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize
   // Pegado al final REAL: listener de scroll propio y ResizeObserver del scroller y su contenido (V7, R59).
   const awayRef = useRef<AwayState>({ away: false, downIntent: false });
   useLayoutEffect(() => (scroller === null ? undefined : watchChatBottom(scroller, stuckRef, (onResize) => new ResizeObserver(onResize), awayRef.current)), [scroller]);
+  // Detrás del vigilante (se registra después): lee el «se fue» ya actualizado por el mismo scroll.
+  const [away, setAway] = useState(false);
+  useEffect(() => {
+    if (scroller === null) return undefined;
+    const sync = (): void => setAway(awayRef.current.away);
+    scroller.addEventListener('scroll', sync, { passive: true });
+    return () => scroller.removeEventListener('scroll', sync);
+  }, [scroller]);
   useLayoutEffect(() => {
     if (stuckRef.current) scrollToLastRow(virtuosoRef.current);
   }, [tailSize, turnLive]);
   useLayoutEffect(() => {
     stuckRef.current = true;
     resetAway(awayRef.current);
+    setAway(false);
     scrollToLastRow(virtuosoRef.current);
   }, [resetKey]);
   // Tras cada salto al final (filas nuevas, texto en streaming, cambio de contenido o scroller recién montado), unos
@@ -267,7 +292,14 @@ function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize
   // Virtuoso sigue las filas nuevas con SU margen de 80 px; aquí manda el «pegado» propio, que la rueda hacia arriba
   // suelta en el acto (P-038).
   const followOutput = useCallback((): 'auto' | false => (stuckRef.current ? 'auto' : false), []);
-  return { virtuosoRef, onScrollerRef, followOutput };
+  const jumpToEnd = useCallback((): void => {
+    stuckRef.current = true;
+    resetAway(awayRef.current);
+    setAway(false);
+    scrollToLastRow(virtuosoRef.current);
+    if (scroller !== null) settleAtBottom(scroller, stuckRef, BROWSER_FRAMES);
+  }, [scroller]);
+  return { virtuosoRef, onScrollerRef, followOutput, away, jumpToEnd };
 }
 
 const BROWSER_FRAMES: FrameApi = { request: (callback) => requestAnimationFrame(callback), cancel: (id) => cancelAnimationFrame(id) };
