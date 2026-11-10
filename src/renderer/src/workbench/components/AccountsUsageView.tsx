@@ -1,26 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { totalTokens, type DailyTokens, type UsageHistory } from '@shared/usageHistory';
-import { formatMicroUsd, type UsageInfo } from '@shared/usage';
+import type { UsageHistory } from '@shared/usageHistory';
+import { formatMicroUsd } from '@shared/usage';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
-import { formatTokensShort } from '../contextView';
-import { formatResetAbsolute } from '../usageView';
-import { dailySeries, daysOf, lastDays, localDay, periodTotals, PERIODS, seriesMax, type PeriodDays } from '../accountsUsageView';
+import { lastDays, localDay, PERIODS, type PeriodDays } from '../accountsUsageView';
+import { combineDetail, computeAccountMetrics, type AccountMetrics } from '../accountMetrics';
 import { describeError } from '../describeError';
-import { reportActionError } from '../notificationStore';
-import { ACCOUNT_ALIAS_MAX } from '@shared/settings';
 import type { Account } from '../types';
 import { Icon } from './Icon';
-import { ColorSwatches } from './TabContextMenu';
-import { DeleteAccountDialog } from './AccountMenu';
-import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
-import { loginLabel } from './accountBadge';
+import { AccountDetailHeader } from './AccountUsageActions';
+import { ActivitySection, DailyChart, Kpi, ModelsTable, TopList, WindowPeaksSection } from './AccountUsageSections';
+import { formatTokensShort } from '../contextView';
 import { apiBilledLabel } from '../accountView';
 import { useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale, formatInteger } from '../../i18n/format';
 
-// «Cuentas y consumo» (P-038 V11): de un vistazo, el estado y el consumo de TODAS las cuentas (el popover de la barra se
-// quedaba corto con muchas) y su gestión. Se abre al pulsar el resumen de uso de la barra de estado.
+// «Cuentas y consumo» (P-038 V11; rediseño P-039 F6): a la izquierda las cuentas con sus cifras y «Añadir cuenta»; a la
+// derecha el detalle de la elegida (o de todas). Se abre al pulsar el resumen de uso de la barra de estado.
 
 export function AccountsUsageView(): React.JSX.Element | null {
   const open = useWorkbenchStore((s) => s.accountsUsageOpen);
@@ -46,6 +42,19 @@ function useUsageHistory(): { readonly load: Load; readonly reload: () => void }
   return { load, reload: () => setRound((r) => r + 1) };
 }
 
+const money = (microUsd: number): string => formatMicroUsd(microUsd, activeFormatLocale());
+
+// Métricas de una cuenta (o de todas, con `accountId` null) en el periodo.
+function useMetrics(history: UsageHistory | null, accountId: string | null, period: readonly string[]): AccountMetrics | null {
+  const plan = useWorkbenchStore((s) => (accountId === null ? undefined : s.settings.planPriceMicroUsdByAccount[accountId]));
+  return useMemo(() => {
+    if (history === null) return null;
+    const account = accountId === null ? undefined : history.accounts.find((entry) => entry.accountId === accountId);
+    const detail = accountId === null ? combineDetail(history.accounts) : (account?.detail ?? []);
+    return computeAccountMetrics({ detail, windows: account?.windows ?? [], period, planPriceMicroUsd: plan ?? null });
+  }, [history, accountId, period, plan]);
+}
+
 function AccountsUsageDialog(): React.JSX.Element {
   const t = useT();
   const close = useWorkbenchStore((s) => s.closeAccountsUsage);
@@ -53,9 +62,10 @@ function AccountsUsageDialog(): React.JSX.Element {
   const refreshUsage = useWorkbenchStore((s) => s.refreshUsage);
   const dialogRef = useDialogA11y({ onClose: close });
   const { load, reload } = useUsageHistory();
-  const [period, setPeriod] = useState<PeriodDays>(30);
+  const [periodDays, setPeriodDays] = useState<PeriodDays>(30);
   const [accountId, setAccountId] = useState<string | null>(null);
-  const today = localDay(new Date());
+  const period = useMemo(() => lastDays(localDay(new Date()), periodDays), [periodDays]);
+  const history = load.kind === 'ready' ? load.history : null;
 
   // Ventanas frescas de cada cuenta al abrir (main cachea; las de API no consultan nada).
   useEffect(() => {
@@ -64,6 +74,7 @@ function AccountsUsageDialog(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- solo al abrir
   }, []);
 
+  const selected = accounts.find((account) => account.id === accountId) ?? null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-mg-scrim" onClick={close}>
       <div
@@ -73,10 +84,11 @@ function AccountsUsageDialog(): React.JSX.Element {
         aria-labelledby="accounts-usage-title"
         data-accounts-usage="true"
         onClick={(e) => e.stopPropagation()}
-        className="flex h-[min(88vh,880px)] w-[min(94vw,1180px)] flex-col overflow-hidden rounded-[11px] border border-mg-border-pop bg-mg-panel text-[12px] mg-shadow-modal"
+        className="flex h-[min(90vh,900px)] w-[min(96vw,1240px)] flex-col overflow-hidden rounded-[11px] border border-mg-border-pop bg-mg-panel text-[12px] mg-shadow-modal"
       >
-        <header className="flex items-center gap-[10px] border-b border-mg-border-subtle p-[14px_18px]">
+        <header className="flex items-center gap-[10px] border-b border-mg-border-subtle p-[12px_18px]">
           <h2 id="accounts-usage-title" className="flex-1 text-[14px] font-semibold text-mg-text">{t('accountsUsage.title')}</h2>
+          <PeriodPicker value={periodDays} onChange={setPeriodDays} />
           <button onClick={reload} className="flex items-center gap-[5px] rounded-[6px] border border-mg-border-emph px-[9px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover">
             <Icon name="refresh" size={12} />
             {t('accountsUsage.refresh')}
@@ -85,270 +97,157 @@ function AccountsUsageDialog(): React.JSX.Element {
             <Icon name="close" size={13} />
           </button>
         </header>
-        <div className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-y-auto p-[16px_18px]">
-          <Filters period={period} onPeriod={setPeriod} accountId={accountId} onAccount={setAccountId} accounts={accounts} />
-          {load.kind === 'loading' && <p className="text-[11px] text-mg-muted">{t('accountsUsage.loading')}</p>}
-          {load.kind === 'error' && <p role="alert" className="text-[11px] text-mg-danger">{t('accountsUsage.loadError', { error: load.message })}</p>}
-          {load.kind === 'ready' && <Overview history={load.history} accountId={accountId} period={period} today={today} />}
-          <section className="grid grid-cols-[repeat(auto-fill,minmax(330px,1fr))] gap-[12px]" aria-label={t('accountsUsage.accountsAria')}>
-            {accounts.map((account) => (
-              <AccountCard key={account.id} account={account} days={load.kind === 'ready' ? daysOf(load.history, account.id) : null} today={today} />
-            ))}
-          </section>
+        <div className="flex min-h-0 flex-1">
+          <AccountList accounts={accounts} history={history} period={period} selectedId={accountId} onSelect={setAccountId} />
+          <main className="flex min-w-0 flex-1 flex-col gap-[16px] overflow-y-auto p-[16px_20px]" data-accounts-usage-detail={accountId ?? 'all'}>
+            {selected !== null && <AccountDetailHeader account={selected} />}
+            {selected === null && <h3 className="text-[13px] font-semibold text-mg-text">{t('accountsUsage.allAccounts')}</h3>}
+            {load.kind === 'loading' && <p className="text-[11px] text-mg-muted">{t('accountsUsage.loading')}</p>}
+            {load.kind === 'error' && <p role="alert" className="text-[11px] text-mg-danger">{t('accountsUsage.loadError', { error: load.message })}</p>}
+            {history !== null && <Detail history={history} accountId={accountId} account={selected} period={period} />}
+          </main>
         </div>
       </div>
     </div>
   );
 }
 
-function Filters(props: {
-  readonly period: PeriodDays;
-  readonly onPeriod: (period: PeriodDays) => void;
-  readonly accountId: string | null;
-  readonly onAccount: (accountId: string | null) => void;
+function PeriodPicker({ value, onChange }: { readonly value: PeriodDays; readonly onChange: (days: PeriodDays) => void }): React.JSX.Element {
+  const t = useT();
+  return (
+    <div role="radiogroup" aria-label={t('accountsUsage.periodAria')} className="flex overflow-hidden rounded-[7px] border border-mg-border-ctrl">
+      {PERIODS.map((days) => (
+        <button key={days} role="radio" aria-checked={value === days} onClick={() => onChange(days)} className={`px-[10px] py-[3px] text-[11px] ${value === days ? 'bg-mg-sel text-mg-sel-ink' : 'text-mg-sec hover:bg-mg-hover'}`}>
+          {t('accountsUsage.period', { days })}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AccountList(props: {
   readonly accounts: readonly Account[];
+  readonly history: UsageHistory | null;
+  readonly period: readonly string[];
+  readonly selectedId: string | null;
+  readonly onSelect: (accountId: string | null) => void;
 }): React.JSX.Element {
   const t = useT();
+  const closeAccountsUsage = useWorkbenchStore((s) => s.closeAccountsUsage);
+  const openAddAccount = useWorkbenchStore((s) => s.openAddAccount);
   return (
-    <div className="flex flex-wrap items-center gap-[10px]">
-      <div role="radiogroup" aria-label={t('accountsUsage.periodAria')} className="flex overflow-hidden rounded-[7px] border border-mg-border-ctrl">
-        {PERIODS.map((days) => (
-          <button
-            key={days}
-            role="radio"
-            aria-checked={props.period === days}
-            onClick={() => props.onPeriod(days)}
-            className={`px-[10px] py-[3px] text-[11px] ${props.period === days ? 'bg-mg-sel text-mg-sel-ink' : 'text-mg-sec hover:bg-mg-hover'}`}
-          >
-            {t('accountsUsage.period', { days })}
-          </button>
-        ))}
-      </div>
-      <select
-        aria-label={t('accountsUsage.accountFilterAria')}
-        value={props.accountId ?? ''}
-        onChange={(e) => props.onAccount(e.target.value.length === 0 ? null : e.target.value)}
-        className="rounded-[7px] border border-mg-border-ctrl bg-mg-panel px-[8px] py-[3px] text-[11px] text-mg-body"
-      >
-        <option value="">{t('accountsUsage.allAccounts')}</option>
+    <nav aria-label={t('accountsUsage.accountsAria')} className="flex w-[290px] flex-none flex-col border-r border-mg-border-subtle">
+      <div className="flex min-h-0 flex-1 flex-col gap-[3px] overflow-y-auto p-[10px]">
+        <ListRow selected={props.selectedId === null} onClick={() => props.onSelect(null)} data="all">
+          <span className="grid h-[24px] w-[24px] flex-none place-items-center rounded-[6px] border border-mg-border-ctrl text-mg-sec"><Icon name="user" size={13} /></span>
+          <span className="min-w-0 flex-1 truncate font-semibold text-mg-text">{t('accountsUsage.allAccounts')}</span>
+        </ListRow>
         {props.accounts.map((account) => (
-          <option key={account.id} value={account.id}>{account.alias}</option>
+          <AccountListRow key={account.id} account={account} history={props.history} period={props.period} selected={props.selectedId === account.id} onSelect={() => props.onSelect(account.id)} />
         ))}
-      </select>
-    </div>
-  );
-}
-
-function Overview({ history, accountId, period, today }: { readonly history: UsageHistory; readonly accountId: string | null; readonly period: PeriodDays; readonly today: string }): React.JSX.Element {
-  const t = useT();
-  const days = daysOf(history, accountId);
-  const totals = periodTotals(days, today);
-  const series = useMemo(() => dailySeries(days, lastDays(today, period)), [days, today, period]);
-  const unattributed = history.unattributed.reduce((sum, day) => sum + totalTokens(day), 0);
-  return (
-    <section className="flex flex-col gap-[12px]" data-accounts-usage-overview="true">
-      <div className="grid grid-cols-3 gap-[10px]">
-        <Tile label={t('accountsUsage.today')} value={totals.today} />
-        <Tile label={t('accountsUsage.week')} value={totals.week} />
-        <Tile label={t('accountsUsage.month')} value={totals.month} />
       </div>
-      <DailyBars series={series} />
-      <p className="text-[10.5px] leading-[1.45] text-mg-muted">
-        {t('accountsUsage.sourceNote')}
-        {accountId === null && unattributed > 0 && ` ${t('accountsUsage.unattributedNote', { tokens: formatTokensShort(unattributed) })}`}
-      </p>
-    </section>
+      {/* Este diálogo comparte capa con el de añadir cuenta: se cierra antes para no taparlo. */}
+      <button
+        data-accounts-usage-add="true"
+        onClick={() => {
+          closeAccountsUsage();
+          openAddAccount();
+        }}
+        className="m-[10px] flex items-center justify-center gap-[6px] rounded-[7px] border border-dashed border-mg-border-emph py-[6px] text-[11.5px] text-mg-body2 hover:bg-mg-hover"
+      >
+        <Icon name="plus" size={12} />
+        {t('accountsUsage.addAccount')}
+      </button>
+    </nav>
   );
 }
 
-function Tile({ label, value }: { readonly label: string; readonly value: number }): React.JSX.Element {
+function ListRow({ selected, onClick, data, children }: { readonly selected: boolean; readonly onClick: () => void; readonly data: string; readonly children: React.ReactNode }): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-[2px] rounded-[9px] border border-mg-border-subtle p-[9px_12px]">
-      <span className="text-[10.5px] text-mg-sec">{label}</span>
-      <span className="text-[18px] font-semibold tabular-nums text-mg-text" title={formatInteger(value)}>{formatTokensShort(value)}</span>
-    </div>
+    <button data-account-row={data} aria-current={selected} onClick={onClick} className={`flex w-full items-center gap-[9px] rounded-[8px] p-[7px_9px] text-left text-[11.5px] transition-colors duration-90 ease-out ${selected ? 'bg-mg-sel' : 'hover:bg-mg-hover'}`}>
+      {children}
+    </button>
   );
 }
 
-const CHART_HEIGHT = 140;
-const BAR_GAP = 2;
-
-// Barras por día (una serie: el filtro de arriba dice de quién). Extremo redondeado arriba, apoyadas en la base; el
-// detalle de cada día en su tooltip. Escala lineal desde 0.
-function DailyBars({ series }: { readonly series: readonly DailyTokens[] }): React.JSX.Element {
+function AccountListRow({ account, history, period, selected, onSelect }: { readonly account: Account; readonly history: UsageHistory | null; readonly period: readonly string[]; readonly selected: boolean; readonly onSelect: () => void }): React.JSX.Element {
   const t = useT();
-  const max = seriesMax(series);
-  const [hover, setHover] = useState<number | null>(null);
-  const hovered = hover === null ? null : series[hover];
-  return (
-    <figure className="flex flex-col gap-[6px]" data-accounts-usage-chart="true">
-      <div className="relative flex items-end" style={{ height: CHART_HEIGHT, gap: BAR_GAP }} onMouseLeave={() => setHover(null)} role="img" aria-label={t('accountsUsage.chartAria')}>
-        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 border-b border-mg-border-subtle" />
-        {series.map((day, index) => {
-          const value = totalTokens(day);
-          const height = value === 0 ? 0 : Math.max(2, Math.round((value / max) * CHART_HEIGHT));
-          return (
-            <div key={day.day} className="flex h-full min-w-0 flex-1 cursor-default items-end" onMouseEnter={() => setHover(index)} data-day={day.day} data-tokens={value}>
-              <div className="w-full rounded-t-[4px]" style={{ height, background: 'var(--mg-chart-1)', opacity: hover === null || hover === index ? 1 : 0.45 }} />
-            </div>
-          );
-        })}
-        {hovered !== null && hovered !== undefined && <BarTooltip day={hovered} />}
-      </div>
-      <figcaption className="flex justify-between text-[10px] text-mg-muted">
-        <span>{series[0]?.day}</span>
-        <span>{t('accountsUsage.chartMax', { tokens: formatTokensShort(max) })}</span>
-        <span>{series.at(-1)?.day}</span>
-      </figcaption>
-    </figure>
-  );
-}
-
-function BarTooltip({ day }: { readonly day: DailyTokens }): React.JSX.Element {
-  const t = useT();
-  return (
-    <div role="tooltip" className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2 rounded-[7px] border border-mg-border-pop bg-mg-popover p-[7px_10px] text-[10.5px] text-mg-body mg-shadow-pop">
-      <div className="font-semibold">{day.day} · {formatTokensShort(totalTokens(day))}</div>
-      <div className="text-mg-sec">{t('accountsUsage.breakdown', { input: formatTokensShort(day.inputTokens), output: formatTokensShort(day.outputTokens), cacheRead: formatTokensShort(day.cacheReadTokens), cacheWrite: formatTokensShort(day.cacheCreationTokens), turns: day.turns })}</div>
-    </div>
-  );
-}
-
-function AccountCard({ account, days, today }: { readonly account: Account; readonly days: readonly DailyTokens[] | null; readonly today: string }): React.JSX.Element {
-  const t = useT();
-  const info = useWorkbenchStore((s) => s.usageByAccount[account.id] ?? null);
   const hidden = useWorkbenchStore((s) => s.settings.hiddenAccounts.includes(account.id));
-  const totals = days === null ? null : periodTotals(days, today);
+  const metrics = useMetrics(history, account.id, period);
+  const limits = metrics === null ? 0 : metrics.limits.fiveHour + metrics.limits.weekly + metrics.limits.other;
   return (
-    <article data-account-card={account.id} className={`flex flex-col gap-[9px] rounded-[10px] border border-mg-border-subtle p-[11px_13px] ${hidden ? 'opacity-70' : ''}`}>
-      <div className="flex items-center gap-[8px]">
-        <span aria-hidden="true" className="grid h-[22px] w-[22px] flex-none place-items-center rounded-[6px] text-[11px] font-bold text-mg-window" style={{ background: account.accent.base }}>{account.monogram}</span>
-        <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-[12.5px] font-semibold text-mg-text">{account.alias}</span>
-          <span className="truncate text-[10.5px] text-mg-muted">{account.email ?? account.id}</span>
+    <ListRow selected={selected} onClick={onSelect} data={account.id}>
+      <span aria-hidden="true" className="grid h-[24px] w-[24px] flex-none place-items-center rounded-[6px] text-[11px] font-bold text-mg-window" style={{ background: account.accent.base }}>{account.monogram}</span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className={`truncate font-semibold ${hidden ? 'text-mg-muted' : 'text-mg-text'}`}>{account.provider} · {account.alias}</span>
+        <span className="truncate text-[10px] text-mg-muted">
+          {account.apiBilled ? apiBilledLabel() : t('accountsUsage.rowWindows', { fiveHour: account.usage.fiveHour.pct, weekly: account.usage.weekly.pct })}
+        </span>
+      </span>
+      <span className="flex flex-none flex-col items-end text-[10px] tabular-nums">
+        <span className="text-mg-body2">{metrics === null ? '…' : money(metrics.costMicroUsd)}</span>
+        {limits > 0 && <span className="text-mg-warn-text">{t('accountsUsage.rowLimits', { count: limits })}</span>}
+      </span>
+    </ListRow>
+  );
+}
+
+function Detail({ history, accountId, account, period }: { readonly history: UsageHistory; readonly accountId: string | null; readonly account: Account | null; readonly period: readonly string[] }): React.JSX.Element {
+  const t = useT();
+  const adminMode = useWorkbenchStore((s) => s.settings.adminMode);
+  const metrics = useMetrics(history, accountId, period);
+  if (metrics === null) return <></>;
+  const limitsByDay = new Map(history.accounts.find((entry) => entry.accountId === accountId)?.detail.map((day) => [day.day, day.limits.fiveHour + day.limits.weekly + day.limits.other]) ?? []);
+  return (
+    <>
+      <Kpis metrics={metrics} account={account} />
+      {metrics.unpriced && <p className="text-[10.5px] text-mg-warn-text">{t('accountsUsage.unpriced')}</p>}
+      <DailyChart metrics={metrics} period={period} />
+      <ModelsTable metrics={metrics} />
+      {adminMode && (
+        <div data-accounts-usage-admin="true" className="flex flex-col gap-[16px] border-t border-mg-border-subtle pt-[14px]">
+          <ActivitySection metrics={metrics} />
+          <div className="grid grid-cols-2 gap-[18px]">
+            <TopList title={t('accountsUsage.admin.projects')} rows={metrics.projects} format={formatTokensShort} data="projects" />
+            <TopList title={t('accountsUsage.admin.tools')} rows={metrics.tools} format={formatInteger} data="tools" />
+          </div>
+          {accountId !== null && <WindowPeaksSection windows={metrics.windows} limitsByDay={limitsByDay} period={period} />}
         </div>
-      </div>
-      <div className="flex flex-wrap gap-[4px] text-[10px]">
-        <Chip>{account.provider}</Chip>
-        <Chip warn={account.apiBilled}>{account.apiBilled ? apiBilledLabel() : t('accountsUsage.subscription')}</Chip>
-        {!account.apiBilled && <Chip warn={account.loginStatus !== 'logged_in'}>{loginLabel(account)}</Chip>}
-        {hidden && <Chip>{t('accountsUsage.hiddenChip')}</Chip>}
-      </div>
-      <Windows account={account} info={info} />
-      <dl className="grid grid-cols-3 gap-[6px] text-[10.5px]">
-        <Stat label={t('accountsUsage.today')} value={totals?.today ?? null} />
-        <Stat label={t('accountsUsage.week')} value={totals?.week ?? null} />
-        <Stat label={t('accountsUsage.month')} value={totals?.month ?? null} />
-      </dl>
-      <AccountActions account={account} hidden={hidden} />
-    </article>
-  );
-}
-
-function Chip({ children, warn = false }: { readonly children: React.ReactNode; readonly warn?: boolean }): React.JSX.Element {
-  return <span className={`rounded-[4px] border px-[5px] leading-[15px] ${warn ? 'border-mg-warn-border text-mg-warn-text' : 'border-mg-border-subtle text-mg-sec'}`}>{children}</span>;
-}
-
-function Stat({ label, value }: { readonly label: string; readonly value: number | null }): React.JSX.Element {
-  return (
-    <div className="flex flex-col">
-      <dt className="text-mg-muted">{label}</dt>
-      <dd className="font-semibold tabular-nums text-mg-body">{value === null ? '…' : formatTokensShort(value)}</dd>
-    </div>
-  );
-}
-
-// Ventanas de la suscripción (5 h / 7 d) con su reset, o el coste acumulado si factura la API.
-function Windows({ account, info }: { readonly account: Account; readonly info: UsageInfo | null }): React.JSX.Element {
-  const t = useT();
-  const now = Date.now();
-  if (account.apiBilled) {
-    const cost = info?.apiUsage?.totals.costMicroUsd;
-    return <p className="text-[10.5px] text-mg-sec">{cost === undefined ? t('accountsUsage.apiNoData') : t('accountsUsage.apiCost', { cost: formatMicroUsd(cost, activeFormatLocale()) })}</p>;
-  }
-  if (info === null) return <p className="text-[10.5px] text-mg-muted">{t('accountsUsage.windowsNoData')}</p>;
-  return (
-    <div className="flex flex-col gap-[5px]">
-      <WindowBar label={t('accountsUsage.fiveHour')} pct={info.fiveHour.utilization} reset={formatResetAbsolute(info.fiveHour.resetsAt, now, false)} />
-      <WindowBar label={t('accountsUsage.sevenDay')} pct={info.sevenDay.utilization} reset={formatResetAbsolute(info.sevenDay.resetsAt, now, true)} />
-    </div>
-  );
-}
-
-function WindowBar({ label, pct, reset }: { readonly label: string; readonly pct: number; readonly reset: string }): React.JSX.Element {
-  const t = useT();
-  const clamped = Math.min(100, Math.max(0, Math.round(pct)));
-  return (
-    <div className="flex flex-col gap-[2px] text-[10.5px]">
-      <div className="flex justify-between text-mg-sec">
-        <span>{label} · <span className="font-semibold tabular-nums text-mg-body">{clamped} %</span></span>
-        <span>{t('accountsUsage.resets', { when: reset })}</span>
-      </div>
-      <div className="h-[4px] overflow-hidden rounded-[2px] bg-mg-hover">
-        <div className="h-full rounded-[2px] bg-mg-fill" style={{ width: `${clamped}%` }} />
-      </div>
-    </div>
-  );
-}
-
-type Editing = 'none' | 'rename' | 'color';
-
-function AccountActions({ account, hidden }: { readonly account: Account; readonly hidden: boolean }): React.JSX.Element {
-  const t = useT();
-  const renameAccount = useWorkbenchStore((s) => s.renameAccount);
-  const setAccountHidden = useWorkbenchStore((s) => s.setAccountHidden);
-  const setAccountAccent = useWorkbenchStore((s) => s.setAccountAccent);
-  const accent = useWorkbenchStore((s) => s.settings.accentByAccount[account.id]);
-  const isActive = useWorkbenchStore((s) => s.activeAccountId === account.id);
-  const refreshAccounts = useWorkbenchStore((s) => s.refreshAccounts);
-  const login = useCliLogin(() => {
-    void refreshAccounts().catch((err: unknown) => reportActionError(t('sidebar.orphan.refreshFailed'), err, 'accounts'));
-  });
-  const [editing, setEditing] = useState<Editing>('none');
-  const [deleting, setDeleting] = useState(false);
-  const [name, setName] = useState(account.alias);
-  const button = 'rounded-[6px] border border-mg-border-ctrl px-[8px] py-[2px] text-[10.5px] text-mg-body2 hover:bg-mg-hover disabled:opacity-40';
-  // «Iniciar sesión» solo sin sesión; con el token caducado basta con que su CLI lo renueve (P-038).
-  const canLogin = account.providerId === 'claude' && !account.apiBilled && account.loginStatus === 'logged_out';
-  const canRefresh = account.providerId === 'claude' && !account.apiBilled && account.loginStatus === 'expired';
-  const refreshLogin = useWorkbenchStore((s) => s.refreshLogin);
-  const [refreshing, setRefreshing] = useState(false);
-  const runRefresh = (): void => {
-    setRefreshing(true);
-    refreshLogin(account.id)
-      .catch((err: unknown) => reportActionError(t('accountsUsage.refreshLoginFailed'), err, 'accounts'))
-      .finally(() => setRefreshing(false));
-  };
-  return (
-    <div className="flex flex-col gap-[6px] border-t border-mg-border-subtle pt-[8px]">
-      <div className="flex flex-wrap gap-[6px]">
-        {canLogin && <button className={button} onClick={() => login.begin(account.id, account.email)} disabled={login.phase === 'starting' || login.phase === 'submitting'}>{t('accountsUsage.login')}</button>}
-        {canRefresh && <button className={button} onClick={runRefresh} disabled={refreshing} data-refresh-login={account.id} data-tip={t('accountsUsage.refreshLoginTip')}>{refreshing ? t('accountsUsage.refreshLoginBusy') : t('accountsUsage.refreshLogin')}</button>}
-        <button className={button} onClick={() => setEditing(editing === 'rename' ? 'none' : 'rename')}>{t('accountsUsage.rename')}</button>
-        <button className={button} onClick={() => setEditing(editing === 'color' ? 'none' : 'color')}>{t('accountsUsage.color')}</button>
-        <button className={button} onClick={() => setAccountHidden(account.id, !hidden)} disabled={!hidden && isActive} data-tip={!hidden && isActive ? t('accountsUsage.hideActiveTip') : undefined}>
-          {hidden ? t('accountsUsage.show') : t('accountsUsage.hide')}
-        </button>
-        {!account.isMain && <button className={`${button} text-mg-danger`} onClick={() => setDeleting(true)}>{t('accountsUsage.delete')}</button>}
-      </div>
-      {editing === 'rename' && (
-        <form
-          className="flex gap-[6px]"
-          onSubmit={(e) => {
-            e.preventDefault();
-            renameAccount(account.id, name.trim() === (account.baseAlias ?? '') ? null : name);
-            setEditing('none');
-          }}
-        >
-          <input value={name} maxLength={ACCOUNT_ALIAS_MAX} onChange={(e) => setName(e.target.value)} aria-label={t('accountsUsage.renameAria', { alias: account.alias })} className="min-w-0 flex-1 rounded-[6px] border border-mg-border-ctrl bg-transparent px-[7px] py-[2px] text-[11px] text-mg-body" autoFocus />
-          <button type="submit" className={button}>{t('accountsUsage.save')}</button>
-          <button type="button" className={button} onClick={() => { renameAccount(account.id, null); setEditing('none'); }}>{t('accountsUsage.resetName')}</button>
-        </form>
       )}
-      {editing === 'color' && <ColorSwatches selected={accent} onPick={(index) => setAccountAccent(account.id, index)} label={t('accounts.menu.colorLabel')} autoTip={t('accounts.menu.colorAuto')} />}
-      <CliLoginPanel login={login} />
-      {deleting && <DeleteAccountDialog account={account} onClose={() => setDeleting(false)} />}
-    </div>
+      <p className="text-[10.5px] leading-[1.45] text-mg-muted">{t('accountsUsage.sourceNote')}</p>
+    </>
   );
 }
 
+function Kpis({ metrics, account }: { readonly metrics: AccountMetrics; readonly account: Account | null }): React.JSX.Element {
+  const t = useT();
+  const utilization = metrics.utilization;
+  const value = metrics.value;
+  const subscription = account !== null && !account.apiBilled;
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-[10px]" data-accounts-usage-kpis="true">
+      <Kpi data="cost" label={t('accountsUsage.kpi.cost')} value={money(metrics.costMicroUsd)} tip={t('accountsUsage.kpi.costTip')} />
+      <Kpi data="tokens" label={t('accountsUsage.kpi.tokens')} value={formatTokensShort(metrics.tokens)} />
+      <Kpi data="turns" label={t('accountsUsage.kpi.turns')} value={formatInteger(metrics.turns)} hint={t('accountsUsage.kpi.conversations', { count: metrics.conversations })} />
+      <Kpi data="limits" label={t('accountsUsage.kpi.limits')} value={formatInteger(metrics.limits.fiveHour + metrics.limits.weekly + metrics.limits.other)} hint={t('accountsUsage.kpi.limitsHint', { fiveHour: metrics.limits.fiveHour, weekly: metrics.limits.weekly })} />
+      {subscription && (
+        <Kpi
+          data="utilization"
+          label={t('accountsUsage.kpi.utilization')}
+          value={utilization.avgPct === null ? t('accountsUsage.kpi.noData') : `${utilization.avgPct} %`}
+          hint={t('accountsUsage.kpi.utilizationWeeks', { withData: utilization.weeksWithData, weeks: utilization.weeks })}
+          tip={t('accountsUsage.kpi.utilizationTip')}
+        />
+      )}
+      {subscription && (
+        <Kpi
+          data="value"
+          label={t('accountsUsage.kpi.value')}
+          value={value?.ratio === null || value?.ratio === undefined ? t('accountsUsage.kpi.noData') : t('accountsUsage.kpi.valueRatio', { ratio: value.ratio.toFixed(1) })}
+          hint={value === null ? t('accountsUsage.kpi.valueNoPlan') : t('accountsUsage.kpi.valuePaid', { paid: money(value.planCostMicroUsd) })}
+          tip={t('accountsUsage.kpi.valueTip')}
+        />
+      )}
+    </div>
+  );
+}
