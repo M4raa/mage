@@ -18,11 +18,3 @@ export function extractVersionSection(markdown, version, fileName = 'CHANGELOG.m
   if (body.length === 0) throw new Error(`La seccion ${JSON.stringify(version)} de ${fileName} esta vacia`);
   return body;
 }
-
-// Cuerpo del release de GitHub: la seccion castellana, una raya y la inglesa. Lanza (nombrando el fichero)
-// si a cualquiera de los dos le falta la version.
-export function buildReleaseBody(spanishMarkdown, englishMarkdown, version) {
-  const spanish = extractVersionSection(spanishMarkdown, version);
-  const english = extractVersionSection(englishMarkdown, version, 'CHANGELOG.en.md');
-  return `${spanish}\n\n---\n\n## English\n\n${english}`;
-}
