@@ -1,5 +1,5 @@
 import { EditorView, Decoration, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
-import { EditorState, type Extension, type Transaction } from '@codemirror/state';
+import { EditorState, type Extension, type Range, type Transaction } from '@codemirror/state';
 import { findImageTokens } from '@shared/imageRefs';
 import { decorationRangesFor, type DecorationKind } from './promptDecorations';
 import { isFileDrag } from './tabActions';
@@ -35,6 +35,13 @@ const CLASS_BY_KIND: Readonly<Record<DecorationKind, string>> = {
   'heading-6': 'cm-mg-h6',
 };
 
+// Anchos fijos de lo que va delante del texto de una línea de lista (P-038). La fuente del prompt es proporcional: con
+// anchos fijos, la sangría francesa (las líneas envueltas empiezan donde el texto, no en el borde) se calcula sin medir.
+const LIST_SPACE_EM = 0.5; // cada espacio de la sangría
+const LIST_ORDINAL_CHAR_EM = 0.55; // cada carácter de «12. »
+const LIST_BULLET_EM = 1.2; // la viñeta con su hueco
+const toEm = (value: number): string => `${Number(value.toFixed(2))}em`;
+
 // La viñeta como WIDGET que sustituye al `- ` (0.1.4). Con la marca `font-size: 0` + `::before` el `•` se perdía
 // con el cursor justo delante o detrás. El rango es atómico, como `[Imagen N]`: el cursor lo salta y
 // Backspace/Supr lo borran entero. El documento conserva el `- ` literal: lo enviado sigue siendo markdown.
@@ -46,6 +53,8 @@ class BulletWidget extends WidgetType {
   override toDOM(): HTMLElement {
     const bullet = document.createElement('span');
     bullet.className = CLASS_BY_KIND['bullet-painted'];
+    // El hueco va DENTRO del widget (ancho fijo): con un margen, el cursor quedaba pegado a la viñeta hasta escribir.
+    bullet.style.width = toEm(LIST_BULLET_EM);
     bullet.textContent = '•';
     return bullet;
   }
@@ -58,8 +67,34 @@ export interface PromptDecorationSets {
   readonly atomic: DecorationSet; // solo las viñetas
 }
 
-function decorationFor(kind: DecorationKind): Decoration {
-  return kind === 'bullet-painted' ? bulletDecoration : Decoration.mark({ class: CLASS_BY_KIND[kind] });
+// Ancho (em) de un tramo de la cabeza de una lista; 0 si el tramo no es de la cabeza.
+function listWidthEm(kind: DecorationKind, length: number): number {
+  if (kind === 'bullet-painted') return LIST_BULLET_EM;
+  if (kind === 'ordinal') return length * LIST_ORDINAL_CHAR_EM;
+  if (kind === 'list-indent') return length * LIST_SPACE_EM;
+  return 0;
+}
+
+function decorationFor(kind: DecorationKind, length: number): Decoration {
+  if (kind === 'bullet-painted') return bulletDecoration;
+  const width = listWidthEm(kind, length);
+  if (width === 0) return Decoration.mark({ class: CLASS_BY_KIND[kind] });
+  return Decoration.mark({ class: CLASS_BY_KIND[kind], attributes: { style: `width: ${toEm(width)}` } });
+}
+
+// Sangría francesa de cada línea de lista: `padding-left` del ancho de su cabeza y `text-indent` negativo del mismo
+// valor, así la primera línea empieza en el borde y las envueltas, alineadas con el texto.
+function hangingIndents(state: EditorState, ranges: readonly { readonly from: number; readonly to: number; readonly kind: DecorationKind }[]): Range<Decoration>[] {
+  const hangByLine = new Map<number, number>();
+  for (const range of ranges) {
+    const width = listWidthEm(range.kind, range.to - range.from);
+    if (width === 0) continue;
+    const lineFrom = state.doc.lineAt(range.from).from;
+    hangByLine.set(lineFrom, (hangByLine.get(lineFrom) ?? 0) + width);
+  }
+  return [...hangByLine].map(([lineFrom, hang]) =>
+    Decoration.line({ class: 'cm-mg-list-line', attributes: { style: `padding-left: ${toEm(hang)}; text-indent: -${toEm(hang)}` } }).range(lineFrom),
+  );
 }
 
 // Decoraciones del documento con el modulo PURO. `sort: true` porque `Decoration.set` exige orden por posicion y el
@@ -68,7 +103,10 @@ export function buildPromptDecorations(state: EditorState): PromptDecorationSets
   const text = state.doc.toString();
   const cursorLine = state.doc.lineAt(state.selection.main.head).number - 1;
   const ranges = decorationRangesFor(text, cursorLine);
-  const all = ranges.map((range) => decorationFor(range.kind).range(range.from, Math.min(range.to, text.length)));
+  const all = [
+    ...ranges.map((range) => decorationFor(range.kind, range.to - range.from).range(range.from, Math.min(range.to, text.length))),
+    ...hangingIndents(state, ranges),
+  ];
   const bullets = ranges.filter((range) => range.kind === 'bullet-painted').map((range) => bulletDecoration.range(range.from, Math.min(range.to, text.length)));
   return { all: Decoration.set(all, true), atomic: Decoration.set(bullets, true) };
 }

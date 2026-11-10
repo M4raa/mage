@@ -510,8 +510,16 @@ select:focus-visible,
 }
 /* La viñeta: un widget `•` que sustituye al `- ` (atómico, como `[Imagen N]`). Los numeros de lista NO pasan por
    aqui: son texto real y se ven siempre. */
+/* Cabeza de una línea de lista (P-038): anchos fijos puestos desde `promptExtensions` para la sangría francesa. El
+   `text-indent` negativo de la línea se hereda: dentro de estas cajas se anula. */
+.cm-mg-bullet-painted,
+.cm-mg-ordinal,
+.cm-mg-list-indent {
+  display: inline-block;
+  white-space: pre;
+  text-indent: 0;
+}
 .cm-mg-bullet-painted {
-  margin-right: 0.45em;
   color: var(--color-mg-ter);
 }
 .cm-mg-ordinal {
