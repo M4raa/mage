@@ -47,7 +47,7 @@ export function ChatInfoBar({ children }: { readonly children?: ReactNode }): Re
   if (tab === undefined) return null;
   return (
     <div data-chat-info-bar="true" className="mt-[6px] flex flex-wrap items-center gap-x-[10px] gap-y-[4px] text-[10.5px] text-mg-muted">
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-[6px]">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-[6px] whitespace-nowrap">
         <TabSubline />
         <CreatorChip tabId={tabId} />
         <AwaitingCreatorChip tabId={tabId} />

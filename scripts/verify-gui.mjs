@@ -4268,6 +4268,8 @@ const CHECKS = [
           const [f, h, m, e, c] = [fila, host, mas, enviar, controles].map((n) => n.getBoundingClientRect());
           return { filaBottom: f.bottom, editorTop: h.top, editorRight: h.right, editorAlto: h.height, masBottom: m.bottom, enviarTop: e.top, enviarLeft: e.left, enviarBottom: e.bottom, controlesTop: c.top };
         }, tabId);
+      // El editor se carga en diferido: sin esperarlo, la primera medida de una tanda corta sale null.
+      await page.locator(`[data-pane-tab-id="${tabId}"] [data-prompt-editor="true"] .cm-editor`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const caso = (m) => m !== null && Math.abs(m.masBottom - m.enviarBottom) <= 2 && m.editorRight <= m.enviarLeft + 1 && m.controlesTop >= m.filaBottom - 1;
       try {
         const vacio = await medir();

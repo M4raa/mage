@@ -61,7 +61,7 @@ export function TabSubline(): React.JSX.Element | null {
   ];
 
   return (
-    <div data-tab-subline="true" className="flex min-w-0 items-center gap-[6px]">
+    <div data-tab-subline="true" className="flex flex-wrap items-center gap-[6px]">
       {parts.map((part, index) => (
         <Fragment key={(part as React.ReactElement).key}>
           {index > 0 && <span aria-hidden="true">{SEPARATOR}</span>}
