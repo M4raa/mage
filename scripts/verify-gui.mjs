@@ -4371,7 +4371,7 @@ const CHECKS = [
     // P-028, punto 2: cada pestaña lleva el MONOGRAMA de su cuenta y, si no es de Claude, una marca
     // corta del proveedor; la barra de estado dice el proveedor de la pestaña ENFOCADA. Se simula una
     // pestaña de agy cambiando solo su `provider` en el store (no se lanza nada) y se restaura.
-    name: '2: la pestaña lleva el monograma del PROVEEDOR (Q03) y la barra de estado dice el proveedor de la enfocada',
+    name: '2: la pestaña lleva el monograma del PROVEEDOR (Q03) y la barra de estado no nombra cuenta ni proveedor',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -4386,7 +4386,6 @@ const CHECKS = [
         const marca = () => pestana()?.querySelector('[data-tab-monogram]') ?? null;
         const monogramaClaude = marca()?.textContent ?? null;
         const tipClaude = marca()?.getAttribute('data-tip') ?? null;
-        const proveedorAntes = document.querySelector('[data-status-provider]')?.textContent ?? null;
         const marcaProveedorViejaAntes = pestana()?.querySelector('[data-tab-provider]') !== null;
         store.setState({ tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, provider: 'agy' } : t)) });
         await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -4394,10 +4393,10 @@ const CHECKS = [
           monogramaClaude,
           alias: cuenta?.alias ?? null,
           tipClaude,
-          marcaClaude: proveedorAntes,
           marcaProveedorViejaAntes,
           monogramaAgy: marca()?.textContent ?? null,
-          barraAgy: document.querySelector('[data-status-provider]')?.textContent ?? null,
+          // U-A3: la barra de estado ya no nombra cuenta ni proveedor.
+          barraConProveedor: document.querySelector('[data-status-bar] [data-status-provider]') !== null,
         };
       });
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
@@ -4406,10 +4405,9 @@ const CHECKS = [
         medido.monogramaClaude === 'C' &&
         medido.alias !== null &&
         (medido.tipClaude ?? '').includes(medido.alias) && // la cuenta exacta va en el tooltip
-        medido.marcaClaude === 'Claude' &&
         medido.marcaProveedorViejaAntes === false && // el recuadro de texto «claude» ya no existe
         medido.monogramaAgy === 'A' &&
-        medido.barraAgy === 'agy';
+        medido.barraConProveedor === false;
       return { ok, detail: JSON.stringify(medido) };
     },
   },
@@ -8812,7 +8810,6 @@ const CHECKS = [
             avisoEn7d: meter('7d')?.querySelector('svg') !== null,
             severidad7d: meter('7d')?.getAttribute('data-usage-severity') ?? null,
             centros: {
-              proveedor: centro(bar.querySelector('[data-status-provider]')),
               cincoH: centro(meter('5h')?.lastElementChild ?? null),
               sieteD: centro(meter('7d')?.lastElementChild ?? null),
               servicio: centro(bar.lastElementChild),
@@ -8820,7 +8817,7 @@ const CHECKS = [
           };
         });
         const centros = Object.values(medido.centros).filter((c) => c !== null);
-        const ok = !medido.avisoEn5h && medido.avisoEn7d && medido.severidad7d === 'warn' && centros.length === 4 && Math.max(...centros) - Math.min(...centros) <= 1;
+        const ok = !medido.avisoEn5h && medido.avisoEn7d && medido.severidad7d === 'warn' && centros.length === 3 && Math.max(...centros) - Math.min(...centros) <= 1;
         return { ok, detail: JSON.stringify(medido) };
       } finally {
         await page.evaluate((cuentas) => window.__mageDev.store.setState({ accounts: cuentas }), previo);
