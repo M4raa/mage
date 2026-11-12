@@ -1992,6 +1992,8 @@
   "sidebar.shared.empty": { "description": "Sección de conversaciones compartidas vacía (sin búsqueda).", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:185" },
   "sidebar.shared.title": { "description": "Cabecera de la sección de conversaciones compartidas, en mayúsculas.", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:172", "maxLength": 20 },
   "sidebar.tab.permissionBadge": { "description": "Pastilla de una conversación abierta que espera un permiso, en mayúsculas.", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:702", "maxLength": 10 },
+  "sidebar.row.collapseChildren": { "description": "Nombre accesible del chevron que pliega las subsesiones (creadas con mage_create_session) anidadas bajo una conversación del lateral.", "usage": "src/renderer/src/workbench/components/sidebar/SidebarRowItem.tsx" },
+  "sidebar.row.expandChildren": { "description": "Nombre accesible del chevron que despliega las subsesiones anidadas bajo una conversación del lateral.", "usage": "src/renderer/src/workbench/components/sidebar/SidebarRowItem.tsx" },
   "sidebar.tab.renameAria": { "description": "Nombre accesible del campo que renombra una conversación abierta (doble clic sobre ella).", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:671" },
   "sidebar.tab.status.error": { "description": "Estado de una conversación abierta, al final de su nombre accesible.", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:719" },
   "sidebar.tab.status.idle": { "description": "Estado de una conversación abierta, al final de su nombre accesible.", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:721" },

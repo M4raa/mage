@@ -2309,6 +2309,8 @@ export interface MessageValues {
   readonly "sidebar.projects.removeAria": { readonly "name": string | number };
   readonly "sidebar.projects.title": never;
   readonly "sidebar.recent.title": never;
+  readonly "sidebar.row.collapseChildren": never;
+  readonly "sidebar.row.expandChildren": never;
   readonly "sidebar.row.moreActions": never;
   readonly "sidebar.row.readOnly": never;
   readonly "sidebar.search.clear": never;

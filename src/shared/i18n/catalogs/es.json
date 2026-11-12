@@ -2307,6 +2307,8 @@
   "sidebar.projects.removeAria": "Eliminar proyecto {name}",
   "sidebar.projects.title": "PROYECTOS",
   "sidebar.recent.title": "RECIENTES",
+  "sidebar.row.collapseChildren": "Plegar las subsesiones",
+  "sidebar.row.expandChildren": "Desplegar las subsesiones",
   "sidebar.row.moreActions": "Más acciones",
   "sidebar.row.readOnly": "Solo lectura: la tiene abierta otra ventana",
   "sidebar.search.clear": "Limpiar búsqueda",

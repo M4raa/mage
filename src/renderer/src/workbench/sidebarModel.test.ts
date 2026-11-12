@@ -13,6 +13,7 @@ import {
   mergeAccountHistories,
   missingOwnerOf,
   moveProjectKey,
+  nestDelegatedRows,
   normalizeFolderKey,
   orderProjectGroups,
   withNewProjectKeys,
@@ -177,6 +178,70 @@ describe('proveedores y carpetas', () => {
 
   it('normalizeFolderKey_posix_keepsCase', () => {
     expect(normalizeFolderKey('/Home/U/App/')).toBe('/Home/U/App');
+  });
+});
+
+describe('nestDelegatedRows', () => {
+  const NO_LIVE: Readonly<Record<string, string>> = {};
+  const child = (sessionId: string, createdByConversationId: string): SidebarRow => historyRow({ sessionId, createdByConversationId });
+  const ids = (rows: readonly SidebarRow[] | undefined): readonly (string | undefined)[] => (rows ?? []).map((row) => sidebarRowId(row, NO_LIVE));
+
+  it('nestDelegatedRows_hijaConCreadoraPresente_seAnida', () => {
+    const rows = [historyRow({ sessionId: 'madre' }), child('hija', 'madre')];
+
+    const { top, childrenOf } = nestDelegatedRows(rows, NO_LIVE);
+
+    expect(ids(top)).toEqual(['madre']);
+    expect(ids(childrenOf.get('madre'))).toEqual(['hija']);
+  });
+
+  it('nestDelegatedRows_creadoraAusente_quedaArriba', () => {
+    const rows = [child('hija', 'madre-archivada')];
+
+    const { top, childrenOf } = nestDelegatedRows(rows, NO_LIVE);
+
+    expect(ids(top)).toEqual(['hija']);
+    expect(childrenOf.size).toBe(0);
+  });
+
+  it('nestDelegatedRows_nietas_bajoSuCreadora', () => {
+    const rows = [historyRow({ sessionId: 'abuela' }), child('madre', 'abuela'), child('nieta', 'madre')];
+
+    const { top, childrenOf } = nestDelegatedRows(rows, NO_LIVE);
+
+    expect(ids(top)).toEqual(['abuela']);
+    expect(ids(childrenOf.get('abuela'))).toEqual(['madre']);
+    expect(ids(childrenOf.get('madre'))).toEqual(['nieta']);
+  });
+
+  it('nestDelegatedRows_historialYPestanas_mezclados', () => {
+    const madre: SidebarRow = { kind: 'tab', tab: tab({ id: 't1', resumeSessionId: 'madre' }), accountId: 'acc-a' };
+    const hijaTab: SidebarRow = { kind: 'tab', tab: tab({ id: 't2', resumeSessionId: 'hija-1', createdBy: { conversationId: 'madre', sessionId: 'vivo' } }), accountId: 'acc-a' };
+    const reabierta: SidebarRow = { kind: 'tab', tab: tab({ id: 't3', resumeSessionId: 'hija-2' }), history: summary({ sessionId: 'hija-2', createdByConversationId: 'madre' }), accountId: 'acc-a' };
+    const rows = [madre, hijaTab, child('hija-3', 'madre'), reabierta];
+
+    const { top, childrenOf } = nestDelegatedRows(rows, NO_LIVE);
+
+    expect(top).toEqual([madre]);
+    expect(ids(childrenOf.get('madre'))).toEqual(['hija-1', 'hija-3', 'hija-2']);
+  });
+
+  it('nestDelegatedRows_sinDelegadas_igual', () => {
+    const rows = [historyRow({ sessionId: 'a' }), historyRow({ sessionId: 'b' })];
+
+    const { top, childrenOf } = nestDelegatedRows(rows, NO_LIVE);
+
+    expect(top).toEqual(rows);
+    expect(childrenOf.size).toBe(0);
+  });
+
+  it('groupSidebarRows_hijaDeOtraCarpeta_noSeReparteYViajaEnChildrenOf', () => {
+    const rows = [historyRow({ sessionId: 'madre' }), historyRow({ sessionId: 'hija', cwd: 'C:\\vg\\otra', createdByConversationId: 'madre' })];
+
+    const groups = groupSidebarRows(rows, groupCtx());
+
+    expect(groups.projects.flatMap((group) => group.rows)).toHaveLength(1);
+    expect(groups.childrenOf.get('madre')).toHaveLength(1);
   });
 });
 

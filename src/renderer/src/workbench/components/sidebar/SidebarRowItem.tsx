@@ -1,6 +1,7 @@
 import { useLocalPopover } from '../../localPopovers';
 import { memo, useEffect, useRef, useState } from 'react';
 import { Icon } from '../Icon';
+import { RotatingChevron } from '../AnimatedIcon';
 import { selectIsActiveTab, useConversation } from '../../conversationSelectors';
 import { useWorkbenchStore } from '../../workbenchStore';
 import type { Account, ChatStatus } from '../../types';
@@ -35,8 +36,32 @@ function statusLabel(status: ChatStatus | undefined): StatusLabelKey {
   return 'sidebar.tab.status.idle';
 }
 
+// Plegado de las subsesiones de una fila: solo lo llevan las que las tienen.
+export interface RowFold {
+  readonly open: boolean;
+  readonly onToggle: () => void;
+}
+
+function FoldToggle({ fold }: { readonly fold: RowFold }): React.JSX.Element {
+  const t = useT();
+  return (
+    <button
+      type="button"
+      data-row-fold={fold.open ? 'open' : 'closed'}
+      aria-expanded={fold.open}
+      aria-label={t(fold.open ? 'sidebar.row.collapseChildren' : 'sidebar.row.expandChildren')}
+      onClick={fold.onToggle}
+      className="ml-[4px] grid h-[18px] w-[14px] flex-none place-items-center rounded-[4px] text-mg-icon hover:bg-mg-hover"
+    >
+      <RotatingChevron open={fold.open} size={10} />
+    </button>
+  );
+}
+
 export interface SidebarRowItemProps {
   readonly row: SidebarRow;
+  // Presente = la fila tiene subsesiones y lleva su chevron delante del título.
+  readonly fold?: RowFold;
   readonly account: Account | undefined;
   // Cuenta dueña borrada (config dir): la fila lo dice en vez de nombrar otra cuenta.
   readonly missingOwner: string | undefined;
@@ -61,7 +86,7 @@ export const SidebarRowItem = memo(function SidebarRowItem(props: SidebarRowItem
 const ROW_CLASS = 'group relative flex items-center rounded-[6px] transition-colors duration-90 ease-out';
 
 function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow, { kind: 'tab' }> }): React.JSX.Element {
-  const { row, account, status, indicator, onSelectTab, onRename, onMenu } = props;
+  const { row, account, status, indicator, fold, onSelectTab, onRename, onMenu } = props;
   const t = useT();
   const { tab } = row;
   const selected = useConversation(tab.id, selectIsActiveTab);
@@ -91,6 +116,7 @@ function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow,
   }
   return (
     <div data-sidebar-row="true" className={`${ROW_CLASS} ${selected ? 'bg-mg-sel text-mg-sel-ink before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'hover:bg-mg-hover'}`}>
+      {fold !== undefined && <FoldToggle fold={fold} />}
       <button
         onClick={() => onSelectTab(tab.id)}
         onDoubleClick={() => setEditing(true)}
@@ -111,7 +137,7 @@ function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow,
 }
 
 function HistoryRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow, { kind: 'history' }> }): React.JSX.Element {
-  const { row, account, indicator, background, onOpenHistory, onDragOutside, onMenu } = props;
+  const { row, account, indicator, background, fold, onOpenHistory, onDragOutside, onMenu } = props;
   const t = useT();
   const { item } = row;
   const highlighted = useHighlight(item.sessionId);
@@ -120,6 +146,7 @@ function HistoryRow(props: SidebarRowItemProps & { readonly row: Extract<Sidebar
   const title = displayTitle(item.title, t);
   return (
     <div data-sidebar-row="true" className={`${ROW_CLASS} hover:bg-mg-hover ${highlighted.on ? 'bg-mg-sel text-mg-sel-ink before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark ring-1 ring-mg-border-emph' : ''}`}>
+      {fold !== undefined && <FoldToggle fold={fold} />}
       <button
         ref={highlighted.ref}
         onClick={() => onOpenHistory(row)}

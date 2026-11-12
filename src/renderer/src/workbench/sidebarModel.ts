@@ -171,6 +171,44 @@ export interface SidebarGroups {
   readonly pinned: SidebarRow[];
   readonly projects: ProjectGroup[];
   readonly unassigned: SidebarRow[];
+  // Subsesiones por id de su creadora directa (las que cuelgan de ella en el lateral, a cualquier profundidad).
+  readonly childrenOf: ReadonlyMap<string, readonly SidebarRow[]>;
+}
+
+export interface NestedRows {
+  readonly top: readonly SidebarRow[];
+  readonly childrenOf: ReadonlyMap<string, readonly SidebarRow[]>;
+}
+
+// Quién creó la conversación de una fila con `mage_create_session`. Una pestaña reabierta del historial ya no
+// lleva `createdBy`, pero su fila de historial sí: se prueba con las dos.
+function creatorOfRow(row: SidebarRow): string | undefined {
+  if (row.kind === 'history') return row.item.createdByConversationId;
+  return row.tab.createdBy?.conversationId ?? row.history?.createdByConversationId;
+}
+
+// Separa las filas en las de primer nivel y las que cuelgan de su creadora (comparando ids de conversación). Una fila
+// cuya creadora no está entre `rows` (cerrada y fuera de la lista, archivada, filtrada) queda arriba. El orden relativo
+// se conserva; la hija de una hija cuelga de su creadora directa.
+export function nestDelegatedRows(rows: readonly SidebarRow[], sessionIdByChat: Readonly<Record<string, string>>): NestedRows {
+  const present = new Set<string>();
+  for (const row of rows) {
+    const id = sidebarRowId(row, sessionIdByChat);
+    if (id !== undefined) present.add(id);
+  }
+  const top: SidebarRow[] = [];
+  const childrenOf = new Map<string, SidebarRow[]>();
+  for (const row of rows) {
+    const creator = creatorOfRow(row);
+    if (creator === undefined || creator === sidebarRowId(row, sessionIdByChat) || !present.has(creator)) {
+      top.push(row);
+      continue;
+    }
+    const siblings = childrenOf.get(creator);
+    if (siblings === undefined) childrenOf.set(creator, [row]);
+    else siblings.push(row);
+  }
+  return { top, childrenOf };
 }
 
 export interface GroupContext {
@@ -250,7 +288,9 @@ export function groupSidebarRows(rows: readonly SidebarRow[], ctx: GroupContext)
       { key: `p:${project.id}`, name: project.name, cwd: project.cwd, projectId: project.id, rows: [] },
     ]),
   );
-  for (const row of rows) {
+  // Solo las de primer nivel se reparten por grupos: una subsesión sale siempre bajo su creadora, sea cual sea su carpeta.
+  const { top, childrenOf } = nestDelegatedRows(rows, ctx.sessionIdByChat);
+  for (const row of top) {
     if (isPinnedRow(row, ctx)) {
       pinned.push(row);
       continue;
@@ -259,7 +299,7 @@ export function groupSidebarRows(rows: readonly SidebarRow[], ctx: GroupContext)
     if (target === null) unassigned.push(row);
     else addToProjectGroup(groups, target, row);
   }
-  return { pinned, projects: orderProjectGroups([...groups.values()], ctx.projectOrder), unassigned };
+  return { pinned, projects: orderProjectGroups([...groups.values()], ctx.projectOrder), unassigned, childrenOf };
 }
 
 export interface SidebarFilter {

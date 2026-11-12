@@ -14,7 +14,8 @@ import { t as translate, useT } from '../../i18n/uiLanguage';
 import { displayTitle } from '../conversationTitle';
 import { accountToOpenWith, sidebarRowId, type SidebarRow } from '../sidebarModel';
 import { SidebarHeader } from './sidebar/SidebarHeader';
-import { SidebarRowItem } from './sidebar/SidebarRowItem';
+import { RowBranch } from './sidebar/RowBranch';
+import { SidebarRowItem, type RowFold } from './sidebar/SidebarRowItem';
 import { FlatGroup, PROJECTS_COLLAPSED_LIMIT, ProjectEndDropZone, ProjectGroupView, RowList, SectionLabel } from './sidebar/SidebarGroups';
 import { useSidebarModel } from './sidebar/useSidebarModel';
 import { TasksSection } from '../tasks/TasksSection';
@@ -88,10 +89,18 @@ export function ChatSidebar(): React.JSX.Element {
       tabPinned: row.kind === 'tab' && row.tab.pinned === true,
     });
   };
-  const renderRow = (row: SidebarRow): React.ReactNode => (
+  // Una fila y, si las tiene, sus subsesiones anidadas debajo (a cualquier profundidad).
+  const renderRow = (row: SidebarRow): React.ReactNode => {
+    const id = sidebarRowId(row, sessionIdByChat);
+    const kids = id === undefined ? undefined : view.groups.childrenOf.get(id);
+    if (kids === undefined) return renderRowItem(row);
+    return <RowBranch key={rowKey(row)} head={(fold) => renderRowItem(row, fold)} kids={kids.map(renderRow)} />;
+  };
+  const renderRowItem = (row: SidebarRow, fold?: RowFold): React.ReactNode => (
     <SidebarRowItem
       key={rowKey(row)}
       row={row}
+      {...(fold === undefined ? {} : { fold })}
       account={view.accountOf(row)}
       missingOwner={view.missingOwnerOf(row)}
       status={view.statusOf(row)}

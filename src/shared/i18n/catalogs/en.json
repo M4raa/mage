@@ -2307,6 +2307,8 @@
   "sidebar.projects.removeAria": "Delete project {name}",
   "sidebar.projects.title": "PROJECTS",
   "sidebar.recent.title": "RECENT",
+  "sidebar.row.collapseChildren": "Collapse subsessions",
+  "sidebar.row.expandChildren": "Expand subsessions",
   "sidebar.row.moreActions": "More actions",
   "sidebar.row.readOnly": "Read only: open in another window",
   "sidebar.search.clear": "Clear search",
