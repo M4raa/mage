@@ -3194,6 +3194,68 @@ const CHECKS = [
     },
   },
   {
+    // Ultracode (0.1.6): interruptor al final del submenú «Esfuerzo», solo en pestañas de Claude. Se enciende de
+    // verdad (estado de la pestaña) y se deja APAGADO al acabar; en Codex la fila no existe. No manda ningún turno.
+    name: 'Modelo: Ultracode en el submenú de esfuerzo, solo en Claude',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      const propia = (await page.locator('[data-model-menu]').count()) === 0;
+      if (propia) await openTemporaryConversation(page);
+      const chip = page.locator('[data-model-menu]').first();
+      const ultracodeDelEstado = () => page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return s.tabs.find((t) => t.id === s.activeTabId)?.ultracode === true;
+      });
+      try {
+        await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const proveedor = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          return s.tabs.find((t) => t.id === s.activeTabId)?.provider ?? null;
+        });
+        await chip.click();
+        await page.locator('[data-menu-effort]').click();
+        const fila = page.locator('[data-model-submenu="effort"] [data-menu-ultracode]');
+        await fila.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await waitForStillBox(page, '[data-model-submenu="effort"]');
+        const apagadoAlAbrir = (await fila.getAttribute('aria-checked')) === 'false';
+        await fila.click();
+        const encendido = (await fila.getAttribute('aria-checked')) === 'true';
+        const menuAbierto = await page.locator('[data-model-submenu="effort"]').isVisible();
+        const enEstado = await ultracodeDelEstado();
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        await page.locator('[data-model-menu][aria-expanded="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const enChip = ((await chip.textContent()) ?? '').includes(ui('prompt.ultracode.label'));
+        // Dejarlo apagado por el mismo camino.
+        await chip.click();
+        await page.locator('[data-menu-effort]').click();
+        await page.locator('[data-model-submenu="effort"] [data-menu-ultracode]').click();
+        const apagadoAlFinal = !(await ultracodeDelEstado());
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        await page.locator('[data-model-menu][aria-expanded="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await clearNotifications(page);
+        // En Codex la fila no existe.
+        await page.evaluate(() => window.__mageDev.store.setState((state) => ({
+          tabs: state.tabs.map((tab) => (tab.id === state.activeTabId ? { ...tab, provider: 'codex', model: 'gpt-6.1-sol', effort: 'low' } : tab)),
+        })));
+        await chip.click();
+        await page.locator('[data-menu-effort]').click();
+        await page.locator('[data-model-submenu="effort"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const filasEnCodex = await page.locator('[data-menu-ultracode]').count();
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        const ok = proveedor === 'claude' && apagadoAlAbrir && encendido && menuAbierto && enEstado && enChip && apagadoAlFinal && filasEnCodex === 0;
+        return { ok, detail: JSON.stringify({ proveedor, apagadoAlAbrir, encendido, menuAbierto, enEstado, enChip, apagadoAlFinal, filasEnCodex }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      }
+    },
+  },
+  {
     // La medida es el numero de colores DISTINTOS entre los <span> de token. Si el resaltado muriera
     // (gramatica que no carga, tema importado sin reglas, shiki que lanza), `useHighlightedCode`
     // devuelve null y el bloque cae a texto plano: 0 spans y un solo color heredado. Contar "spans > 0"
