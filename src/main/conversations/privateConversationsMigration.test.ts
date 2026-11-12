@@ -5,7 +5,7 @@ import { migratePrivateConversations, type PrivateMigrationDeps } from './privat
 const ROOT = 'home';
 
 // FS en memoria: un conjunto de rutas (ficheros y carpetas) sin contenido.
-function memoryFs(paths: readonly string[], failOn: readonly string[] = []) {
+function memoryFs(paths: readonly string[], failOn: readonly string[] = [], listFailOn: readonly string[] = []) {
   const entries = new Set<string>();
   for (const path of paths) {
     entries.add(path);
@@ -21,7 +21,12 @@ function memoryFs(paths: readonly string[], failOn: readonly string[] = []) {
     [...entries].filter((entry) => join(entry, '..') === dir).map((entry) => entry.slice(dir.length + 1));
   const deps: PrivateMigrationDeps = {
     exists: (path) => entries.has(path),
-    listDir: children,
+    listDir: (dir) => {
+      if (listFailOn.includes(dir)) throw new Error('EACCES');
+      return children(dir);
+    },
+    // Una carpeta es lo que tiene hijos; un fichero suelto no.
+    isDirectory: (path) => children(path).length > 0,
     ensureDir: (path) => { entries.add(path); },
     move: (from, to) => {
       if (failOn.includes(from)) throw new Error('EPERM');
@@ -78,6 +83,28 @@ describe('migratePrivateConversations', () => {
     expect(result).toEqual({ moved: 1, skipped: 1 });
     expect(entries.has(normal('p', 'b.jsonl'))).toBe(true);
     expect(logs.some((entry) => entry.message.includes('EPERM'))).toBe(true);
+  });
+
+  it('migratePrivateConversations_ficheroSuelto_seSalta', () => {
+    const { deps, entries } = memoryFs([priv('suelto.txt'), priv('p', 'a.jsonl')]);
+
+    const result = migratePrivateConversations([account], deps);
+
+    expect(result).toEqual({ moved: 1, skipped: 0 });
+    expect(entries.has(priv('suelto.txt'))).toBe(true);
+    expect(entries.has(normal('p', 'a.jsonl'))).toBe(true);
+  });
+
+  it('migratePrivateConversations_errorAlListar_sigueConLaSiguienteCuenta', () => {
+    const other = join('home', '.claude-2');
+    const otherSource = join(other, 'mage-private', 'projects');
+    const { deps, entries, logs } = memoryFs([priv('p', 'a.jsonl'), join(otherSource, 'q', 'b.jsonl')], [], [priv('p')]);
+
+    const result = migratePrivateConversations([account, other], deps);
+
+    expect(result).toEqual({ moved: 1, skipped: 0 });
+    expect(entries.has(join(other, 'projects', 'q', 'b.jsonl'))).toBe(true);
+    expect(logs.some((entry) => entry.level === 'warn' && entry.message.includes(account) && entry.message.includes('EACCES'))).toBe(true);
   });
 
   it('migratePrivateConversations_segundaVez_cero', () => {

@@ -4603,6 +4603,7 @@ function movePrivateConversationsOnce(): void {
   migratePrivateConversations(claudeDirs, {
     exists: existsSync,
     listDir: (path) => readdirSync(path),
+    isDirectory: (path) => statSync(path).isDirectory(),
     ensureDir: (path) => { mkdirSync(path, { recursive: true }); },
     move: renameSync,
     log: (level, message) => mainLog(level, message),

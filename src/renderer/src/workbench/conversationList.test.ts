@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   filterConversationRows,
   formatSize,
-  mergeConversationRows,
   planOpenConversation,
   tabFromConversation,
   relativeTime,
@@ -33,101 +32,6 @@ const hist = (over: Partial<ConversationSummary>): ConversationSummary => ({
   sizeBytes: 2048,
   isScheduled: false,
   ...over,
-});
-
-describe('mergeConversationRows', () => {
-  it('ordenaPorRecencia_pestanaRecienEscritaPrimero', () => {
-    const tabs = [tab({ id: 'tA', resumeSessionId: 'sA', lastMessageAtMs: 5000 })];
-    const history = [hist({ sessionId: 'sB', updatedAtMs: 2000 })];
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
-
-    expect(rows.map((r) => r.kind)).toEqual(['tab', 'history']);
-  });
-
-  // Devolución 19: con sesión viva, la pestaña de Codex se empareja con su hilo y no sale dos veces.
-  it('mergeConversationRows_pestañaCodexConSesionViva_absorbeLaFilaDeSuHilo', () => {
-    const tabs = [tab({ id: 'tA', accountId: '.codex-a', provider: 'codex', resumeSessionId: 'thread-7' })];
-    const history = [hist({ sessionId: 'thread-7', configDir: '.codex-a' })];
-
-    const rows = mergeConversationRows(tabs, history, { tA: 'mage-uuid-1' }, '.codex-a');
-
-    expect(rows.map((r) => r.kind)).toEqual(['tab']);
-  });
-
-  it('pestanaAbiertaSinEscribir_mantieneSuSitioPorMtimeDelHistorial', () => {
-    // Abrir una conversacion antigua NO debe subirla al principio (A6): su sitio lo da su mtime.
-    const tabs = [tab({ id: 'tA', resumeSessionId: 'sVieja' })];
-    const history = [hist({ sessionId: 'sVieja', updatedAtMs: 100 }), hist({ sessionId: 'sNueva', updatedAtMs: 900 })];
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
-
-    expect(rows.map((r) => (r.kind === 'tab' ? 'sVieja' : r.item.sessionId))).toEqual(['sNueva', 'sVieja']);
-  });
-
-  it('escribirEnLaPestana_laSubeAlPrincipio', () => {
-    const tabs = [tab({ id: 'tA', resumeSessionId: 'sVieja', lastMessageAtMs: 5000 })];
-    const history = [hist({ sessionId: 'sVieja', updatedAtMs: 100 }), hist({ sessionId: 'sNueva', updatedAtMs: 900 })];
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
-
-    expect(rows.map((r) => (r.kind === 'tab' ? 'sVieja' : r.item.sessionId))).toEqual(['sVieja', 'sNueva']);
-  });
-
-  it('conversacionNuevaSinSesion_seOrdenaPorCreatedAtMs', () => {
-    const tabs = [tab({ id: 'tNueva', createdAtMs: 8000 })];
-    const history = [hist({ sessionId: 'sB', updatedAtMs: 2000 })];
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
-
-    expect(rows.map((r) => r.kind)).toEqual(['tab', 'history']);
-  });
-
-  it('pestanaSinMarcasDeTiempo_noRompeElOrden', () => {
-    const tabs = [tab({ id: 'tLegacy' })]; // restaurada de un formato anterior
-    const history = [hist({ sessionId: 'sB', updatedAtMs: 2000 })];
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
-
-    expect(rows).toHaveLength(2);
-    expect(rows.map((r) => r.kind)).toEqual(['history', 'tab']);
-  });
-
-  it('deduplicaHistorialQueYaEstaAbierto_porResumeSessionId', () => {
-    const tabs = [tab({ id: 'tA', resumeSessionId: 'sX' })];
-    const history = [hist({ sessionId: 'sX' })]; // misma conversacion abierta
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.kind).toBe('tab');
-  });
-
-  it('deduplicaPorSesionViva_sessionIdByChat', () => {
-    const tabs = [tab({ id: 'tA' })]; // sin resumeSessionId, pero con sesion viva
-    const history = [hist({ sessionId: 'live1' })];
-
-    const rows = mergeConversationRows(tabs, history, { tA: 'live1' }, '.claude-p');
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.kind).toBe('tab');
-  });
-
-  it('historialMasRecientePrimero', () => {
-    const history = [hist({ sessionId: 'viejo', updatedAtMs: 1 }), hist({ sessionId: 'nuevo', updatedAtMs: 9 })];
-
-    const rows = mergeConversationRows([], history, {}, '.claude-p');
-
-    expect(rows.map((r) => (r.kind === 'history' ? r.item.sessionId : ''))).toEqual(['nuevo', 'viejo']);
-  });
-
-  it('filtraPestanasDeOtraCuenta', () => {
-    const tabs = [tab({ id: 'tA', accountId: '.claude-9' })];
-
-    const rows = mergeConversationRows(tabs, [], {}, '.claude-p');
-
-    expect(rows).toHaveLength(0);
-  });
 });
 
 describe('filterConversationRows', () => {
@@ -223,24 +127,6 @@ describe('planOpenConversation', () => {
     expect(() => planOpenConversation({ ...CTX, sessionId: '', tabs: [], sessionIdByChat: {} })).toThrow(
       /sessionId vacio/i,
     );
-  });
-});
-
-// P-026, 1.7 (D19): la fila de una pestaña abierta enseña lo mismo que la de una cerrada.
-describe('mergeConversationRows — resumen de la pestaña', () => {
-  it('mergeConversationRows_pestanaAbiertaConHistorial_adjuntaSuResumen', () => {
-    const summary = hist({ sessionId: 'sX', sizeBytes: 4096 });
-
-    const rows = mergeConversationRows([tab({ id: 'tA', resumeSessionId: 'sX' })], [summary], {}, '.claude-p');
-
-    expect(rows).toEqual([{ kind: 'tab', tab: expect.objectContaining({ id: 'tA' }), history: summary }]);
-  });
-
-  it('mergeConversationRows_pestanaSinFichero_sinResumen', () => {
-    const rows = mergeConversationRows([tab({ id: 'tNueva', createdAtMs: 5 })], [hist({ sessionId: 'otra' })], {}, '.claude-p');
-    const fila = rows.find((r) => r.kind === 'tab');
-
-    expect(fila !== undefined && fila.kind === 'tab' ? fila.history : 'no hay fila').toBeUndefined();
   });
 });
 

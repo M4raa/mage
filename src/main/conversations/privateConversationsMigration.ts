@@ -23,6 +23,7 @@ export function retiredProfileDirOf(accountDir: string): string {
 export interface PrivateMigrationDeps {
   readonly exists: (path: string) => boolean;
   readonly listDir: (path: string) => readonly string[];
+  readonly isDirectory: (path: string) => boolean;
   readonly ensureDir: (path: string) => void;
   readonly move: (from: string, to: string) => void;
   readonly log: (level: 'info' | 'warn', message: string) => void;
@@ -49,18 +50,34 @@ function moveEntry(from: string, toDir: string, to: string, deps: PrivateMigrati
   }
 }
 
+// Migra UNA cuenta. Una entrada que no es carpeta (un fichero suelto) se salta sin listarla.
+function migrateAccount(account: string, deps: PrivateMigrationDeps): PrivateMigrationResult {
+  let moved = 0;
+  let skipped = 0;
+  const source = join(account, PRIVATE_PROFILE_DIR, PROJECTS_DIR);
+  if (!deps.exists(source)) return { moved, skipped };
+  for (const encoded of deps.listDir(source)) {
+    if (!deps.isDirectory(join(source, encoded))) continue;
+    const toDir = join(account, PROJECTS_DIR, encoded);
+    for (const name of deps.listDir(join(source, encoded))) {
+      if (moveEntry(join(source, encoded, name), toDir, join(toDir, name), deps)) moved++;
+      else skipped++;
+    }
+  }
+  return { moved, skipped };
+}
+
 export function migratePrivateConversations(accountDirs: readonly string[], deps: PrivateMigrationDeps): PrivateMigrationResult {
   let moved = 0;
   let skipped = 0;
   for (const account of accountDirs) {
-    const source = join(account, PRIVATE_PROFILE_DIR, PROJECTS_DIR);
-    if (!deps.exists(source)) continue;
-    for (const encoded of deps.listDir(source)) {
-      const toDir = join(account, PROJECTS_DIR, encoded);
-      for (const name of deps.listDir(join(source, encoded))) {
-        if (moveEntry(join(source, encoded, name), toDir, join(toDir, name), deps)) moved++;
-        else skipped++;
-      }
+    try {
+      const result = migrateAccount(account, deps);
+      moved += result.moved;
+      skipped += result.skipped;
+    } catch (error) {
+      // La migración nunca puede tumbar el arranque: se anota la cuenta y se sigue con la siguiente.
+      deps.log('warn', `Conversaciones privadas no migradas en ${account}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   if (moved + skipped > 0) deps.log('info', `Conversaciones privadas pasadas al historial normal: ${moved} movidas, ${skipped} sin mover`);

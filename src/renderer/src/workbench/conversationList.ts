@@ -28,37 +28,6 @@ export function filterConversationRows(rows: readonly ConversationRow[], query: 
   return rows.filter((row) => rowTitle(row).toLowerCase().includes(needle));
 }
 
-// Devuelve las filas de una seccion (cuenta+privacidad) ordenadas por RECENCIA (mas reciente primero),
-// mezclando pestanas abiertas e historial en la misma escala de tiempo. Deliberadamente NO se ponen las
-// pestanas abiertas primero: abrir una conversacion no debe moverla de sitio (feedback GUI A6); solo
-// ESCRIBIR en ella la sube al principio (el store fija `lastMessageAtMs` al enviar). Se deduplica por
-// sessionId (la sesion viva o el resumeSessionId de una pestana === el sessionId del historial).
-export function mergeConversationRows(
-  tabs: readonly Tab[],
-  history: readonly ConversationSummary[],
-  sessionIdByChat: Readonly<Record<string, string>>,
-  accountId: string,
-): ConversationRow[] {
-  const openTabs = tabs.filter((tab) => tab.accountId === accountId);
-  // Indice sessionId -> resumen del historial (acceso O(1)): deduplica, data una pestaña reabierta que
-  // aun no ha recibido mensajes en esta ejecucion y le da su peso en disco.
-  const historyBySession = new Map(history.map((item) => [item.sessionId, item]));
-  const openSessionIds = new Set(
-    openTabs.map((tab) => sessionIdOf(tab, sessionIdByChat)).filter((id): id is string => id !== undefined),
-  );
-  const rows: ConversationRow[] = [
-    ...openTabs.map((tab) => tabRow(tab, historyBySession.get(sessionIdOf(tab, sessionIdByChat) ?? ''))),
-    ...history
-      .filter((item) => !openSessionIds.has(item.sessionId))
-      .map((item): ConversationRow => ({ kind: 'history', item })),
-  ];
-  return rows.sort((a, b) => rowRecency(b) - rowRecency(a));
-}
-
-function tabRow(tab: Tab, history: ConversationSummary | undefined): ConversationRow {
-  return history === undefined ? { kind: 'tab', tab } : { kind: 'tab', tab, history };
-}
-
 // Instante (ms epoch) por el que se ordena una fila: la ultima INTERACCION. Para una pestana, el mayor
 // de su ultimo mensaje enviado y el mtime de su transcripcion (la respuesta del agente tambien escribe,
 // asi que cuenta; abrir un chat no escribe nada y no lo sube); si no hay ninguno, cuando se creo. 0 si
