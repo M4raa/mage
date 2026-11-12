@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
 import type { Account } from '../types';
@@ -16,7 +16,7 @@ import { displayTitle } from '../conversationTitle';
 import { accountToOpenWith, sidebarRowId, type SidebarRow } from '../sidebarModel';
 import { SidebarHeader } from './sidebar/SidebarHeader';
 import { SidebarRowItem } from './sidebar/SidebarRowItem';
-import { FlatGroup, PROJECTS_COLLAPSED_LIMIT, ProjectGroupView, RowList, SectionLabel } from './sidebar/SidebarGroups';
+import { FlatGroup, PROJECTS_COLLAPSED_LIMIT, ProjectEndDropZone, ProjectGroupView, RowList, SectionLabel } from './sidebar/SidebarGroups';
 import { useSidebarModel } from './sidebar/useSidebarModel';
 import { TasksSection } from '../tasks/TasksSection';
 
@@ -62,6 +62,13 @@ export function ChatSidebar(): React.JSX.Element {
   const view = useSidebarModel(filter);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [editingProject, setEditingProject] = useState<ChatProject | 'new' | null>(null);
+  // Una carpeta nueva queda guardada arriba al aparecer; en un perfil sin `projectOrder` se guarda una vez el
+  // orden de hoy (por recencia) y ya no se mueve solo. Sin claves nuevas, `ensureProjectOrder` no hace nada.
+  const projectKeys = view.groups.projects.map((group) => group.key).join('\n');
+  const { ensureProjectOrder } = actions;
+  useEffect(() => {
+    if (projectKeys.length > 0) ensureProjectOrder(projectKeys.split('\n'));
+  }, [projectKeys, ensureProjectOrder]);
 
   if (account === undefined) {
     return (
@@ -104,6 +111,7 @@ export function ChatSidebar(): React.JSX.Element {
     />
   );
   const { groups } = view;
+  const shownProjects = groups.projects.filter((group) => !filter.archived || group.rows.length > 0);
   const isEmpty = groups.pinned.length + groups.unassigned.length + groups.private.length === 0 && groups.projects.every((group) => group.rows.length === 0);
   const menuSessionId = menu?.target.sessionId ?? '';
 
@@ -139,17 +147,20 @@ export function ChatSidebar(): React.JSX.Element {
             {groups.projects.length > 0 && <SectionLabel text={t('sidebar.projects.title')} hint={`${groups.projects.length}`} />}
             {editingProject !== null && <ProjectEditor project={editingProject === 'new' ? null : editingProject}
               onSave={async (project) => { await actions.saveChatProject(project); setEditingProject(null); }} onCancel={() => setEditingProject(null)} />}
-            <RowList rows={groups.projects.filter((group) => !filter.archived || group.rows.length > 0)} unlimited={view.filterActive} collapsed={PROJECTS_COLLAPSED_LIMIT} renderRow={(group) => {
+            <RowList rows={shownProjects} unlimited={view.filterActive} collapsed={PROJECTS_COLLAPSED_LIMIT} renderRow={(group) => {
               const userProject = group.projectId === null ? undefined : projects.find((p) => p.id === group.projectId);
+              const at = shownProjects.indexOf(group);
               return (
                 <ProjectGroupView
                   key={group.key}
                   group={group}
+                  neighbors={{ prev: shownProjects[at - 1]?.key ?? null, next: shownProjects[at + 1]?.key ?? null, afterNext: shownProjects[at + 2]?.key ?? null }}
                   renderRow={renderRow}
                   indicatorOf={view.indicatorOf}
                   unlimited={view.filterActive}
                   forceOpen={view.filterActive}
                   emptyHint={t('sidebar.projects.empty')}
+                  onMove={actions.moveProject}
                   onCreate={() => void actions.createConversation('shared', userProject === undefined
                     ? (group.cwd === null ? {} : { cwd: group.cwd })
                     : { projectId: userProject.id, ...(userProject.cwd === null ? { scratch: true } : { cwd: userProject.cwd }) })}
@@ -158,6 +169,7 @@ export function ChatSidebar(): React.JSX.Element {
                 />
               );
             }} />
+            {!view.filterActive && shownProjects.length > 0 && <ProjectEndDropZone onMove={actions.moveProject} />}
             {!filter.archived && (
               <button onClick={() => setEditingProject('new')} aria-label={t('sidebar.projects.create')} className="mx-[2px] mt-[2px] rounded-[6px] p-[4px_9px] text-left text-[11px] text-mg-icon hover:bg-mg-hover hover:text-mg-body">
                 ＋ {t('sidebar.projects.create')}
@@ -247,6 +259,8 @@ function useSidebarActions(): {
   readonly dropConversationOutside: ReturnType<typeof useWorkbenchStore.getState>['dropConversationOutside'];
   readonly togglePinnedConversation: (sessionId: string) => void;
   readonly setConversationArchived: (sessionId: string, archived: boolean) => void;
+  readonly ensureProjectOrder: (keys: readonly string[]) => void;
+  readonly moveProject: (key: string, beforeKey: string | null) => void;
 } {
   return {
     setActiveTab: useWorkbenchStore((s) => s.setActiveTab),
@@ -264,6 +278,8 @@ function useSidebarActions(): {
     dropConversationOutside: useWorkbenchStore((s) => s.dropConversationOutside),
     togglePinnedConversation: useWorkbenchStore((s) => s.togglePinnedConversation),
     setConversationArchived: useWorkbenchStore((s) => s.setConversationArchived),
+    ensureProjectOrder: useWorkbenchStore((s) => s.ensureProjectOrder),
+    moveProject: useWorkbenchStore((s) => s.moveProject),
   };
 }
 

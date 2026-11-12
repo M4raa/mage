@@ -593,6 +593,10 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setSidebarFilter: (filter: SidebarFilter) => void;
   // Fija o desfija una conversación del lateral (y su pestaña abierta, si la hay).
   togglePinnedConversation: (sessionId: string) => void;
+  // Orden manual de las carpetas del lateral: `ensureProjectOrder` guarda arriba las claves que aún no estaban y
+  // `moveProject` pone `key` justo antes de `beforeKey` (null = al final).
+  ensureProjectOrder: (keys: readonly string[]) => void;
+  moveProject: (key: string, beforeKey: string | null) => void;
   // Archiva o desarchiva una conversación del lateral.
   setConversationArchived: (sessionId: string, archived: boolean) => void;
   // Mueve una conversacion (#2) entre secciones (compartido/privado) y/o cuentas: cierra su pestana si

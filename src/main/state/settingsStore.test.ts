@@ -8,6 +8,7 @@ const VALID: AppSettings = {
   notificationRules: [{ id: 'r1', label: 'Deploy', pattern: 'deploy (ok|listo)', enabled: true }],
   chatProjects: [],
   pinnedConversations: [],
+  projectOrder: [],
   archivedConversations: [],
   theme: 'light',
   accountAvatarsPlacement: 'top',
@@ -179,6 +180,14 @@ describe('SettingsStore.load', () => {
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, pinnedConversations: 'x', archivedConversations: ['ok', ''] }) }));
     expect(store.load().pinnedConversations).toEqual([]);
     expect(store.load().archivedConversations).toEqual([]);
+  });
+
+  it('load_projectOrderValidoEInvalido_conservaOCaeAVacio', () => {
+    const valido = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, projectOrder: ['p:1', 'd:c:/x'] }) }));
+    const invalido = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, projectOrder: ['p:1', ''] }) }));
+
+    expect(valido.load().projectOrder).toEqual(['p:1', 'd:c:/x']);
+    expect(invalido.load().projectOrder).toEqual([]);
   });
 
   it('load_jsonCorrupto_devuelveDefaults', () => {

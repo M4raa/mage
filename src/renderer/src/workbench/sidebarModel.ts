@@ -183,6 +183,8 @@ export interface GroupContext {
   readonly pinnedIds: ReadonlySet<string>;
   readonly scratchRoots: readonly string[];
   readonly sessionIdByChat: Readonly<Record<string, string>>;
+  // Orden manual de las carpetas (claves de grupo).
+  readonly projectOrder: readonly string[];
 }
 
 function isPinnedRow(row: SidebarRow, ctx: GroupContext): boolean {
@@ -209,12 +211,30 @@ function groupRecency(group: ProjectGroup): number {
   return Math.max(0, ...group.rows.map(rowRecency));
 }
 
-// Los grupos con filas, por su fila más reciente; los vacíos (proyectos del usuario sin conversaciones), al final
-// por nombre.
-function sortProjectGroups(groups: readonly ProjectGroup[]): ProjectGroup[] {
-  const filled = groups.filter((group) => group.rows.length > 0).sort((a, b) => groupRecency(b) - groupRecency(a));
-  const empty = groups.filter((group) => group.rows.length === 0).sort((a, b) => a.name.localeCompare(b.name));
-  return [...filled, ...empty];
+// Orden de las carpetas: solo lo cambia el usuario al arrastrar. Los grupos cuya clave aún no está en `order`
+// (carpetas nuevas, hasta que se guardan) van PRIMERO, por recencia descendente; después los guardados, en el
+// orden de `order`. Los proyectos vacíos del usuario siguen la misma regla.
+export function orderProjectGroups(groups: readonly ProjectGroup[], order: readonly string[]): ProjectGroup[] {
+  const position = new Map(order.map((key, index) => [key, index]));
+  const fresh = groups.filter((group) => !position.has(group.key)).sort((a, b) => groupRecency(b) - groupRecency(a));
+  const saved = groups.filter((group) => position.has(group.key)).sort((a, b) => (position.get(a.key) ?? 0) - (position.get(b.key) ?? 0));
+  return [...fresh, ...saved];
+}
+
+// `order` con las claves de `keys` que le faltan AÑADIDAS AL PRINCIPIO, en el orden en que llegan. Sin ninguna
+// que falte devuelve la MISMA referencia (para no guardar en bucle).
+export function withNewProjectKeys(order: readonly string[], keys: readonly string[]): readonly string[] {
+  const known = new Set(order);
+  const missing = [...new Set(keys)].filter((key) => !known.has(key));
+  return missing.length === 0 ? order : [...missing, ...order];
+}
+
+// Pone `key` justo antes de `beforeKey` (null = al final). Si `key` no está o ya es `beforeKey`, devuelve `order`.
+export function moveProjectKey(order: readonly string[], key: string, beforeKey: string | null): readonly string[] {
+  if (key === beforeKey || !order.includes(key)) return order;
+  const rest = order.filter((candidate) => candidate !== key);
+  const at = beforeKey === null ? -1 : rest.indexOf(beforeKey);
+  return at < 0 ? [...rest, key] : [...rest.slice(0, at), key, ...rest.slice(at)];
 }
 
 function addToProjectGroup(groups: Map<string, ProjectGroup>, target: Omit<ProjectGroup, 'rows'>, row: SidebarRow): void {
@@ -249,7 +269,7 @@ export function groupSidebarRows(rows: readonly SidebarRow[], ctx: GroupContext)
     if (target === null) unassigned.push(row);
     else addToProjectGroup(groups, target, row);
   }
-  return { pinned, projects: sortProjectGroups([...groups.values()]), unassigned, private: privateRows };
+  return { pinned, projects: orderProjectGroups([...groups.values()], ctx.projectOrder), unassigned, private: privateRows };
 }
 
 export interface SidebarFilter {

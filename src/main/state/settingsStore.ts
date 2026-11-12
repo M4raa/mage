@@ -121,6 +121,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   chatProjects: z.array(CHAT_PROJECT_SCHEMA).catch([]),
   // Ids de conversación fijadas/archivadas: un valor que no sea array de cadenas no vacías cae a [].
   pinnedConversations: z.array(z.string().min(1)).catch([]),
+  // Orden manual de las carpetas del lateral (claves de grupo): mismo trato tolerante.
+  projectOrder: z.array(z.string().min(1)).catch([]),
   archivedConversations: z.array(z.string().min(1)).catch([]),
   // theme opcional en disco: ficheros antiguos (sin la clave) y valores invalidos caen a 'dark' via
   // .catch (frontera laxa; el default preserva el aspecto oscuro actual).

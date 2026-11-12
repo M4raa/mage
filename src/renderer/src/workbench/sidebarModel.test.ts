@@ -12,7 +12,11 @@ import {
   groupSidebarRows,
   mergeAccountHistories,
   missingOwnerOf,
+  moveProjectKey,
   normalizeFolderKey,
+  orderProjectGroups,
+  withNewProjectKeys,
+  type ProjectGroup,
   projectSummary,
   providerMonogram,
   rowIndicator,
@@ -59,6 +63,7 @@ const groupCtx = (over: Partial<GroupContext> = {}): GroupContext => ({
   pinnedIds: new Set(),
   scratchRoots: [],
   sessionIdByChat: {},
+  projectOrder: [],
   ...over,
 });
 
@@ -224,14 +229,92 @@ describe('groupSidebarRows', () => {
     expect(groups.projects.map((group) => group.name)).toEqual(['app', 'app']);
   });
 
-  it('groupSidebarRows_emptyUserProject_listedLast', () => {
+  it('groupSidebarRows_emptyUserProject_sigueElOrdenGuardado', () => {
     const empty = project({ id: 'p2', name: 'Vacio' });
     const rows = [historyRow({ cwd: 'C:\\x\\app' })];
 
-    const groups = groupSidebarRows(rows, groupCtx({ projects: [empty] }));
+    const groups = groupSidebarRows(rows, groupCtx({ projects: [empty], projectOrder: ['p:p2', 'd:c:/x/app'] }));
 
-    expect(groups.projects.map((group) => group.key)).toEqual(['d:c:/x/app', 'p:p2']);
-    expect(groups.projects[1]?.rows).toEqual([]);
+    expect(groups.projects.map((group) => group.key)).toEqual(['p:p2', 'd:c:/x/app']);
+    expect(groups.projects[0]?.rows).toEqual([]);
+  });
+});
+
+// Un grupo con una sola fila de la recencia dada (0 = grupo vacío).
+const groupAt = (key: string, recency: number): ProjectGroup => ({
+  key,
+  name: key,
+  cwd: null,
+  projectId: null,
+  rows: recency === 0 ? [] : [historyRow({ sessionId: key, updatedAtMs: recency })],
+});
+const keysOf = (groups: readonly ProjectGroup[]): string[] => groups.map((group) => group.key);
+
+describe('orderProjectGroups', () => {
+  it('orderProjectGroups_ordenGuardado_lomantiene', () => {
+    const groups = [groupAt('d:a', 300), groupAt('d:b', 200), groupAt('d:c', 100)];
+
+    const result = orderProjectGroups(groups, ['d:c', 'd:b', 'd:a']);
+
+    expect(keysOf(result)).toEqual(['d:c', 'd:b', 'd:a']);
+  });
+
+  it('orderProjectGroups_claveNueva_vaPrimero', () => {
+    const groups = [groupAt('d:a', 900), groupAt('d:nueva', 1)];
+
+    const result = orderProjectGroups(groups, ['d:a']);
+
+    expect(keysOf(result)).toEqual(['d:nueva', 'd:a']);
+  });
+
+  it('orderProjectGroups_variasNuevas_porRecencia', () => {
+    const groups = [groupAt('d:vieja', 1), groupAt('d:a', 900), groupAt('d:reciente', 50)];
+
+    const result = orderProjectGroups(groups, ['d:a']);
+
+    expect(keysOf(result)).toEqual(['d:reciente', 'd:vieja', 'd:a']);
+  });
+
+  it('orderProjectGroups_ordenVacio_porRecencia', () => {
+    const groups = [groupAt('d:a', 100), groupAt('d:b', 300), groupAt('d:vacio', 0)];
+
+    const result = orderProjectGroups(groups, []);
+
+    expect(keysOf(result)).toEqual(['d:b', 'd:a', 'd:vacio']);
+  });
+});
+
+describe('withNewProjectKeys', () => {
+  it('withNewProjectKeys_sinNuevas_mismaReferencia', () => {
+    const order = ['a', 'b'];
+
+    expect(withNewProjectKeys(order, ['b', 'a'])).toBe(order);
+  });
+
+  it('withNewProjectKeys_nuevas_alPrincipio', () => {
+    expect(withNewProjectKeys(['a'], ['x', 'a', 'y'])).toEqual(['x', 'y', 'a']);
+  });
+});
+
+describe('moveProjectKey', () => {
+  it('moveProjectKey_antesDeOtra', () => {
+    expect(moveProjectKey(['a', 'b', 'c'], 'c', 'a')).toEqual(['c', 'a', 'b']);
+  });
+
+  it('moveProjectKey_alFinal', () => {
+    expect(moveProjectKey(['a', 'b', 'c'], 'a', null)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('moveProjectKey_mismaClave_sinCambios', () => {
+    const order = ['a', 'b'];
+
+    expect(moveProjectKey(order, 'a', 'a')).toBe(order);
+  });
+
+  it('moveProjectKey_claveAusente_sinCambios', () => {
+    const order = ['a', 'b'];
+
+    expect(moveProjectKey(order, 'z', 'a')).toBe(order);
   });
 });
 

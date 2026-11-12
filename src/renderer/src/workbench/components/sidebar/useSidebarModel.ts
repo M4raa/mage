@@ -92,7 +92,7 @@ export function useSidebarModel(filter: SidebarFilter): SidebarView {
     };
     const archivedIds = new Set(settings.archivedConversations);
     const filtered = applySidebarFilter(rows, filter, { isWorking, archivedIds, sessionIdByChat });
-    const groups = groupSidebarRows(filtered.rows, { projects: settings.chatProjects, pinnedIds: new Set(settings.pinnedConversations), scratchRoots, sessionIdByChat });
+    const groups = groupSidebarRows(filtered.rows, { projects: settings.chatProjects, pinnedIds: new Set(settings.pinnedConversations), scratchRoots, sessionIdByChat, projectOrder: settings.projectOrder });
     const visibleToChips = applySidebarFilter(rows, EMPTY_SIDEBAR_FILTER, { isWorking, archivedIds, sessionIdByChat }).rows;
     const accountIds = new Set(rows.filter(rowAccountKnown).map((row) => row.accountId));
     return {

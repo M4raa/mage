@@ -108,6 +108,9 @@ export interface AppSettings {
   readonly chatProjects: readonly ChatProject[];
   // Ids de conversación fijadas en el lateral (grupo «Fijadas»). Una pestaña fijada y su conversación van a la par.
   readonly pinnedConversations: readonly string[];
+  // Orden de las carpetas de proyecto del lateral, por clave de grupo (`p:<projectId>` o `d:<carpeta>`). Solo lo
+  // cambia el usuario al arrastrar una carpeta; una carpeta nueva entra arriba del todo. Solo lo lee el renderer.
+  readonly projectOrder: readonly string[];
   // Ids de conversación archivadas: salen del lateral salvo con el chip «Archivadas».
   readonly archivedConversations: readonly string[];
   // Preferencia de tema base (claro/oscuro/sistema). Default 'dark' para preservar el aspecto actual.
@@ -300,6 +303,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   notificationRules: [],
   chatProjects: [],
   pinnedConversations: [],
+  projectOrder: [],
   archivedConversations: [],
   theme: 'dark',
   accountAvatarsPlacement: 'top',

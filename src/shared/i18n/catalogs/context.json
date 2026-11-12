@@ -1969,6 +1969,7 @@
   "sidebar.orphan.refreshFailed": { "description": "Título de la notificación de error al releer las cuentas tras volver a iniciar sesión.", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:316" },
   "sidebar.private.empty": { "description": "Sección de conversaciones privadas vacía (sin búsqueda).", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:202" },
   "sidebar.private.title": { "description": "Cabecera de la sección de conversaciones privadas, en mayúsculas.", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:189", "maxLength": 20 },
+  "sidebar.project.reorderHint": { "description": "Pista (tooltip) de la cabecera de una carpeta de proyecto del lateral: se reordena arrastrándola o con Alt+flecha arriba/abajo.", "usage": "src/renderer/src/workbench/components/sidebar/SidebarGroups.tsx:120", "maxLength": 50 },
   "sidebar.projectEditor.cancel": { "description": "Botón que cierra el editor de proyecto sin guardar.", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:295", "maxLength": 12 },
   "sidebar.projectEditor.linkApp": { "description": "Botón del editor de proyecto que elige la carpeta de la aplicación del proyecto.", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:290", "maxLength": 24 },
   "sidebar.projectEditor.name": { "description": "Etiqueta del campo de nombre en el editor de proyecto de chats.", "usage": "src/renderer/src/workbench/components/ChatSidebar.tsx:279" },

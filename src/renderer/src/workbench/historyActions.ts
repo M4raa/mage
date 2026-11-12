@@ -3,7 +3,7 @@ import type { WorkbenchState } from './workbenchStore';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID } from '@shared/providers';
 import { describeError } from './describeError';
 import { conversationIdOfTab } from './conversationId';
-import { mergeAccountHistories, type AccountHistory } from './sidebarModel';
+import { mergeAccountHistories, moveProjectKey, withNewProjectKeys, type AccountHistory } from './sidebarModel';
 import type { ConversationSummary } from '@shared/conversations';
 
 // Historial de conversaciones y proyectos de chat (F2.5, division del store por dominio): cargar la lista de la
@@ -21,7 +21,7 @@ export function withIdPresence(list: readonly string[], id: string, present: boo
   return present ? [...list, id] : list.filter((candidate) => candidate !== id);
 }
 
-export type HistoryActions = Pick<WorkbenchState, 'saveChatProject' | 'deleteChatProject' | 'assignChatProject' | 'loadConversationHistory' | 'togglePinnedConversation' | 'setConversationArchived'>;
+export type HistoryActions = Pick<WorkbenchState, 'saveChatProject' | 'deleteChatProject' | 'assignChatProject' | 'loadConversationHistory' | 'togglePinnedConversation' | 'setConversationArchived' | 'ensureProjectOrder' | 'moveProject'>;
 
 export interface HistoryDeps {
   readonly mage: MageApi;
@@ -42,7 +42,11 @@ export function createHistoryActions(deps: HistoryDeps): HistoryActions {
     },
     deleteChatProject: (projectId) => {
       set((s) => ({
-        settings: { ...s.settings, chatProjects: s.settings.chatProjects.filter((p) => p.id !== projectId) },
+        settings: {
+          ...s.settings,
+          chatProjects: s.settings.chatProjects.filter((p) => p.id !== projectId),
+          projectOrder: s.settings.projectOrder.filter((key) => key !== `p:${projectId}`),
+        },
         tabs: s.tabs.map((t) => t.projectId === projectId ? { ...t, projectId: undefined } : t),
       }));
       deps.persistSettings();
@@ -72,6 +76,25 @@ export function createHistoryActions(deps: HistoryDeps): HistoryActions {
       }));
       deps.persistSettings();
       deps.persistTabs();
+    },
+
+    // Guarda arriba las carpetas que aún no tenían sitio en el orden manual. Sin claves nuevas no hace nada
+    // (ni `set` ni guardado): se llama desde un efecto y no debe entrar en bucle.
+    ensureProjectOrder: (keys) => {
+      const current = get().settings.projectOrder;
+      const next = withNewProjectKeys(current, keys);
+      if (next === current) return;
+      set((s) => ({ settings: { ...s.settings, projectOrder: next } }));
+      deps.persistSettings();
+    },
+
+    // El usuario movió una carpeta: va justo antes de `beforeKey` (null = al final).
+    moveProject: (key, beforeKey) => {
+      const current = get().settings.projectOrder;
+      const next = moveProjectKey(current, key, beforeKey);
+      if (next === current) return;
+      set((s) => ({ settings: { ...s.settings, projectOrder: next } }));
+      deps.persistSettings();
     },
 
     // Archiva o desarchiva una conversación (sale del lateral salvo con el chip «Archivadas»).

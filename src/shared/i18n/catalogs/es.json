@@ -2295,6 +2295,7 @@
   "sidebar.pinned.title": "Fijadas",
   "sidebar.private.empty": "Sin conversaciones privadas.",
   "sidebar.private.title": "Privadas",
+  "sidebar.project.reorderHint": "Arrastra o usa Alt+↑/↓ para moverla",
   "sidebar.projectEditor.cancel": "Cancelar",
   "sidebar.projectEditor.linkApp": "Vincular aplicación…",
   "sidebar.projectEditor.name": "Nombre del proyecto",

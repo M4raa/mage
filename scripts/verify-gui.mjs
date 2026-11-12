@@ -9067,6 +9067,69 @@ const CHECKS = [
       }
     },
   },
+  {
+    // U-A5 (punto 9): las carpetas solo cambian de orden si las mueve el usuario. Tres carpetas A > B > C por recencia;
+    // al hacer a C la más reciente el orden NO cambia; Alt+↑ sube C una posición y el orden queda en disco. El arrastre
+    // con el ratón NO se simula por CDP: va a la lista manual del informe.
+    name: 'Lateral: las carpetas no se reordenan solas y se mueven arrastrando o con Alt+↑/↓',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { allConversationHistory: s.allConversationHistory, settings: s.settings, loadConversationHistory: s.loadConversationHistory };
+      });
+      const ordenVg = () =>
+        page.evaluate(() =>
+          [...document.querySelectorAll('[data-project-key]')]
+            .map((n) => /vg-ord-(\w)$/.exec(n.getAttribute('data-project-key') ?? '')?.[1] ?? null)
+            .filter((letra) => letra !== null)
+            .join(''),
+        );
+      const ordenEnDisco = () =>
+        page.evaluate(async () => {
+          const guardado = await window.mage.loadSettings();
+          return guardado.projectOrder.map((k) => /vg-ord-(\w)$/.exec(k)?.[1] ?? null).filter((letra) => letra !== null).join('');
+        });
+      const sembrar = (recencias) =>
+        page.evaluate((r) => {
+          const store = window.__mageDev.store;
+          const accountId = store.getState().activeAccountId;
+          const filas = Object.entries(r).map(([letra, ms]) => ({
+            accountId,
+            item: { configDir: '', title: `vg ord ${letra}`, privacy: 'shared', sizeBytes: 1, isScheduled: false, sessionId: `vg-ord-${letra}`, cwd: `C:\\vg\\vg-ord-${letra}`, updatedAtMs: ms },
+          }));
+          store.setState({ allConversationHistory: filas });
+        }, recencias);
+      try {
+        const ahora = Date.now();
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          store.setState({ loadConversationHistory: async () => undefined, settings: { ...store.getState().settings, projectOrder: [] } });
+        });
+        await sembrar({ a: ahora - 1000, b: ahora - 2000, c: ahora - 3000 });
+        await page.waitForFunction(() => ['a', 'b', 'c'].every((l) => window.__mageDev.store.getState().settings.projectOrder.some((k) => k.endsWith(`vg-ord-${l}`))), undefined, { timeout: CONFIG.actionTimeoutMs });
+        const inicial = await ordenVg();
+        // C pasa a ser la más reciente: antes subía la primera sola.
+        await sembrar({ a: ahora - 1000, b: ahora - 2000, c: ahora + 60_000 });
+        await page.waitForTimeout(CONFIG.settleMs * 2);
+        const trasRecencia = await ordenVg();
+        await page.locator('[data-project-key$="/vg-ord-c"]').focus();
+        await page.keyboard.press('Alt+ArrowUp');
+        await page.waitForTimeout(CONFIG.settleMs * 2);
+        const trasAlt = await ordenVg();
+        let enDisco = '';
+        for (let intento = 0; intento < 10 && enDisco !== 'acb'; intento += 1) {
+          enDisco = await ordenEnDisco();
+          if (enDisco !== 'acb') await page.waitForTimeout(CONFIG.settleMs);
+        }
+        const ok = inicial === 'abc' && trasRecencia === 'abc' && trasAlt === 'acb' && enDisco === 'acb';
+        return { ok, detail: JSON.stringify({ inicial, trasRecencia, trasAlt, enDisco }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.evaluate((guardado) => window.mage.saveSettings(guardado), previo.settings);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
   ...(process.argv.some(arg => arg.startsWith('--trust-stage=')) ? [{
     name: 'F1.10: confianza persistida entre reinicios completos',
     persistSettings: true,

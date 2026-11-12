@@ -80,6 +80,50 @@ export interface ProjectGroupViewProps {
   // Solo en los proyectos del usuario.
   readonly onEdit: (() => void) | null;
   readonly onRemove: (() => void) | null;
+  // Reordena: `key` se coloca justo ANTES de `beforeKey` (null = al final).
+  readonly onMove: (key: string, beforeKey: string | null) => void;
+  // Vecinos en la lista visible, para mover con Alt+↑/↓ (null = no hay).
+  readonly neighbors: ProjectNeighbors;
+}
+
+export interface ProjectNeighbors {
+  readonly prev: string | null;
+  readonly next: string | null;
+  readonly afterNext: string | null;
+}
+
+// Tipo propio del arrastre de una carpeta: las filas de historial llevan `application/x-mage-conversation` y
+// ninguna de las dos cosas acepta a la otra.
+const PROJECT_DRAG_TYPE = 'application/x-mage-project';
+
+const isProjectDrag = (e: React.DragEvent): boolean => e.dataTransfer.types.includes(PROJECT_DRAG_TYPE);
+
+// Alt+↑/↓ sobre la cabecera: sube o baja la carpeta una posición. Mover reordena los nodos y el navegador
+// suelta el foco: se devuelve a la cabecera para poder seguir pulsando.
+function moveByKey(e: React.KeyboardEvent<HTMLElement>, key: string, { prev, next, afterNext }: ProjectNeighbors, onMove: ProjectGroupViewProps['onMove']): void {
+  if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (e.key === 'ArrowUp' && prev !== null) onMove(key, prev);
+  else if (e.key === 'ArrowDown' && next !== null) onMove(key, afterNext);
+  else return;
+  e.preventDefault();
+  const header = e.currentTarget;
+  requestAnimationFrame(() => header.focus());
+}
+
+// Zona de 8 px tras la última carpeta: soltar aquí la deja la última.
+export function ProjectEndDropZone({ onMove }: { readonly onMove: ProjectGroupViewProps['onMove'] }): React.JSX.Element {
+  return (
+    <div
+      data-project-drop-end="true"
+      className="h-[8px]"
+      onDragOver={(e) => isProjectDrag(e) && e.preventDefault()}
+      onDrop={(e) => {
+        if (!isProjectDrag(e)) return;
+        e.preventDefault();
+        onMove(e.dataTransfer.getData(PROJECT_DRAG_TYPE), null);
+      }}
+    />
+  );
 }
 
 // Proyecto: cabecera con chevron, carpeta, nombre, resumen (ámbar con el nº que piden algo, anillo si trabaja)
@@ -90,12 +134,43 @@ export function ProjectGroupView(props: ProjectGroupViewProps): React.JSX.Elemen
   const [override, setOverride] = useState<boolean | null>(null);
   const open = forceOpen || (override ?? true);
   const summary = projectSummary(group.rows.map(indicatorOf));
+  const t = useT();
+  // Destino de un arrastre: línea de 2 px arriba (no mueve el contenido). Con el filtro activo no se arrastra.
+  const [dropTarget, setDropTarget] = useState(false);
+  const dropLine = dropTarget ? ' before:pointer-events-none before:absolute before:inset-x-0 before:top-[-1px] before:h-[2px] before:bg-mg-primary' : '';
   return (
-    <section data-sidebar-group="project" {...(group.projectId === null ? {} : { 'data-chat-project': group.projectId })} className="flex flex-col gap-px">
-      <div className="group/proj flex h-[28px] items-center gap-[2px] rounded-[6px] pr-[4px] hover:bg-mg-hover focus-within:bg-mg-hover">
+    <section
+      data-sidebar-group="project"
+      {...(group.projectId === null ? {} : { 'data-chat-project': group.projectId })}
+      className={`relative flex flex-col gap-px${dropLine}`}
+      onDragOver={(e) => {
+        if (!isProjectDrag(e)) return;
+        e.preventDefault();
+        setDropTarget(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget(false);
+      }}
+      onDrop={(e) => {
+        setDropTarget(false);
+        if (!isProjectDrag(e)) return;
+        e.preventDefault();
+        props.onMove(e.dataTransfer.getData(PROJECT_DRAG_TYPE), group.key);
+      }}
+    >
+      <div
+        draggable={!forceOpen}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(PROJECT_DRAG_TYPE, group.key);
+          e.dataTransfer.effectAllowed = 'move';
+        }}
+        className="group/proj flex h-[28px] items-center gap-[2px] rounded-[6px] pr-[4px] hover:bg-mg-hover focus-within:bg-mg-hover"
+      >
         <button
           data-project-key={group.key}
           aria-expanded={open}
+          data-tip={t('sidebar.project.reorderHint')}
+          onKeyDown={(e) => moveByKey(e, group.key, props.neighbors, props.onMove)}
           onClick={() => setOverride(!open)}
           className="flex h-full min-w-0 flex-1 items-center gap-[6px] p-[0_6px] text-left font-semibold text-mg-body"
         >

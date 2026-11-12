@@ -2297,6 +2297,7 @@ export interface MessageValues {
   readonly "sidebar.pinned.title": never;
   readonly "sidebar.private.empty": never;
   readonly "sidebar.private.title": never;
+  readonly "sidebar.project.reorderHint": never;
   readonly "sidebar.projectEditor.cancel": never;
   readonly "sidebar.projectEditor.linkApp": never;
   readonly "sidebar.projectEditor.name": never;
