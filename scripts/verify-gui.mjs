@@ -67,14 +67,6 @@ import { ui, uiIn, uiPlural, uiPrefix, uiRegExp, uiSegment, escapeRegExp, cssAtt
 
 // Línea resumen del dock de subagentes (agentsDock.ts): «N en ejecución · M terminados», sin la parte que vale cero.
 const agentsSummary = (running, finished) => [running > 0 ? uiPlural('chat.agents.summaryRunning', { count: running }) : null, finished > 0 ? uiPlural('chat.agents.summaryFinished', { count: finished }) : null].filter((part) => part !== null).join(' · ');
-// Línea de conversaciones privadas del diálogo de eliminar cuenta: contando, fallo, ninguna, una o N (el N se deja abierto).
-const privateLineRegExp = () => new RegExp(`(?:${[
-  escapeRegExp(ui('accounts.delete.privateCounting')),
-  escapeRegExp(uiPrefix('accounts.delete.privateCountFailed')),
-  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 0 })),
-  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 1 })),
-  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 2 })).replace('2', '\\d+'),
-].join('|')})`);
 // Entero con el agrupador del idioma de la tanda (la app formatea igual con Intl).
 const localizedInteger = (value) => new Intl.NumberFormat(getUiLanguage()).format(value);
 // Decimal con un dígito, con el separador del idioma de la tanda (la app formatea igual con Intl).
@@ -2139,7 +2131,7 @@ const CHECKS = [
         }, CODEX_REVERT_FIXTURE_ID);
         await instance.page.screenshot({ path: path.join(runDir, 'historial-codex-revert.png') });
         const migrada = await instance.page.evaluate(({ from, to, id }) => window.mage.migrateConversation({
-          sourceAccountDir: from, sourceProvider: 'codex', sessionId: id, cwd: 'C:\\proyecto', privacy: 'shared', destAccountDir: to, destProvider: 'codex',
+          sourceAccountDir: from, sourceProvider: 'codex', sessionId: id, cwd: 'C:\\proyecto', destAccountDir: to, destProvider: 'codex',
         }), { from: fx.codexHome, to: fx.codexHome2, id: CODEX_REVERT_FIXTURE_ID });
         const escrito = readCodexRolloutText(fx.codexHome2, migrada.sessionId);
         const medido = {
@@ -2187,7 +2179,7 @@ const CHECKS = [
       try {
         await refreshAccountsUntil(page, fx.codexHome2);
         const result = await page.evaluate(({ agyHome, codexHome2, id }) => window.mage.migrateConversation({
-          sourceAccountDir: agyHome, sourceProvider: 'agy', sessionId: id, cwd: 'C:\proyecto', privacy: 'shared', destAccountDir: codexHome2, destProvider: 'codex',
+          sourceAccountDir: agyHome, sourceProvider: 'agy', sessionId: id, cwd: 'C:\proyecto', destAccountDir: codexHome2, destProvider: 'codex',
         }), { agyHome: fx.agyHome, codexHome2: fx.codexHome2, id: AGY_FIXTURE_ID });
         const listar = (dir) => page.evaluate((d) => window.mage.listConversations(d), dir);
         const enCodex = await listar(fx.codexHome2);
@@ -4649,8 +4641,8 @@ const CHECKS = [
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const siguen = await page.evaluate(() => window.__mageDev.store.getState().accounts.length);
       const ok =
-        !principalOfrece && otraOfrece && privateLineRegExp().test(texto) && texto.includes(ui('accounts.delete.sharedUntouched')) && siguen === cuentas.length;
-      return { ok, detail: JSON.stringify({ principalOfrece, otraOfrece, dicePrivadas: privateLineRegExp().test(texto), siguen }) };
+        !principalOfrece && otraOfrece && texto.includes(ui('accounts.delete.loginAndSettings')) && texto.includes(ui('accounts.delete.sharedUntouched')) && siguen === cuentas.length;
+      return { ok, detail: JSON.stringify({ principalOfrece, otraOfrece, dice: texto.includes(ui('accounts.delete.loginAndSettings')), siguen }) };
     },
   },
   {
@@ -7363,15 +7355,13 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
 
       const todo = { ...medido, scratchResuelto, etiquetaScratch };
-      const sharedLabel = ui('chat.info.shared');
       const ok =
         todo.hayFila &&
         todo.esSublinea &&
         todo.debajoDelInput === true &&
-        // Cuenta + carpeta + privacidad (P-038 V3; el scratchpad no es un repositorio: sin rama; sin dato aún no hay % de
-        // contexto). El modelo no va (D18).
-        todo.etiquetas.length === 3 &&
-        todo.etiquetas[2]?.texto === sharedLabel &&
+        // Cuenta + carpeta (el scratchpad no es un repositorio: sin rama; sin dato aún no hay % de contexto). Ni el
+        // modelo (D18) ni la privacidad, que se retiró.
+        todo.etiquetas.length === 2 &&
         // Solo la carpeta hace algo: un boton que no lleva a ningun sitio es una promesa rota.
         todo.pulsables === 1 &&
         todo.desborda === false &&
@@ -8703,7 +8693,7 @@ const CHECKS = [
     },
   },
   {
-    name: 'P-038 V3: «Compartido» va en la fila de la conversación y el % de contexto en la barra de estado',
+    name: 'P-038 V3: la fila de la conversación no lleva privacidad y el % de contexto va en la barra de estado',
     async run(page) {
       await openTemporaryConversation(page);
       await page.evaluate(() => {
@@ -8712,17 +8702,15 @@ const CHECKS = [
         store.setState((s) => ({ contextUsageByChat: { ...s.contextUsageByChat, [tabId]: { totalTokens: 84_800, maxTokens: 200_000, percentage: 42.4, categories: [] } } }));
       });
       await page.waitForTimeout(CONFIG.settleMs);
-      const medido = await page.evaluate((textos) => {
+      const medido = await page.evaluate(() => {
         const pane = document.querySelector(`[data-pane-tab-id="${window.__mageDev.store.getState().activeTabId}"]`);
-        const sublinea = pane?.querySelector('[data-tab-subline]');
-        const compartidos = [...(pane?.querySelectorAll('span') ?? [])].filter((n) => n.children.length === 0 && n.textContent?.trim() === textos.shared);
         return {
-          privacidad: sublinea?.querySelector('[data-tab-subline-privacy]')?.getAttribute('data-tab-subline-privacy') ?? null,
+          sublinea: pane?.querySelector('[data-tab-subline]') !== null,
+          privacidad: pane?.querySelector('[data-tab-subline-privacy]') !== null,
           contexto: document.querySelector('[data-status-context]')?.textContent?.replace('·', '').trim() ?? null,
-          compartidosFueraDeLaSublinea: compartidos.filter((n) => !sublinea?.contains(n)).length,
         };
-      }, { shared: ui('chat.info.shared') });
-      const ok = medido.privacidad === 'shared' && medido.contexto === ui('tabs.subline.context', { pct: 42 }) && medido.compartidosFueraDeLaSublinea === 0;
+      });
+      const ok = medido.sublinea && !medido.privacidad && medido.contexto === ui('tabs.subline.context', { pct: 42 });
       return { ok, detail: JSON.stringify(medido) };
     },
   },
@@ -10308,7 +10296,7 @@ const CHECKS = [
   // cuentas, una real y una ficticia) y el estado previo se restaura. Mientras se mide, la recarga del
   // historial por IPC se apaga (pisaría las filas sintéticas); el restaurado la repone.
   {
-    name: 'Q02: el lateral va Fijadas → Proyectos → Sin proyecto → Privadas',
+    name: 'Q02: el lateral va Fijadas → Proyectos → Sin proyecto',
     async run(page) {
       const previo = await seedSidebar(page);
       try {
@@ -10330,11 +10318,11 @@ const CHECKS = [
           };
         });
         const ok =
-          medido.orden.join(',') === 'pinned,project,unassigned,private' &&
+          medido.orden.join(',') === 'pinned,project,unassigned' &&
           !medido.archivadaPresente &&
           /^proyecto-a\s*2$/.test(medido.proyecto) &&
           medido.filasConPeso === 0 &&
-          medido.filas >= 5;
+          medido.filas >= 4;
         return { ok, detail: JSON.stringify(medido) };
       } finally {
         await restoreSidebar(page, previo);
@@ -10500,7 +10488,7 @@ const CHECKS = [
     },
   },
   {
-    name: 'Q03: la sublínea dice cuenta · carpeta · rama y el input ya no repite carpeta',
+    name: 'Q03: la sublínea dice cuenta · carpeta · rama, sin «Compartido», y el input ya no repite carpeta',
     state: { tabs: 1 },
     async run(page) {
       const medido = await page.evaluate(() => {
@@ -10513,9 +10501,11 @@ const CHECKS = [
           texto: (subline?.textContent ?? '').trim(),
           carpetas: carpetas.length,
           carpetaEnSublinea: carpetas.length === 1 && carpetas[0].closest('[data-tab-subline]') !== null,
+          // Las conversaciones privadas se retiraron: la fila ya no lleva su chip.
+          hayChipDePrivacidad: document.querySelector('[data-tab-subline-privacy]') !== null,
         };
       });
-      const ok = medido.alias !== null && medido.texto.includes(medido.alias) && medido.carpetas === 1 && medido.carpetaEnSublinea;
+      const ok = medido.alias !== null && medido.texto.includes(medido.alias) && medido.carpetas === 1 && medido.carpetaEnSublinea && !medido.hayChipDePrivacidad;
       return { ok, detail: JSON.stringify(medido) };
     },
   },
@@ -13785,7 +13775,7 @@ async function seedSidebar(page) {
     const s = store.getState();
     const real = s.activeAccountId;
     const scratch = s.scratchRoots[0] ?? s.scratchDir ?? '';
-    const base = { configDir: '', title: 'fila', privacy: 'shared', sizeBytes: 3_900_000, isScheduled: false };
+    const base = { configDir: '', title: 'fila', sizeBytes: 3_900_000, isScheduled: false };
     const row = (accountId, over) => ({ accountId, item: { ...base, ...over } });
     store.setState({
       loadConversationHistory: async () => undefined,
@@ -13794,7 +13784,6 @@ async function seedSidebar(page) {
         row(real, { sessionId: 'vg-q02-p1', title: 'Proyecto uno', cwd: 'C:\\vg\\proyecto-a', updatedAtMs: Date.now() - 2000 }),
         row('vg-q02-cuenta-b', { sessionId: 'vg-q02-p2', title: 'Proyecto dos', cwd: 'C:\\vg\\proyecto-a', updatedAtMs: Date.now() - 3000 }),
         row('vg-q02-cuenta-b', { sessionId: 'vg-q02-un', title: window.__mageDev.t('sidebar.unassigned.title'), cwd: `${scratch}/vg-q02`, providerId: 'codex', updatedAtMs: Date.now() - 4000 }),
-        row(real, { sessionId: 'vg-q02-priv', title: 'Privada', cwd: 'C:\\vg\\priv', privacy: 'private', updatedAtMs: Date.now() - 5000 }),
         row(real, { sessionId: 'vg-q02-arch', title: 'Archivada', cwd: 'C:\\vg\\arch', updatedAtMs: Date.now() - 6000 }),
       ],
       settings: { ...s.settings, pinnedConversations: ['vg-q02-pin'], archivedConversations: ['vg-q02-arch'] },
