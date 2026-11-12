@@ -203,6 +203,7 @@ import { mergeServerLists, selectForTarget, type ResolvedMcpServer } from './con
 import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
 import { ConversationsService, withHostOwner, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
+import { migratePrivateConversations } from './conversations/privateConversationsMigration';
 import { CodexHistoryService } from './conversations/codexHistory';
 import { deleteCodexConversation } from './conversations/codexDeletion';
 import { forgetDeletedConversation } from './conversations/deletedConversation';
@@ -4621,9 +4622,23 @@ if (cliRelay !== null) {
   });
 }
 
+// Las conversaciones privadas ya no existen: las que hubiera en `<cuenta>/mage-private/projects` pasan al historial
+// normal de su cuenta, antes de listar nada o lanzar una sesión. Idempotente; no borra ninguna carpeta.
+function movePrivateConversationsOnce(): void {
+  const claudeDirs = listAllAccounts().filter((account) => account.providerId === 'claude').map((account) => account.configDir);
+  migratePrivateConversations(claudeDirs, {
+    exists: existsSync,
+    listDir: (path) => readdirSync(path),
+    ensureDir: (path) => { mkdirSync(path, { recursive: true }); },
+    move: renameSync,
+    log: (level, message) => mainLog(level, message),
+  });
+}
+
 // Lo que las sesiones necesitan con ventana y sin ella: el latido de los bloqueos de conversación, las claves de
 // proveedor antiguas ya en la bóveda y los MCP compartidos importados antes de la primera sesión.
 function prepareSessionServices(): void {
+  movePrivateConversationsOnce();
   startConversationLockHeartbeat();
   migrateLegacyProviderKeysOnce();
   importSharedMcpOnce();
