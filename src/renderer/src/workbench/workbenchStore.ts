@@ -658,6 +658,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // Nivel de esfuerzo (--effort, M2.4) de la pestana activa. Es un parametro de ARRANQUE del CLI: se
   // guarda en la Tab y aplica al arrancar/reanudar la sesion (no hay control_request para cambiarlo).
   setActiveEffort: (effort: string) => void;
+  // Ultracode de la pestana activa (solo Claude): de ARRANQUE como el esfuerzo.
+  setActiveUltracode: (on: boolean) => void;
   // Cambia la carpeta (cwd) de la pestana activa (F2). Solo tiene sentido ANTES de que arranque la
   // sesion: la regla vive en canChangeCwd (modulo puro), que comparten la UI y esta accion.
   // `tabId` = la pestaña del panel que lo pide (con el workspace dividido no tiene por que ser la
@@ -699,6 +701,7 @@ export interface NewTabParams {
   readonly provider: string; // 'claude' | 'openai' | 'gemini' | 'ollama' | 'lmstudio'
   readonly title?: string;
   readonly effort?: string; // nivel --effort (M2.4); undefined -> default del CLI
+  readonly ultracode?: boolean; // Ultracode (solo Claude); undefined/false -> apagado
   readonly maxBudgetUsdCents?: number; // tope --max-budget-usd (M2.4) en centavos enteros
   // Modo de permiso inicial; ausente -> el `defaultPermissionMode` de Ajustes (solo Claude), y '' = el de la cuenta.
   readonly permissionMode?: PermissionMode;
@@ -1114,7 +1117,7 @@ function reassignNewChat(
       if (t.provider !== dest.providerId) {
         // Cuenta de OTRO proveedor (Claude -> Codex/agy o al reves): el chat pasa a ser de ese proveedor,
         // con su modelo, esfuerzo y modo por defecto. Conservar `provider` lanzaba Codex como Claude.
-        const { resolvedConfigDir: _olvidado, effort: _e, permissionMode: _p, ...base } = t;
+        const { resolvedConfigDir: _olvidado, effort: _e, ultracode: _u, permissionMode: _p, ...base } = t;
         const fresh = dest.providerId === 'claude'
           ? { provider: 'claude', model: reresolve(), effort: defaultEffortForProvider(state.settings.defaultModelByProvider, 'claude'), permissionMode: state.settings.defaultPermissionMode }
           : newTabForProviderAccount(dest, t.cwd, state.settings);
@@ -1267,6 +1270,7 @@ async function createSessionFor(
       cwd: get().tabs.find((t) => t.id === tabId)?.cwd ?? tab.cwd,
       ...(tab.resumeSessionId === undefined ? {} : { resumeSessionId: tab.resumeSessionId }),
       ...(tab.effort === undefined ? {} : { effort: tab.effort }),
+      ...(tab.provider === 'claude' && tab.ultracode === true ? { ultracode: true } : {}),
       ...(tab.maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents: tab.maxBudgetUsdCents }),
       ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
       ...(projectId === undefined ? {} : { projectId }),
@@ -2136,7 +2140,7 @@ export function createWorkbenchStore(mage: MageClient) {
 
     // Abre una pestana real ligada a {cuenta, proyecto, modelo}. La sesion del motor se crea perezosa
     // al primer mensaje (ensureSession) para no lanzar procesos hasta que se use.
-    newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, permissionMode, projectId, importedContext, forkFrom }) => {
+    newTab: async ({ accountId, cwd, model, provider, title, effort, ultracode, maxBudgetUsdCents, permissionMode, projectId, importedContext, forkFrom }) => {
       // El runtime propio no necesita cuenta (A6 de la revision de P-032): una pestaña de Ollama abre
       // aunque no haya ninguna cuenta de Claude, Codex ni agy.
       const accountRequired = !runsOnMageRuntime(provider);
@@ -2168,6 +2172,7 @@ export function createWorkbenchStore(mage: MageClient) {
         // #52: worktree desactivado por defecto en las conversaciones nuevas; las ya guardadas conservan el suyo.
         worktreeOff: true,
         ...(effort === undefined || effort.length === 0 ? {} : { effort }),
+        ...(provider === 'claude' && ultracode === true ? { ultracode: true } : {}),
         ...(maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents }),
       };
       if (forkFrom !== undefined) forkFromByTab.set(tab.id, forkFrom);
@@ -2858,6 +2863,22 @@ export function createWorkbenchStore(mage: MageClient) {
         if (sessionId !== undefined) void mage.setEffort({ sessionId, effort: clean })
           .catch((err: unknown) => failChat(set, tabId, describeError(err)));
       }
+      schedulePersist(mage, get);
+    },
+
+    // Ultracode de la pestana activa (solo Claude). Como el esfuerzo, es de ARRANQUE: se guarda en la Tab,
+    // se persiste y vale al arrancar o reanudar la sesion; nada en caliente. `false` quita el campo.
+    setActiveUltracode: (on) => {
+      const tabId = get().activeTabId;
+      const tab = get().tabs.find((t) => t.id === tabId);
+      if (tab === undefined || tab.provider !== 'claude' || (tab.ultracode === true) === on) return;
+      set((s) => ({
+        tabs: s.tabs.map((t) => {
+          if (t.id !== tabId) return t;
+          const { ultracode: _dropped, ...rest } = t;
+          return on ? { ...rest, ultracode: true } : rest;
+        }),
+      }));
       schedulePersist(mage, get);
     },
 
@@ -3959,6 +3980,7 @@ async function openDivergedTab(get: () => WorkbenchState, set: SetFn, origin: Ta
     accountId: origin.accountId, cwd: origin.cwd, model: origin.model, provider: origin.provider, title,
     forkFrom: result.forkFrom,
     ...(origin.effort === undefined ? {} : { effort: origin.effort }),
+    ...(origin.ultracode === true ? { ultracode: true } : {}),
     ...(isPermissionMode(origin.permissionMode) ? { permissionMode: origin.permissionMode } : {}),
     ...(origin.projectId === undefined ? {} : { projectId: origin.projectId }),
   });

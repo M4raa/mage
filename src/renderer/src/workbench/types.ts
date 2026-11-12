@@ -77,6 +77,8 @@ export interface Tab {
   readonly resumeSessionId?: string;
   // Nivel de esfuerzo (--effort, M2.4). undefined -> default del CLI. Fijado al crear la pestana.
   readonly effort?: string;
+  // Ultracode (solo Claude): ajuste de ARRANQUE, como el esfuerzo. undefined -> apagado.
+  readonly ultracode?: boolean;
   // Tope de gasto (--max-budget-usd, M2.4) en CENTAVOS ENTEROS. undefined -> sin tope.
   readonly maxBudgetUsdCents?: number;
   // Modo de permiso (M2.6). undefined -> 'default'. Cambia con el ciclo shift+tab / chip del PromptBar.

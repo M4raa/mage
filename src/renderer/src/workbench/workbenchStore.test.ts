@@ -383,6 +383,33 @@ describe('sesiones en segundo plano', () => {
     expect(setModel).toHaveBeenCalledWith({ sessionId: 's-a', model: 'gpt-6' });
   });
 
+  it('setActiveUltracode_claude_loGuarda', () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    store.getState().setActiveUltracode(true);
+
+    expect(store.getState().tabs[0]?.ultracode).toBe(true);
+  });
+
+  it('setActiveUltracode_codex_noHaceNada', () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [tab('a', { provider: 'codex', model: 'gpt-6-luna' })], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    store.getState().setActiveUltracode(true);
+
+    expect(store.getState().tabs[0]).not.toHaveProperty('ultracode');
+  });
+
+  it('setActiveUltracode_false_quitaElCampo', () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [tab('a', { ultracode: true })], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    store.getState().setActiveUltracode(false);
+
+    expect(store.getState().tabs[0]).not.toHaveProperty('ultracode');
+  });
+
   it('setActiveModel_codexSinHilo_noGuardaPreferenciasBajoElUuidDeMage', () => {
     const saveConversationPrefs = vi.fn().mockResolvedValue(undefined);
     const store = createWorkbenchStore(fakeMage({ saveConversationPrefs, setModel: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined) }));

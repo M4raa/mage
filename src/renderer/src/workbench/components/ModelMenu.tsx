@@ -19,6 +19,8 @@ export interface ModelMenuEffort {
   // Cuándo se aplica el cambio (siguiente turno, al reabrir…): el texto fijo que abre el submenú.
   readonly note: string;
   readonly onChange: (level: string) => void;
+  // Interruptor «Ultracode» al final del submenú (solo Claude); null = no se pinta.
+  readonly ultracode: { readonly value: boolean; readonly onChange: (on: boolean) => void } | null;
 }
 
 export interface ModelMenuProps {
@@ -50,11 +52,13 @@ interface SubPlacement {
 }
 
 export function ModelMenu({ models, value, onModel, effort, interactive, tip, ariaLabel }: ModelMenuProps): React.JSX.Element {
+  const t = useT();
   const label = menuLabelOf(models, value);
   const chipText = (
     <>
       <span data-model-label="true">{label}</span>
       {effort !== null && <span className="text-mg-muted"> {effortStepLabel(effort.value)}</span>}
+      {effort?.ultracode?.value === true && <span className="text-mg-muted"> · {t('prompt.ultracode.label')}</span>}
     </>
   );
   if (!interactive) {
@@ -214,6 +218,12 @@ function ModelMenuPopover({ models, value, onModel, effort, ariaLabel, tip, chip
                     {effort.steps.map((step) => (
                       <RadioRow key={step.value} label={step.label} checked={step.value === effort.value} onPick={() => pickEffort(step.value)} />
                     ))}
+                    {effort.ultracode !== null && (
+                      <>
+                        <div className="my-[4px] border-t border-mg-border-subtle" />
+                        <UltracodeRow label={t('prompt.ultracode.label')} tip={t('prompt.ultracode.tip')} on={effort.ultracode.value} onToggle={effort.ultracode.onChange} />
+                      </>
+                    )}
                   </>
                 )}
                 {sub === 'more' && more.map((model) => <ModelRow key={model.id} model={model} checked={model.id === value} onPick={pickModel} />)}
@@ -234,6 +244,18 @@ function RadioRow({ label, checked, onPick, onHover }: { readonly label: string;
     <button type="button" role="menuitemradio" aria-checked={checked} tabIndex={-1} onClick={onPick} onMouseEnter={onHover} className={`${ROW_CLASS} justify-between`}>
       <span className="truncate">{label}</span>
       {checked && <Icon name="check" size={12} className="text-mg-primary" />}
+    </button>
+  );
+}
+
+// Fila con interruptor: cambia el valor SIN cerrar el menú (a diferencia de las filas de elegir).
+function UltracodeRow({ label, tip, on, onToggle }: { readonly label: string; readonly tip: string; readonly on: boolean; readonly onToggle: (on: boolean) => void }): React.JSX.Element {
+  return (
+    <button type="button" role="menuitemcheckbox" aria-checked={on} tabIndex={-1} data-menu-ultracode="true" data-tip={tip} onClick={() => onToggle(!on)} className={`${ROW_CLASS} justify-between`}>
+      <span>{label}</span>
+      <span aria-hidden="true" className={`flex h-[16px] w-[28px] shrink-0 items-center rounded-full px-[2px] ${on ? 'bg-mg-primary' : 'bg-mg-border-ctrl'}`}>
+        <span className={`block h-[12px] w-[12px] rounded-full bg-mg-panel transition-transform duration-150 ${on ? 'translate-x-[12px]' : ''}`} />
+      </span>
     </button>
   );
 }

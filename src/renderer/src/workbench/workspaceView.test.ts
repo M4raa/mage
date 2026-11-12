@@ -113,6 +113,17 @@ describe('toPersistedWorkspace', () => {
     expect(restored.tabs[0]?.effort).toBe('high');
   });
 
+  it('ultracode_sePersisteYSeRestaura', () => {
+    expect(toPersistedWorkspace([tab({ ultracode: true })], 'tab1', {}).tabs[0]?.ultracode).toBe(true);
+    expect(toPersistedWorkspace([tab()], 'tab1', {}).tabs[0]).not.toHaveProperty('ultracode');
+
+    const restored = restoreTabs(
+      { version: 1, activeTabId: 'tab1', tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'm', cwd: '/p', model: 'opus', provider: 'claude', title: 'p', ultracode: true }] },
+      new Set(['.claude']),
+    );
+    expect(restored.tabs[0]?.ultracode).toBe(true);
+  });
+
   it('maxBudgetUsdCents_sePersisteYSeRestaura', () => {
     expect(toPersistedWorkspace([tab({ maxBudgetUsdCents: 500 })], 'tab1', {}).tabs[0]?.maxBudgetUsdCents).toBe(500);
 

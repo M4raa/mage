@@ -35,6 +35,7 @@ export function toPersistedWorkspace(
       ...(tab.resolvedConfigDir === undefined ? {} : { resolvedConfigDir: tab.resolvedConfigDir }),
       ...(sessionId === undefined ? {} : { sessionId }),
       ...(tab.effort === undefined ? {} : { effort: tab.effort }),
+      ...(tab.ultracode === true ? { ultracode: true } : {}),
       ...(tab.maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents: tab.maxBudgetUsdCents }),
       ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
       // Vacia NO se guarda: en el workspace, "sin reglas" y "sin campo" son lo mismo (el estado
@@ -94,6 +95,7 @@ export function restoreTabs(
       ...(t.resolvedConfigDir === undefined ? {} : { resolvedConfigDir: t.resolvedConfigDir }),
       ...(t.sessionId === undefined ? {} : { resumeSessionId: t.sessionId }),
       ...(t.effort === undefined ? {} : { effort: t.effort }),
+      ...(t.ultracode === true ? { ultracode: true } : {}),
       ...(t.maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents: t.maxBudgetUsdCents }),
       ...(t.permissionMode === undefined ? {} : { permissionMode: t.permissionMode }),
       // Saneado al ENTRAR: el fichero pudo escribirlo otra version de Mage o una mano humana.

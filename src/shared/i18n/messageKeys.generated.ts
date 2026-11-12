@@ -1830,6 +1830,9 @@ export interface MessageValues {
   readonly "prompt.stop.ariaLabel": never;
   readonly "prompt.stop.button": never;
   readonly "prompt.stop.tip": never;
+  readonly "prompt.ultracode.changed": { readonly "state": string };
+  readonly "prompt.ultracode.label": never;
+  readonly "prompt.ultracode.tip": never;
   readonly "settings.about.chromiumSeparate": never;
   readonly "settings.about.license": never;
   readonly "settings.about.noticesError": { readonly "error": string | number };

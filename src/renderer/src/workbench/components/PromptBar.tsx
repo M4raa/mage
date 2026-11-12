@@ -213,6 +213,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   const setActivePermissionMode = useWorkbenchStore((s) => s.setActivePermissionMode);
   const compactActiveSession = useWorkbenchStore((s) => s.compactActiveSession);
   const setActiveEffort = useWorkbenchStore((s) => s.setActiveEffort);
+  const setActiveUltracode = useWorkbenchStore((s) => s.setActiveUltracode);
   const interruptActiveSession = useWorkbenchStore((s) => s.interruptActiveSession);
   const keybindingOverrides = useWorkbenchStore((s) => s.settings.keybindingOverrides);
   // Estado del turno de la pestana activa: con el turno en marcha se ofrece "Parar" en vez de ⏎.
@@ -465,6 +466,12 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
       ? { severity: 'info', message: t('prompt.effort.changed', { level: level || t('prompt.effort.autoLevel'), target: isAgy ? 'message' : 'turn' }) }
       : effortChangeAdvice(level, sessionId !== undefined), activeTabId);
     setActiveEffort(level);
+  };
+
+  // Ultracode (solo Claude): ajuste de arranque, el aviso lo explica.
+  const changeUltracode = (on: boolean): void => {
+    notifyCostAdvice({ severity: 'info', message: t('prompt.ultracode.changed', { state: on ? 'on' : 'off' }) }, activeTabId);
+    setActiveUltracode(on);
   };
 
   // Pide una mejora del borrador actual y la deja como preview. `redo` distingue el boton Rehacer
@@ -953,6 +960,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
                       steps: availableEffortSteps,
                       value: effort,
                       onChange: changeEffort,
+                      ultracode: isClaude ? { value: activeTab?.ultracode === true, onChange: changeUltracode } : null,
                       note: isCodex ? t('prompt.effort.noteNextTurn') : isAgy ? t('prompt.effort.noteNextMessage') : t('prompt.effort.noteOnStart'),
                     }
                   : null

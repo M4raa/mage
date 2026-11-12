@@ -31,6 +31,7 @@ export const PERSISTED_TAB_SCHEMA = z.object({
   resolvedConfigDir: z.string().optional(),
   sessionId: z.string().optional(), // presente solo si la sesion llego a crearse (permite --resume)
   effort: z.string().optional(), // nivel --effort (M2.4)
+  ultracode: z.boolean().optional(), // Ultracode (solo Claude), de arranque
   maxBudgetUsdCents: z.number().int().positive().optional(), // tope --max-budget-usd, centavos enteros
   // Modo de permiso (M2.6; `auto` y `bypassPermissions` desde P-026 2.3). `.catch(undefined)`: un modo
   // que esta version no conoce no tumba la restauracion del workspace entero.
