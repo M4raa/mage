@@ -2979,12 +2979,13 @@ function liveIdsOf(sessionId: string): { conversationId: string | null; nativeId
 }
 
 // Una sesión del host (sin ventana): se lanza como siempre y queda adoptable por la ventana principal (U17).
-function launchHostSession(params: CreateSessionParams, origin: AdoptableSession['origin'], createdBy: AdoptableSession['createdBy'] = null): string {
+function launchHostSession(params: CreateSessionParams, origin: AdoptableSession['origin'], createdBy: AdoptableSession['createdBy'] = null, title?: string): string {
   const { sessionId, configDir } = launchSession(params, null);
   const entry = {
     sessionId, provider: params.provider, accountId: params.accountDir, configDir, cwd: params.cwd, model: params.model,
     ...(params.effort === undefined ? {} : { effort: params.effort }),
     ...(params.permissionMode === undefined ? {} : { permissionMode: params.permissionMode }),
+    ...(title === undefined ? {} : { title }),
     origin, createdBy,
   };
   adoptableSessions.add(entry);
@@ -4514,7 +4515,7 @@ export function createHostSessionsPort(callerSessionId: string): HostSessionsPor
     accounts: () => listAllAccounts().filter((account) => (HOST_SESSION_PROVIDERS as readonly string[]).includes(account.providerId))
       .map((account) => ({ id: account.configDir, provider: account.providerId })),
     projects: () => getSettingsStore().load().chatProjects,
-    launch: (request, createdBy) => launchHostSession(resolveHostLaunchParams(deps, request, { cliDefaultModel: true }), 'mcp', createdBy),
+    launch: (request, createdBy, title) => launchHostSession(resolveHostLaunchParams(deps, request, { cliDefaultModel: true }), 'mcp', createdBy, title),
     creatorSettings: () => sessionSettings.get(callerSessionId),
     modelCatalog: (accountDir) => getCommandCatalogStore().loadModels(accountDir),
     setPermissionMode: (sessionId, mode) => { sessionManager.setPermissionMode(sessionId, mode); sessionSettings.apply(sessionId, 'permissionMode', mode); },

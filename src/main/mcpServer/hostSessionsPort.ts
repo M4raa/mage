@@ -13,6 +13,7 @@ import { resolveDelegatedSettings } from './delegatedSettings';
 import type { DelegatedSettings, SessionSettings } from './delegatedSettings';
 import type { DelegationLog, DelegationView } from './delegationLog';
 import { MagePolicyError, MageValidationError } from './errors';
+import { MAX_SESSION_TITLE_CHARS } from './schemas';
 import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput } from './types';
 import type { CreateSessionCommand, CreationRequest, CreationTarget, MageSessionsPort, SessionMetadata } from './sessionsPort';
 
@@ -21,7 +22,6 @@ import type { CreateSessionCommand, CreationRequest, CreationTarget, MageSession
 
 export const CONVERSATION_ID_TIMEOUT_MS = 15_000;
 export const NO_PROJECT_ID = 'none';
-const MAX_TITLE_CHARS = 80;
 const CANCELLABLE_STATES: ReadonlySet<string> = new Set(['working', 'permission_pending', 'waiting_answer']);
 
 export interface HostSessionsPortDeps {
@@ -33,7 +33,8 @@ export interface HostSessionsPortDeps {
   readonly accounts: () => readonly { readonly id: string; readonly provider: string }[];
   readonly projects: () => readonly { readonly id: string; readonly cwd: string | null }[];
   // Lanza por la frontera del host (`resolveHostLaunchParams` + `launchHostSession(…, 'mcp', createdBy)`); devuelve el sessionId.
-  readonly launch: (request: HostCreateRequest, createdBy: { readonly conversationId: string; readonly sessionId: string }) => string;
+  // `title` es el nombre de la subsesión (el que dio la creadora, o la primera línea del prompt).
+  readonly launch: (request: HostCreateRequest, createdBy: { readonly conversationId: string; readonly sessionId: string }, title: string) => string;
   readonly setTimer: (fn: () => void, ms: number) => () => void;
   // Lo que main sabe de la creadora (`SessionSettingsRegistry`); null si no la tiene anotada.
   readonly creatorSettings: () => SessionSettings | null;
@@ -63,12 +64,13 @@ export class HostSessionsPort implements MageSessionsPort {
       creator: this.deps.creatorSettings(), targetProvider: target.provider,
       requested: { model: cmd.model, effort: cmd.effort, permissionMode: cmd.permissionMode }, catalog: this.deps.modelCatalog(target.accountId),
     });
-    const sessionId = this.launchTranslated(launch, launchRequestOf(cmd, settings));
+    const title = cmd.title ?? titleOf(prompt);
+    const sessionId = this.launchTranslated(launch, launchRequestOf(cmd, settings), title);
     if (target.provider === 'codex') this.setCodexMode(sessionId, settings.permissionMode);
     const conversationId = await this.waitForConversationId(sessionId);
     index.recordDelegation(conversationId, { createdBy: cmd.createdBy, creatorChain: cmd.creatorChain });
     log.watch({
-      sessionId, conversationId, creatorSessionId: caller.sessionId, creatorConversationId: caller.conversationId, title: titleOf(prompt),
+      sessionId, conversationId, creatorSessionId: caller.sessionId, creatorConversationId: caller.conversationId, title,
       provider: target.provider, accountId: target.accountId, projectId: target.projectId, createdBy: cmd.createdBy, creatorChain: cmd.creatorChain,
     });
     coordinator.send({ sessionId, text: prompt, commandId: requestId });
@@ -146,9 +148,9 @@ export class HostSessionsPort implements MageSessionsPort {
     }
   }
 
-  private launchTranslated(launch: HostSessionsPortDeps['launch'], request: HostCreateRequest): string {
+  private launchTranslated(launch: HostSessionsPortDeps['launch'], request: HostCreateRequest, title: string): string {
     try {
-      return launch(request, { conversationId: this.deps.caller.conversationId, sessionId: this.deps.caller.sessionId });
+      return launch(request, { conversationId: this.deps.caller.conversationId, sessionId: this.deps.caller.sessionId }, title);
     } catch (error) {
       if (error instanceof TrustRequiredError) throw new MageValidationError(`trust_required: ${error.cwd}`, { cause: error });
       if (error instanceof UnknownAccountError) throw new MageValidationError(`unknown_account: ${error.accountId}`, { cause: error });
@@ -246,7 +248,7 @@ function launchFailed(error: unknown): MagePolicyError {
 }
 
 const path = (value: string): string => resolve(value);
-const titleOf = (prompt: string): string => (prompt.split('\n')[0] ?? '').trim().slice(0, MAX_TITLE_CHARS);
+const titleOf = (prompt: string): string => (prompt.split('\n')[0] ?? '').trim().slice(0, MAX_SESSION_TITLE_CHARS);
 function isQuestionPermission(pending: PendingRequest): pending is PendingRequest & { kind: 'permission' } {
   return pending.kind === 'permission' && parseAskUserQuestion(pending.request.input) !== null;
 }

@@ -116,7 +116,7 @@ describe('HostSessionsPort.createSession', () => {
     const result = await port.createSession(command({ model: 'm1' }));
     expect(result).toEqual({ conversationId: 'child-c', state: 'running' });
     expect(deps.launch).toHaveBeenCalledWith(
-      { commandId: REQUEST, provider: 'claude', accountId: 'acc1', cwd: CWD, model: 'm1', permissionMode: 'default', trust: { acknowledged: false } }, { conversationId: 'caller-c', sessionId: 'caller-s' });
+      { commandId: REQUEST, provider: 'claude', accountId: 'acc1', cwd: CWD, model: 'm1', permissionMode: 'default', trust: { acknowledged: false } }, { conversationId: 'caller-c', sessionId: 'caller-s' }, 'Haz algo');
     expect(deps.index.recordDelegation).toHaveBeenCalledWith('child-c', { createdBy: command().createdBy, creatorChain: ['caller-c'] });
     expect(deps.log.watch).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'child-s', conversationId: 'child-c', creatorSessionId: 'caller-s', title: 'Haz algo' }));
     expect(deps.coordinator.send).toHaveBeenCalledWith({ sessionId: 'child-s', text: 'Haz algo\nsegunda línea', commandId: REQUEST });
@@ -129,8 +129,20 @@ describe('HostSessionsPort.createSession', () => {
     const creator = { provider: 'claude', model: 'sonnet', effort: 'high', permissionMode: 'plan' };
     const { port, deps } = setup({ snapshot: snap('child-c'), creator });
     await port.createSession(command());
-    expect(deps.launch).toHaveBeenCalledWith(expect.objectContaining({ model: 'sonnet', effort: 'high', permissionMode: 'plan' }), expect.anything());
+    expect(deps.launch).toHaveBeenCalledWith(expect.objectContaining({ model: 'sonnet', effort: 'high', permissionMode: 'plan' }), expect.anything(), expect.anything());
     expect(deps.setPermissionMode).not.toHaveBeenCalled();
+  });
+  it('create_conTitle_elResultadoLoUsa', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c') });
+    await port.createSession(command({ title: 'Hola 1' }));
+    expect(deps.launch).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'Hola 1');
+    expect(deps.log.watch).toHaveBeenCalledWith(expect.objectContaining({ title: 'Hola 1' }));
+  });
+  it('create_sinTitle_primeraLineaDelPrompt', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c') });
+    await port.createSession(command());
+    expect(deps.launch).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'Haz algo');
+    expect(deps.log.watch).toHaveBeenCalledWith(expect.objectContaining({ title: 'Haz algo' }));
   });
   it('createSession_modoMasPermisivoQueLaCreadora_rechazaSinLanzarNiEnviar', async () => {
     const { port, deps } = setup({ snapshot: snap('child-c'), creator: { provider: 'claude', permissionMode: 'default' } });
@@ -389,7 +401,7 @@ describe('MageToolHandlers con el puerto de main', () => {
     const scope = snapshotScope({ accountIds: ['acc1'], caller: { conversationId: 'caller-c', creatorChain: [] } });
     const handlers = new MageToolHandlers({ port, scope, store: new MemoryIdempotencyStore(), now: () => AT });
     await handlers.create({ ...input, effort: 'high', permissionMode: 'plan' });
-    expect(deps.launch).toHaveBeenCalledWith(expect.objectContaining({ effort: 'high', permissionMode: 'plan' }), expect.anything());
+    expect(deps.launch).toHaveBeenCalledWith(expect.objectContaining({ effort: 'high', permissionMode: 'plan' }), expect.anything(), expect.anything());
   });
   it('create_rechazoPorModoYReintentoMismoRequestId_crea', async () => {
     const { port, deps } = setup({ snapshot: snap('child-c'), creator: { provider: 'claude', model: 'sonnet', permissionMode: 'default' } });

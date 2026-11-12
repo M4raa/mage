@@ -722,6 +722,8 @@ export interface AdoptableSession {
   readonly model: string;
   readonly effort?: string;
   readonly permissionMode?: PermissionMode;
+  // El nombre que le dio la sesión creadora (`title` de mage_create_session); las de terminal no lo llevan.
+  readonly title?: string;
   readonly origin: 'terminal' | 'mcp';
   readonly createdBy: { readonly conversationId: string; readonly sessionId: string } | null;  // la M05 lo rellena para el MCP; `sessionId` es el VIVO de la creadora
 }

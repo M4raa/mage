@@ -3,6 +3,8 @@ import { z } from 'zod';
 
 export const MAGE_MCP_CONTRACT_VERSION = 1;
 export const DEFAULT_MAX_RESULT_BYTES = 65_536;
+// Largo máximo del nombre de una sesión delegada (el `title` de mage_create_session y el que se deriva del prompt).
+export const MAX_SESSION_TITLE_CHARS = 80;
 
 // Solo estos campos tienen diagnóstico con valor; nunca objetos, prompts ni textos.
 function diagnostic(field: string): z.ZodErrorMap {
@@ -29,6 +31,7 @@ export const listInputSchema = z.object({ projectId: id('projectId').optional(),
 export const createInputSchema = z.object({
   requestId: requestId, provider, accountId: id('accountId').optional(), cwd: id('cwd'), prompt: text, model: id('model').optional(),
   effort: z.enum(EFFORT_LEVELS, { errorMap: diagnostic('effort') }).optional(), permissionMode: id('permissionMode').optional(),
+  title: z.string({ errorMap: diagnostic('title') }).trim().min(1).max(MAX_SESSION_TITLE_CHARS).optional(),
 }).strict();
 export const statusInputSchema = z.object({ conversationId: id('conversationId') }).strict();
 export const readInputSchema = z.object({
