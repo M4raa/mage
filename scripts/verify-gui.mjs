@@ -9140,6 +9140,8 @@ const CHECKS = [
         await page.keyboard.press('Alt+ArrowUp');
         await page.waitForTimeout(CONFIG.settleMs * 2);
         const trasAlt = await ordenVg();
+        // Captura ANTES de restaurar: la automática del caso sale ya con el lateral vacío.
+        await page.screenshot({ path: path.join(CONFIG.outDir, 'lateral-carpetas-desplegadas.png') });
         let enDisco = '';
         for (let intento = 0; intento < 10 && enDisco !== 'acb'; intento += 1) {
           enDisco = await ordenEnDisco();
