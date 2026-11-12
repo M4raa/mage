@@ -1,4 +1,5 @@
 import { artifactCardFrom } from './artifactView';
+import { delegationCardFrom } from './delegationView';
 import { isSubagentRunning, SUBAGENT_STATUS, subagentStatusLabel } from './engineBlocks';
 import { formatElapsed } from './thinkingStatus';
 import type { IconName } from './components/Icon';
@@ -26,16 +27,21 @@ export function isChatBlock(block: Block): boolean {
     case 'permission':
       return block.state === 'pending';
     case 'tool':
-      return artifactCardFrom(block) !== null;
+      return hasChatCard(block);
     default:
       return false;
   }
 }
 
+// Una herramienta con tarjeta propia en el hilo: un artifact publicado o una subsesión creada.
+function hasChatCard(block: Block): boolean {
+  return artifactCardFrom(block) !== null || delegationCardFrom(block) !== null;
+}
+
 // Una herramienta del agente PRINCIPAL que fallo deja una linea en el chat (D22); las de un subagente
 // no, su fallo lo cuenta el resumen de sus subagentes.
 export function isFailedMainTool(block: Block): block is ToolBlock {
-  return block.kind === 'tool' && block.isError && block.parentToolUseId === null && artifactCardFrom(block) === null;
+  return block.kind === 'tool' && block.isError && block.parentToolUseId === null && !hasChatCard(block);
 }
 
 export type ChatRow =
@@ -78,7 +84,7 @@ function mergeRepeatedError(rows: ChatRow[], block: Block): boolean {
 // Lo que va al panel: todo lo que no es del chat, menos un permiso que aun espera (ese esta en el chat) y
 // una pregunta pendiente (esa esta en el dock).
 export function isActivityStep(block: Block): boolean {
-  if (block.kind === 'tool') return artifactCardFrom(block) === null;
+  if (block.kind === 'tool') return !hasChatCard(block);
   if (block.kind === 'permission' || block.kind === 'question') return block.state !== 'pending';
   return block.kind === 'thinking' || block.kind === 'subagent';
 }

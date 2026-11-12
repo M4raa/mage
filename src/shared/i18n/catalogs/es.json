@@ -447,6 +447,7 @@
   "chat.delegation.awaitingCreator": "Esperando respuesta de «{title}»",
   "chat.delegation.awaitingCreatorClosed": "Esperando respuesta de la sesión que la encargó",
   "chat.delegation.awaitingCreatorTip": "Ha preguntado a la sesión que la encargó. Si contestas tú aquí, la pregunta queda contestada.",
+  "chat.delegation.cardMissing": "Esa sesión ya no está en el historial.",
   "chat.delegation.createdBy": "Encargada por «{title}»",
   "chat.delegation.creatorClosed": "Encargada por otra sesión, que ya no está abierta",
   "chat.diverge.action": "Divergir",

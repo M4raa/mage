@@ -449,6 +449,7 @@ export interface MessageValues {
   readonly "chat.delegation.awaitingCreator": { readonly "title": string | number };
   readonly "chat.delegation.awaitingCreatorClosed": never;
   readonly "chat.delegation.awaitingCreatorTip": never;
+  readonly "chat.delegation.cardMissing": never;
   readonly "chat.delegation.createdBy": { readonly "title": string | number };
   readonly "chat.delegation.creatorClosed": never;
   readonly "chat.diverge.action": never;

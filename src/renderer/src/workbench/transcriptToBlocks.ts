@@ -4,6 +4,7 @@ import { SUPPORTED_IMAGE_MEDIA_TYPES } from './types';
 import { extractToolResult, extractToolUses } from './toolView';
 import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
+import { completeDelegation, parseDelegationDraft } from '@shared/delegationCards';
 import { planTextField, SUBAGENT_TOOL_NAMES } from './toolSummary';
 import { noticeTextFor } from './cliNotices';
 import { fileTouchesField } from './fileTouches';
@@ -73,6 +74,7 @@ function appendUserOrResult(entry: TranscriptEntry, blocks: Block[], toolIndexBy
       writtenContent: result.writtenContent?.split('\n') ?? current.writtenContent,
       artifact:
         current.artifactDraft === null ? current.artifact : completeArtifactPublication(current.artifactDraft, result.output),
+      delegation: current.delegationDraft == null ? (current.delegation ?? null) : completeDelegation(current.delegationDraft, result.output),
     };
     return;
   }
@@ -231,6 +233,8 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
       writtenContent: null,
       artifact: null,
       artifactDraft: parseArtifactDraft(use.toolName, use.input),
+      delegation: null,
+      delegationDraft: parseDelegationDraft(use.toolName, use.input),
       // Los pasos de los subagentes viven en su propio `agent-<id>.jsonl`: en el principal, todo es suyo.
       parentToolUseId: null,
       ...planTextField(use.toolName, use.input),

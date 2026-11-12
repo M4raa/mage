@@ -5,6 +5,7 @@
 import type { AskQuestion } from '@shared/askUserQuestion';
 import type { PermissionScope, SessionPlugin } from '@shared/events';
 import type { ArtifactDraft, ArtifactPublication } from '@shared/artifacts';
+import type { DelegationCard, DelegationDraft } from '@shared/delegationCards';
 import type { MentionCandidate } from '@shared/mentions';
 import type { DiffLine } from './diffLines';
 import type { ToolClass } from './toolClassify';
@@ -195,6 +196,11 @@ export type Block =
       // publicado, y entonces se pinta la caja de tool normal en vez de una tarjeta a medias.
       readonly artifact: ArtifactPublication | null;
       readonly artifactDraft: ArtifactDraft | null;
+      // Subsesión creada con `mage_create_session`, cuando esta tool lo es: igual que el artifact, YA VALIDADA (nunca
+      // el input crudo) y sin `conversationId` mientras no hay resultado; entonces se pinta la caja de tool normal.
+      // Opcionales: un bloque anterior a esto (o sembrado por el harness) no la lleva.
+      readonly delegation?: DelegationCard | null;
+      readonly delegationDraft?: DelegationDraft | null;
       // Subagente que la lanzo (`tool_use_id` de su Task/Agent); null en el agente principal (P-026 3.4).
       readonly parentToolUseId: string | null;
       // Texto del plan de un ExitPlanMode (input.plan). Ausente en cualquier otra herramienta.

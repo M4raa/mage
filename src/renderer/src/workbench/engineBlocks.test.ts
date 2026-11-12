@@ -114,9 +114,21 @@ describe('appendToolUse', () => {
         writtenContent: null,
         artifact: null,
         artifactDraft: null,
+        delegation: null,
+        delegationDraft: null,
         parentToolUseId: null,
       },
     ]);
+  });
+
+  it('appendToolUse_mageCreateSession_guardaElBorradorYElResultadoLoCompleta', () => {
+    const use = { toolUseId: 't3', toolName: 'mcp__mage__mage_create_session', input: { title: 'Hola 1', prompt: 'di hola' } };
+
+    const [drafted] = appendToolUse([], use, 'b3');
+    const [done] = applyToolResult([drafted!], { toolUseId: 't3', isError: false, output: '{"conversationId":"c-1","state":"running"}', durationMs: null });
+
+    expect(drafted).toMatchObject({ delegation: null, delegationDraft: { title: 'Hola 1' } });
+    expect(done).toMatchObject({ delegation: { title: 'Hola 1', conversationId: 'c-1' } });
   });
 
   it('appendToolUse_exitPlanMode_keepsPlanText', () => {
