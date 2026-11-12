@@ -22,8 +22,7 @@ export interface PromptServiceDeps {
 // Parametros del handoff. Objeto de contexto (y no 4 argumentos sueltos) por el estandar del proyecto.
 export interface HandoffRequest {
   readonly sessionId: string;
-  // Config dir EFECTIVO de la conversacion: la cuenta, o su perfil privado si es privada. Con el de la
-  // cuenta, una conversacion privada no se encuentra (su transcripcion vive en mage-private).
+  // Config dir de la cuenta de la conversacion.
   readonly accountDir: string;
   readonly model: string;
   // cwd de la conversacion: el CLI resuelve `--resume <id>` dentro de projects/<cwd-codificado>.

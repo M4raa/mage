@@ -203,7 +203,7 @@ export class AgyHistoryService {
       const steps = first === null ? [] : [first];
       const title = agyTitleOf(steps);
       const summary: ConversationSummary | null = title.length === 0 ? null : { sessionId, configDir, cwd: agyWorkspaceOf(steps), title,
-        privacy: 'shared', updatedAtMs: stat.mtimeMs, sizeBytes: stat.sizeBytes, isScheduled: false, providerId: 'agy' };
+        updatedAtMs: stat.mtimeMs, sizeBytes: stat.sizeBytes, isScheduled: false, providerId: 'agy' };
       this.cache.set(path, { mtimeMs: stat.mtimeMs, sizeBytes: stat.sizeBytes, summary });
       return summary;
     } catch {

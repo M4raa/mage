@@ -623,21 +623,14 @@ function NoConversationState(): React.JSX.Element {
       <BrandConstellation />
       <div className="flex w-full flex-col items-center gap-[12px]">
         <div className="text-[13px] font-medium text-mg-text">{t('chat.noConversation.title')}</div>
-        <ProjectPicker allowed={hasAccount} reason={t('chat.noConversation.noAccount')} onPick={(cwd) => void createConversation('shared', { cwd })} />
+        <ProjectPicker allowed={hasAccount} reason={t('chat.noConversation.noAccount')} onPick={(cwd) => void createConversation({ cwd })} />
         <div className="flex gap-[10px]">
           <button
-            onClick={() => void createConversation('shared', { scratch: true })}
+            onClick={() => void createConversation({ scratch: true })}
             disabled={!hasAccount}
             className="rounded-[8px] border border-mg-border-emph px-[16px] py-[9px] text-[12px] text-mg-body2 hover:bg-mg-hover disabled:opacity-40"
           >
             {t('chat.noConversation.newChat')}
-          </button>
-          <button
-            onClick={() => void createConversation('private', { scratch: true })}
-            disabled={!hasAccount}
-            className="rounded-[8px] border border-mg-border-emph px-[16px] py-[9px] text-[12px] text-mg-body2 hover:bg-mg-hover disabled:opacity-40"
-          >
-            <Icon name="lock" size={12} /> {t('chat.noConversation.newPrivateChat')}
           </button>
         </div>
       </div>

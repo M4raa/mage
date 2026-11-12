@@ -24,7 +24,7 @@ import type { StatusInfo } from './status';
 import type { TranscriptBatch, TranscriptTailPosition } from './transcripts';
 import type { MemoryFile } from './memory';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from './conversations';
-import type { ConversationPrivacy, PersistedWorkspace } from './state';
+import type { PersistedWorkspace } from './state';
 import type { AppSettings } from './settings';
 import type { ElicitationAnswer } from './elicitation';
 import type { UpdateState } from './update';
@@ -418,9 +418,6 @@ export interface CreateSessionParams {
   readonly resumeSessionId?: string;
   readonly effort?: string;
   readonly maxBudgetUsdCents?: number;
-  // M2.6: 'private' lanza bajo el perfil privado (mage-private) de la cuenta; ausente/'shared' usa
-  // la cuenta tal cual (historial en el pozo comun). Factura SIEMPRE la cuenta (mismo login).
-  readonly privacy?: ConversationPrivacy;
   // M2.6: modo de permiso inicial (--permission-mode). Ausente -> 'default'. Solo Claude.
   readonly permissionMode?: PermissionMode;
   readonly projectId?: string;
@@ -599,7 +596,7 @@ export interface SaveConversationPrefsParams {
 }
 
 // Registro de un artifact publicado (2.4). `record.accountDir` es el config dir EFECTIVO de la sesion
-// que lo publico (para una conversacion privada, su perfil `mage-private`).
+// que lo publico.
 export interface RecordArtifactParams {
   readonly url: string;
   readonly record: ArtifactRecord;
@@ -1177,8 +1174,7 @@ export interface MageApi {
   // Lee los ficheros .md de la memoria de un proyecto (crudos; el parseo va en el renderer). Array
   // vacio si el proyecto no tiene memoria. Ficheros pequenos (KB) -> lectura sincrona de una vez.
   readMemory(params: ReadMemoryParams): Promise<readonly MemoryFile[]>;
-  // Lista las conversaciones EN DISCO de una cuenta (M2.6, sidebar = historial): compartidas (pozo
-  // comun) + privadas (perfil mage-private), mas recientes primero. Solo metadatos (sin contenido).
+  // Lista las conversaciones EN DISCO de una cuenta (M2.6, sidebar = historial), mas recientes primero. Solo metadatos (sin contenido).
   listConversations(accountDir: string): Promise<readonly ConversationSummary[]>;
   // Menciones @ (Q05): candidatos de la carpeta, resolucion por motor justo al enviar y vista previa.
   searchMentions(params: MentionSearchParams): Promise<MentionSearchResult>;

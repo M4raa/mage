@@ -28,7 +28,6 @@ const tab = (over: Partial<Tab> = {}): Tab => ({
   model: 'opus',
   provider: 'claude',
   title: 'proj',
-  privacy: 'shared',
   ...over,
 });
 
@@ -108,7 +107,7 @@ describe('toPersistedWorkspace', () => {
     expect(persistedEffort).toBe('high');
 
     const restored = restoreTabs(
-      { version: 1, activeTabId: 'tab1', tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'm', cwd: '/p', model: 'opus', provider: 'claude', title: 'p', privacy: 'shared', effort: 'high' }] },
+      { version: 1, activeTabId: 'tab1', tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'm', cwd: '/p', model: 'opus', provider: 'claude', title: 'p', effort: 'high' }] },
       new Set(['.claude']),
     );
     expect(restored.tabs[0]?.effort).toBe('high');
@@ -118,7 +117,7 @@ describe('toPersistedWorkspace', () => {
     expect(toPersistedWorkspace([tab({ maxBudgetUsdCents: 500 })], 'tab1', {}).tabs[0]?.maxBudgetUsdCents).toBe(500);
 
     const restored = restoreTabs(
-      { version: 1, activeTabId: 'tab1', tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'm', cwd: '/p', model: 'opus', provider: 'claude', title: 'p', privacy: 'shared', maxBudgetUsdCents: 500 }] },
+      { version: 1, activeTabId: 'tab1', tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'm', cwd: '/p', model: 'opus', provider: 'claude', title: 'p', maxBudgetUsdCents: 500 }] },
       new Set(['.claude']),
     );
     expect(restored.tabs[0]?.maxBudgetUsdCents).toBe(500);
@@ -202,7 +201,7 @@ describe('restoreTabs', () => {
   const persisted = (over: Partial<PersistedWorkspace> = {}): PersistedWorkspace => ({
     version: 1,
     activeTabId: 'tab1',
-    tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'main', cwd: '/p', model: 'opus', provider: 'claude', title: 'p', privacy: 'shared', sessionId: 's1' }],
+    tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'main', cwd: '/p', model: 'opus', provider: 'claude', title: 'p', sessionId: 's1' }],
     ...over,
   });
 
@@ -214,7 +213,7 @@ describe('restoreTabs', () => {
 
   it('restoreTabs_proveedorRetiradoDelGateway_reabreConClaudeYConservaLaSesion', () => {
     // P-032 R6: `openai`/`gemini` ya no tienen runtime; su transcripcion es del CLI de Claude.
-    const ws = persisted({ tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'main', cwd: '/p', model: 'gpt-4o', provider: 'openai', title: 'p', privacy: 'shared', sessionId: 's1' }] });
+    const ws = persisted({ tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'main', cwd: '/p', model: 'gpt-4o', provider: 'openai', title: 'p', sessionId: 's1' }] });
 
     const [restored] = restoreTabs(ws, new Set(['.claude'])).tabs;
 
@@ -262,7 +261,7 @@ describe('restoreTabs', () => {
 
 describe('toPersistedWorkspace + restoreTabs — PR vinculado (grupo D)', () => {
   it('prVinculado_idaYVuelta_conservaNumeroDescarteYAutoFix', () => {
-    const tab = { id: 't1', accountId: '.claude', accountAlias: 'a', cwd: '/r', model: 'm', provider: 'claude', title: 'x', privacy: 'shared' as const, prNumber: 7, prDismissed: 3, prAutoFix: true };
+    const tab = { id: 't1', accountId: '.claude', accountAlias: 'a', cwd: '/r', model: 'm', provider: 'claude', title: 'x', prNumber: 7, prDismissed: 3, prAutoFix: true };
 
     const restored = restoreTabs(toPersistedWorkspace([tab], 't1', {}), new Set(['.claude']));
 

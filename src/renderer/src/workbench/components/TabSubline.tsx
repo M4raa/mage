@@ -3,13 +3,13 @@ import { Icon } from './Icon';
 import { GitChips } from './GitChips';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
-import { folderChip, privacyChip } from '../chatInfoView';
+import { folderChip } from '../chatInfoView';
 import { apiBilledLabel, providerLabel } from '../accountView';
 import { useT } from '../../i18n/uiLanguage';
 
 const SEPARATOR = ' · ';
 
-// Información de la conversación (Q-U11): proveedor · cuenta · carpeta · rama · privacidad, sin modelo (D18). Desde el
+// Información de la conversación (Q-U11): proveedor · cuenta · carpeta · rama, sin modelo (D18). Desde el
 // rediseño de P-038 vive a la izquierda de la fila bajo el input (`ChatInfoBar`), no bajo las pestañas. La carpeta
 // es la única parte accionable (se abre, que es como se llega a lo que genera el agente y al scratchpad); la rama
 // y los cambios salen de `GitChips` en su variante sin píldora. Sin pestaña, no pinta nada.
@@ -22,7 +22,7 @@ export function TabSubline(): React.JSX.Element | null {
   const scratchDir = useWorkbenchStore((s) => s.scratchDir);
   const scratchRoots = useWorkbenchStore((s) => s.scratchRoots);
   const ensureScratchDir = useWorkbenchStore((s) => s.ensureScratchDir);
-  // Suscribe la fila al idioma: las etiquetas de carpeta y privacidad salen de `chatInfoView`, que traduce al llamarse.
+  // Suscribe la fila al idioma: la etiqueta de carpeta sale de `chatInfoView`, que traduce al llamarse.
   useT();
 
   useEffect(() => {
@@ -31,7 +31,6 @@ export function TabSubline(): React.JSX.Element | null {
 
   if (tab === undefined) return null;
   const folder = folderChip(tab.cwd, scratchRoots.length > 0 ? scratchRoots : scratchDir);
-  const privacy = privacyChip(tab.privacy);
   const parts: readonly React.ReactNode[] = [
     <span key="account" data-tab-subline-account className="inline-flex min-w-0 items-center gap-[6px]">
       <span aria-hidden="true" className="h-[7px] w-[7px] flex-none rounded-full" style={{ background: account?.accent.base ?? 'transparent' }} />
@@ -53,11 +52,6 @@ export function TabSubline(): React.JSX.Element | null {
           </button>,
         ]),
     ...(inRepo ? [<GitChips key="git" tabId={tabId} cwd={tab.cwd} bare />] : []),
-    // Informativa (no es un botón): el dato largo va en el tooltip y en el nombre accesible (P-038 V3).
-    <span key="privacy" data-tab-subline-privacy={tab.privacy} data-tip={privacy.title} aria-label={privacy.title} className="inline-flex flex-none cursor-help items-center gap-[5px]">
-      <Icon name={privacy.icon} size={12} />
-      <span>{privacy.label}</span>
-    </span>,
   ];
 
   return (

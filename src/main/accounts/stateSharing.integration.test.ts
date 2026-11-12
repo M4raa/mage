@@ -9,27 +9,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AccountService, type AccountDeps } from './accountService';
+import { retiredProfileDirOf } from '../conversations/privateConversationsMigration';
 import { defaultLinkDeps, LinkService } from '../os/linkService';
 import type { LogLevel } from '@shared/debug';
 
 let home: string;
 let logs: Array<{ level: LogLevel; message: string }>;
-
-function credentials(expiresAt: number, empty = false): string {
-  return JSON.stringify({
-    claudeAiOauth: {
-      accessToken: empty ? '' : `access-${expiresAt}`,
-      refreshToken: empty ? '' : `refresh-${expiresAt}`,
-      expiresAt: empty ? 0 : expiresAt,
-      scopes: ['user:inference'],
-      subscriptionType: 'team',
-    },
-  });
-}
-
-function expiryOnDisk(path: string): number {
-  return JSON.parse(readFileSync(path, 'utf8')).claudeAiOauth.expiresAt;
-}
 
 // Layout del proveedor bajo prueba. Va explicito (y no importado del adapter) para que un cambio
 // en el adapter de Claude no mueva en silencio lo que estos tests afirman.
@@ -77,84 +62,6 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-describe('VERIFICACION G1/G2 sobre FS real', () => {
-  it('divergenciaEnElPerfil_arrancaConElTokenMasReciente_yQuedaCoherenteEnAmbasRutas', () => {
-    const account = join(home, '.claude-p');
-    mkdirSync(account, { recursive: true });
-    const accountCreds = join(account, '.credentials.json');
-    const profileCreds = join(account, 'mage-private', '.credentials.json');
-    // Divergencia forzada A MANO: la cuenta tiene el token bueno; el perfil, el vaciado por el CLI
-    // (escrito DESPUES, o sea mas reciente en disco).
-    writeFileSync(accountCreds, credentials(9_000));
-    mkdirSync(join(account, 'mage-private'), { recursive: true });
-    writeFileSync(profileCreds, credentials(0, true));
-
-    const service = new AccountService(realDeps());
-    service.ensurePrivateProfile(account);
-
-    expect(expiryOnDisk(profileCreds)).toBe(9_000); // el perfil arranca con el token bueno
-    expect(expiryOnDisk(accountCreds)).toBe(9_000); // y la cuenta NO se pisa
-    expect(logs.some((l) => l.level === 'info' && l.message.includes('convergidas'))).toBe(true);
-  });
-
-  it('divergenciaEnLaCuenta_convergeHaciaLaCuenta_sinPerderElRefreshRotado', () => {
-    const account = join(home, '.claude-p');
-    mkdirSync(join(account, 'mage-private'), { recursive: true });
-    const accountCreds = join(account, '.credentials.json');
-    const profileCreds = join(account, 'mage-private', '.credentials.json');
-    // Ahora fue la sesion PRIVADA la que refresco: el token bueno esta en el perfil.
-    writeFileSync(accountCreds, credentials(5_000));
-    writeFileSync(profileCreds, credentials(9_000));
-
-    const service = new AccountService(realDeps());
-    service.ensurePrivateProfile(account);
-
-    expect(expiryOnDisk(accountCreds)).toBe(9_000); // se recupera en la cuenta
-    expect(expiryOnDisk(profileCreds)).toBe(9_000);
-  });
-
-  it('sinDivergencia_noReescribeNinguno', () => {
-    const account = join(home, '.claude-p');
-    mkdirSync(join(account, 'mage-private'), { recursive: true });
-    const accountCreds = join(account, '.credentials.json');
-    const profileCreds = join(account, 'mage-private', '.credentials.json');
-    writeFileSync(accountCreds, credentials(7_000));
-    writeFileSync(profileCreds, credentials(7_000));
-    const mtimeBefore = statSync(profileCreds).mtimeMs;
-
-    const service = new AccountService(realDeps());
-    service.ensurePrivateProfile(account);
-
-    expect(statSync(profileCreds).mtimeMs).toBe(mtimeBefore); // ni un rename de mas
-  });
-});
-
-describe('VERIFICACION G3 sobre FS real', () => {
-  it('enlaceCompartidoConvertidoEnDirReal_produceUnEfectoObservable', () => {
-    const account = join(home, '.claude-p');
-    mkdirSync(account, { recursive: true });
-    const service = new AccountService(realDeps());
-    // Primera pasada: crea los enlaces del perfil privado de verdad (junction en Windows).
-    const profile = service.ensurePrivateProfile(account);
-    const shared = join(profile, 'sessions');
-    expect(existsSync(shared)).toBe(true);
-
-    // Se reproduce el fallo: una sesion viva convierte el enlace en DIRECTORIO REAL con datos propios.
-    rmSync(shared, { recursive: true, force: true });
-    mkdirSync(shared, { recursive: true });
-    writeFileSync(join(shared, 'sesion-viva.jsonl'), '{}');
-    logs = [];
-
-    service.ensurePrivateProfile(account);
-
-    const warning = logs.find((l) => l.level === 'warn' && l.message.includes('sessions'));
-    expect(warning).toBeDefined();
-    expect(warning?.message).toContain('directorio real');
-    // Y no se destruye lo que la sesion habia escrito dentro.
-    expect(existsSync(join(shared, 'sesion-viva.jsonl'))).toBe(true);
-  });
-});
-
 // Punto 30 (P-028): borrar una cuenta con enlaces REALES (junction en Windows, symlink en POSIX).
 describe('deleteAccount sobre FS real', () => {
   function accountWithSharedData(): { service: AccountService; account: string; commonFile: string } {
@@ -163,8 +70,13 @@ describe('deleteAccount sobre FS real', () => {
     mkdirSync(join(home, '.claude', 'projects', 'p1'), { recursive: true });
     writeFileSync(commonFile, '{}');
     const account = service.createAccount('p').configDir;
-    const profile = service.ensurePrivateProfile(account);
+    // El perfil privado retirado, tal y como lo dejaron versiones anteriores: su `projects` propio y
+    // enlaces de directorio al comun para el resto. Mage ya no lo crea, pero el borrado tiene que cruzarlo bien.
+    const profile = retiredProfileDirOf(account);
+    mkdirSync(join(profile, 'projects'), { recursive: true });
     writeFileSync(join(profile, 'projects', 'privada.jsonl'), '{}');
+    const links = new LinkService(defaultLinkDeps(() => undefined));
+    for (const folder of ['sessions', 'skills']) links.createDirLink(join(home, '.claude', folder), join(profile, folder));
     return { service, account, commonFile };
   }
 

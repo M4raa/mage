@@ -25,12 +25,9 @@ export const PERSISTED_TAB_SCHEMA = z.object({
   provider: z.string(),
   title: z.string(),
   projectId: z.string().min(1).optional(),
-  // M2.6: privacidad de la conversacion. `.catch('shared')` para tolerar estados persistidos
-  // ANTERIORES a M2.6 (sin el campo) o con un valor invalido -> se tratan como compartidas.
-  privacy: z.enum(['shared', 'private']).catch('shared'),
-  // M2.6: config dir efectivo de la ultima sesion (cuenta o perfil privado). Persistido para poder
-  // localizar la transcripcion de una conversacion privada tras reiniciar. Ausente en pestañas
-  // nunca arrancadas.
+  // Un estado guardado antiguo puede traer el campo de las conversaciones privadas (retiradas): Zod
+  // descarta las claves que el esquema no declara, así que la pestaña se lee como cualquier otra.
+  // Config dir de la ultima sesion. Ausente en pestañas nunca arrancadas.
   resolvedConfigDir: z.string().optional(),
   sessionId: z.string().optional(), // presente solo si la sesion llego a crearse (permite --resume)
   effort: z.string().optional(), // nivel --effort (M2.4)

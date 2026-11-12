@@ -323,7 +323,6 @@ function SubagentOverlay({ tabId, subagent }: { readonly tabId: string; readonly
   }
   return (
     <SubagentTranscriptView
-      // Config dir EFECTIVO: en una conversacion privada, su perfil `mage-private` (igual que SubagentBlock).
       accountDir={tab.resolvedConfigDir ?? tab.accountId}
       cwd={tab.cwd}
       sessionId={sessionId}

@@ -5,7 +5,7 @@ import { foreignText } from '@shared/i18n/localizedText';
 import { lockRefOf, RECLAIMED_NOTICE_MS, startConversationLockSync, type LockSyncMage, type LockSyncState } from './conversationLockSync';
 import type { Tab } from './types';
 
-const tab = (id: string, overrides: Partial<Tab> = {}): Tab => ({ id, accountId: '/home/u/.claude', accountAlias: 'u', cwd: '/p', model: 'm', provider: 'claude', title: id, privacy: 'shared', ...overrides }) as Tab;
+const tab = (id: string, overrides: Partial<Tab> = {}): Tab => ({ id, accountId: '/home/u/.claude', accountAlias: 'u', cwd: '/p', model: 'm', provider: 'claude', title: id, ...overrides }) as Tab;
 
 function setup(initial: Partial<LockSyncState> = {}, answer: ConversationLockStatus = { owner: true }) {
   const store = createStore<LockSyncState>(() => ({ tabs: [], activeTabId: '', sessionIdByChat: {}, lockByChat: {}, lockReclaimedByChat: {}, ...initial }));

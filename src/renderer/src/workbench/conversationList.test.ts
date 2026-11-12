@@ -21,7 +21,6 @@ const tab = (over: Partial<Tab>): Tab => ({
   model: 'sonnet',
   provider: 'claude',
   title: 'abierta',
-  privacy: 'shared',
   ...over,
 });
 
@@ -30,7 +29,6 @@ const hist = (over: Partial<ConversationSummary>): ConversationSummary => ({
   configDir: '.claude-p',
   cwd: '/proj',
   title: 'histórica',
-  privacy: 'shared',
   updatedAtMs: 1000,
   sizeBytes: 2048,
   isScheduled: false,
@@ -42,7 +40,7 @@ describe('mergeConversationRows', () => {
     const tabs = [tab({ id: 'tA', resumeSessionId: 'sA', lastMessageAtMs: 5000 })];
     const history = [hist({ sessionId: 'sB', updatedAtMs: 2000 })];
 
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
+    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
 
     expect(rows.map((r) => r.kind)).toEqual(['tab', 'history']);
   });
@@ -52,7 +50,7 @@ describe('mergeConversationRows', () => {
     const tabs = [tab({ id: 'tA', accountId: '.codex-a', provider: 'codex', resumeSessionId: 'thread-7' })];
     const history = [hist({ sessionId: 'thread-7', configDir: '.codex-a' })];
 
-    const rows = mergeConversationRows(tabs, history, { tA: 'mage-uuid-1' }, '.codex-a', 'shared');
+    const rows = mergeConversationRows(tabs, history, { tA: 'mage-uuid-1' }, '.codex-a');
 
     expect(rows.map((r) => r.kind)).toEqual(['tab']);
   });
@@ -62,7 +60,7 @@ describe('mergeConversationRows', () => {
     const tabs = [tab({ id: 'tA', resumeSessionId: 'sVieja' })];
     const history = [hist({ sessionId: 'sVieja', updatedAtMs: 100 }), hist({ sessionId: 'sNueva', updatedAtMs: 900 })];
 
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
+    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
 
     expect(rows.map((r) => (r.kind === 'tab' ? 'sVieja' : r.item.sessionId))).toEqual(['sNueva', 'sVieja']);
   });
@@ -71,7 +69,7 @@ describe('mergeConversationRows', () => {
     const tabs = [tab({ id: 'tA', resumeSessionId: 'sVieja', lastMessageAtMs: 5000 })];
     const history = [hist({ sessionId: 'sVieja', updatedAtMs: 100 }), hist({ sessionId: 'sNueva', updatedAtMs: 900 })];
 
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
+    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
 
     expect(rows.map((r) => (r.kind === 'tab' ? 'sVieja' : r.item.sessionId))).toEqual(['sVieja', 'sNueva']);
   });
@@ -80,7 +78,7 @@ describe('mergeConversationRows', () => {
     const tabs = [tab({ id: 'tNueva', createdAtMs: 8000 })];
     const history = [hist({ sessionId: 'sB', updatedAtMs: 2000 })];
 
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
+    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
 
     expect(rows.map((r) => r.kind)).toEqual(['tab', 'history']);
   });
@@ -89,7 +87,7 @@ describe('mergeConversationRows', () => {
     const tabs = [tab({ id: 'tLegacy' })]; // restaurada de un formato anterior
     const history = [hist({ sessionId: 'sB', updatedAtMs: 2000 })];
 
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
+    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
 
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r.kind)).toEqual(['history', 'tab']);
@@ -99,7 +97,7 @@ describe('mergeConversationRows', () => {
     const tabs = [tab({ id: 'tA', resumeSessionId: 'sX' })];
     const history = [hist({ sessionId: 'sX' })]; // misma conversacion abierta
 
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
+    const rows = mergeConversationRows(tabs, history, {}, '.claude-p');
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.kind).toBe('tab');
@@ -109,27 +107,16 @@ describe('mergeConversationRows', () => {
     const tabs = [tab({ id: 'tA' })]; // sin resumeSessionId, pero con sesion viva
     const history = [hist({ sessionId: 'live1' })];
 
-    const rows = mergeConversationRows(tabs, history, { tA: 'live1' }, '.claude-p', 'shared');
+    const rows = mergeConversationRows(tabs, history, { tA: 'live1' }, '.claude-p');
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.kind).toBe('tab');
   });
 
-  it('filtraPorPrivacidad', () => {
-    const history = [hist({ sessionId: 's1', privacy: 'shared' }), hist({ sessionId: 's2', privacy: 'private' })];
-
-    const shared = mergeConversationRows([], history, {}, '.claude-p', 'shared');
-    const priv = mergeConversationRows([], history, {}, '.claude-p', 'private');
-
-    expect(shared).toHaveLength(1);
-    expect(priv).toHaveLength(1);
-    expect(priv[0]).toMatchObject({ kind: 'history', item: { sessionId: 's2' } });
-  });
-
   it('historialMasRecientePrimero', () => {
     const history = [hist({ sessionId: 'viejo', updatedAtMs: 1 }), hist({ sessionId: 'nuevo', updatedAtMs: 9 })];
 
-    const rows = mergeConversationRows([], history, {}, '.claude-p', 'shared');
+    const rows = mergeConversationRows([], history, {}, '.claude-p');
 
     expect(rows.map((r) => (r.kind === 'history' ? r.item.sessionId : ''))).toEqual(['nuevo', 'viejo']);
   });
@@ -137,7 +124,7 @@ describe('mergeConversationRows', () => {
   it('filtraPestanasDeOtraCuenta', () => {
     const tabs = [tab({ id: 'tA', accountId: '.claude-9' })];
 
-    const rows = mergeConversationRows(tabs, [], {}, '.claude-p', 'shared');
+    const rows = mergeConversationRows(tabs, [], {}, '.claude-p');
 
     expect(rows).toHaveLength(0);
   });
@@ -244,13 +231,13 @@ describe('mergeConversationRows — resumen de la pestaña', () => {
   it('mergeConversationRows_pestanaAbiertaConHistorial_adjuntaSuResumen', () => {
     const summary = hist({ sessionId: 'sX', sizeBytes: 4096 });
 
-    const rows = mergeConversationRows([tab({ id: 'tA', resumeSessionId: 'sX' })], [summary], {}, '.claude-p', 'shared');
+    const rows = mergeConversationRows([tab({ id: 'tA', resumeSessionId: 'sX' })], [summary], {}, '.claude-p');
 
     expect(rows).toEqual([{ kind: 'tab', tab: expect.objectContaining({ id: 'tA' }), history: summary }]);
   });
 
   it('mergeConversationRows_pestanaSinFichero_sinResumen', () => {
-    const rows = mergeConversationRows([tab({ id: 'tNueva', createdAtMs: 5 })], [hist({ sessionId: 'otra' })], {}, '.claude-p', 'shared');
+    const rows = mergeConversationRows([tab({ id: 'tNueva', createdAtMs: 5 })], [hist({ sessionId: 'otra' })], {}, '.claude-p');
     const fila = rows.find((r) => r.kind === 'tab');
 
     expect(fila !== undefined && fila.kind === 'tab' ? fila.history : 'no hay fila').toBeUndefined();
@@ -321,7 +308,6 @@ describe('tabFromConversation', () => {
     configDir: 'C:/Users/u/.claude',
     cwd: 'C:/src/mage',
     title: 'Arreglar el cierre',
-    privacy: 'shared',
     updatedAtMs: 5,
     sizeBytes: 10,
     isScheduled: false,
@@ -338,7 +324,6 @@ describe('tabFromConversation', () => {
       model: 'opus',
       provider: 'claude',
       title: 'Arreglar el cierre',
-      privacy: 'shared',
       resolvedConfigDir: 'C:/Users/u/.claude',
       resumeSessionId: 'sess-1',
     });

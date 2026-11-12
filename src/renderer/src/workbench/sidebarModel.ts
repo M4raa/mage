@@ -1,5 +1,5 @@
 // Modelo PURO del lateral de conversaciones de TODAS las cuentas (D6): fusión de los historiales,
-// agrupación (Fijadas → Proyectos → Sin proyecto → Privadas), filtros e indicadores de fila. Sin store
+// agrupación (Fijadas → Proyectos → Sin proyecto), filtros e indicadores de fila. Sin store
 // ni IPC: el componente solo pinta lo que sale de aquí.
 import type { ConversationSummary } from '@shared/conversations';
 import type { ChatProject } from '@shared/settings';
@@ -17,7 +17,7 @@ export interface AccountConversation {
   // La cuenta con la que se abre. Si no se sabe de quién es, la primera que la listó: sirve para abrirla, no para
   // decir de quién es (ver `accountKnown`).
   readonly accountId: string;
-  // Se sabe de verdad de qué cuenta es: la lista una sola cuenta (privadas, Codex, agy) o el índice de Mage sabe con cuál
+  // Se sabe de verdad de qué cuenta es: la lista una sola cuenta (Codex, agy) o el índice de Mage sabe con cuál
   // se usó por última vez. Una compartida de Claude que nadie apuntó (antigua, del CLI en la terminal, o de otro perfil
   // de Mage) sale en TODAS las cuentas y no es de ninguna en concreto (P-038, informe del 10-11).
   readonly accountKnown?: boolean; // ausente = se sabe
@@ -29,7 +29,7 @@ export interface AccountHistory {
 }
 
 function historyKey(item: ConversationSummary): string {
-  return `${item.providerId ?? DEFAULT_PROVIDER}:${item.privacy}:${item.sessionId}`;
+  return `${item.providerId ?? DEFAULT_PROVIDER}:${item.sessionId}`;
 }
 
 // Une los historiales de varias cuentas. Una conversación compartida de Claude sale en todas las cuentas de
@@ -74,10 +74,6 @@ export function missingOwnerOf(row: SidebarRow, knownAccount: (accountId: string
 
 export function providerOfRow(row: SidebarRow): string {
   return row.kind === 'tab' ? row.tab.provider : (row.item.providerId ?? DEFAULT_PROVIDER);
-}
-
-function privacyOfRow(row: SidebarRow): 'shared' | 'private' {
-  return row.kind === 'tab' ? row.tab.privacy : row.item.privacy;
 }
 
 function cwdOfRow(row: SidebarRow): string {
@@ -175,7 +171,6 @@ export interface SidebarGroups {
   readonly pinned: SidebarRow[];
   readonly projects: ProjectGroup[];
   readonly unassigned: SidebarRow[];
-  readonly private: SidebarRow[];
 }
 
 export interface GroupContext {
@@ -249,7 +244,6 @@ function addToProjectGroup(groups: Map<string, ProjectGroup>, target: Omit<Proje
 export function groupSidebarRows(rows: readonly SidebarRow[], ctx: GroupContext): SidebarGroups {
   const pinned: SidebarRow[] = [];
   const unassigned: SidebarRow[] = [];
-  const privateRows: SidebarRow[] = [];
   const groups = new Map<string, ProjectGroup>(
     ctx.projects.map((project) => [
       `p:${project.id}`,
@@ -257,10 +251,6 @@ export function groupSidebarRows(rows: readonly SidebarRow[], ctx: GroupContext)
     ]),
   );
   for (const row of rows) {
-    if (privacyOfRow(row) === 'private') {
-      privateRows.push(row);
-      continue;
-    }
     if (isPinnedRow(row, ctx)) {
       pinned.push(row);
       continue;
@@ -269,7 +259,7 @@ export function groupSidebarRows(rows: readonly SidebarRow[], ctx: GroupContext)
     if (target === null) unassigned.push(row);
     else addToProjectGroup(groups, target, row);
   }
-  return { pinned, projects: orderProjectGroups([...groups.values()], ctx.projectOrder), unassigned, private: privateRows };
+  return { pinned, projects: orderProjectGroups([...groups.values()], ctx.projectOrder), unassigned };
 }
 
 export interface SidebarFilter {
@@ -333,7 +323,7 @@ export function projectSummary(indicators: readonly (RowIndicator | null)[]): { 
 // Con qué cuenta se abre una fila: una conversación compartida de Claude se abre con la cuenta activa si es de
 // Claude (regla de `openConversation`); el resto, con la de la fila.
 export function accountToOpenWith(row: SidebarRow, active: { readonly id: string; readonly providerId: string } | undefined): string {
-  const isSharedClaudeHistory = row.kind === 'history' && providerOfRow(row) === DEFAULT_PROVIDER && row.item.privacy === 'shared';
+  const isSharedClaudeHistory = row.kind === 'history' && providerOfRow(row) === DEFAULT_PROVIDER;
   if (isSharedClaudeHistory && active !== undefined && active.providerId === DEFAULT_PROVIDER) return active.id;
   return row.accountId;
 }

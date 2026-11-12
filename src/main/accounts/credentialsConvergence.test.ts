@@ -6,7 +6,7 @@ import {
 } from './credentialsConvergence';
 
 const ACCOUNT = '/home/u/.claude-p/.credentials.json';
-const PROFILE = '/home/u/.claude-p/mage-private/.credentials.json';
+const PROFILE = '/home/u/.claude-p/perfil/.credentials.json';
 
 // Lado utilizable por defecto; cada test cambia solo lo que le interesa.
 function side(path: string, overrides: Partial<CredentialsSide> = {}): CredentialsSide {

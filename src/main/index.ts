@@ -592,9 +592,6 @@ function onSharedMcpChanged(): void {
   else mainLog('info', 'Sincronizado con agy', { cambios: result.changes.length });
 }
 
-// Perfil privado de una cuenta (AccountService): cuenta como su cuenta (mismo login, mismo «Solo en…»).
-const PRIVATE_PROFILE_DIR_NAME = 'mage-private';
-
 // Carpetas extra de la tarea que se está lanzando (F8); solo vive durante `sessionCoordinator.create`.
 // ponytail: canal por variable de módulo porque create() es síncrono; si deja de serlo, pasar las carpetas por SharedLaunchConfig
 let launchingTaskExtras: readonly string[] = [];
@@ -603,7 +600,7 @@ let launchingTaskExtras: readonly string[] = [];
 // son ficheros que el usuario puede editar entre una sesion y la siguiente.
 function loadSharedLaunch(provider: string, accountDir: string, sessionId: string | null): SharedLaunchConfig {
   const family = mcpFamilyOf(provider);
-  const account = basename(accountDir) === PRIVATE_PROFILE_DIR_NAME ? dirname(accountDir) : accountDir;
+  const account = accountDir;
   const shared = getMcpServices().sharedMcp();
   for (const warning of shared.warnings) mainLog('warn', warning);
   const settingsCommon = getSharedConfigService().loadSettingsCommon(settingsCommonPath());
@@ -1313,8 +1310,8 @@ const accountService = new AccountService({
   linkService,
   log: mainLog,
 });
-// Historial de conversaciones en disco (M2.6). Lee prefijos de los .jsonl bajo projects/ (comun) y
-// mage-private/projects/ (privado) de la cuenta. Solo FS de lectura.
+// Historial de conversaciones en disco (M2.6). Lee prefijos de los .jsonl bajo projects/ de la cuenta.
+// Solo FS de lectura.
 const conversationFsDeps: ConversationsDeps = {
   exists: existsSync,
   listDir: (path) => readdirSync(path),
@@ -1523,7 +1520,6 @@ function usageHistoryRoots(): readonly TranscriptRoot[] {
     if (agyProfile !== null) for (const profile of [agyProfile, ...agyExternalProfileOf(account.configDir)]) add(join(profile, ...AGY_CONVERSATIONS_DIR), account.configDir, 'agy');
     if (account.providerId !== 'claude') continue;
     add(join(account.configDir, 'projects'));
-    add(join(account.configDir, PRIVATE_PROFILE_DIR_NAME, 'projects'), account.configDir);
   }
   return roots;
 }
@@ -1562,13 +1558,8 @@ const memoryService = new MemoryService({
 // IPC, una frontera de seguridad distinta de la logica de cuentas).
 const ACCOUNT_DIR_PATTERN = /^\.claude(-.*|\d*)$/;
 
-// Nombre del dir de perfil privado (M2.6); mismo valor que AccountService.PRIVATE_PROFILE_DIR,
-// duplicado aqui a proposito (frontera de seguridad IPC, no logica de cuentas).
-const PRIVATE_PROFILE_SEGMENT = 'mage-private';
-
-// Verifica que una ruta (transcripcion o carpeta de memoria) cae bajo <cuenta>/projects/ (compartido)
-// o <cuenta>/mage-private/projects/ (perfil privado, M2.6) de alguna cuenta gestionada bajo HOME
-// (nunca una ruta arbitraria via IPC). No exige que exista (eso lo validan los servicios al leer).
+// Verifica que una ruta (transcripcion o carpeta de memoria) cae bajo <cuenta>/projects/ de alguna
+// cuenta gestionada bajo HOME (nunca una ruta arbitraria via IPC). No exige que exista (eso lo validan los servicios al leer).
 function isUnderManagedProjects(targetPath: string): boolean {
   const resolved = resolve(targetPath);
   // Las transcripciones del runtime propio (P-032, ficha D3) viven en userData/runtime/projects.
@@ -1579,11 +1570,10 @@ function isUnderManagedProjects(targetPath: string): boolean {
   if (!isInsideHome(resolved)) return false;
   const segments = resolved.slice(accountsHome().length).split(sep).filter(Boolean);
   if (segments.length < 2 || !ACCOUNT_DIR_PATTERN.test(segments[0] ?? '')) return false;
-  if (segments[1] === 'projects') return true;
-  return segments[1] === PRIVATE_PROFILE_SEGMENT && segments[2] === 'projects';
+  return segments[1] === 'projects';
 }
 
-// Verifica que una ruta cae bajo <cuenta>/plans/ (o <cuenta>/mage-private/plans/) de alguna cuenta
+// Verifica que una ruta cae bajo <cuenta>/plans/ de alguna cuenta
 // gestionada bajo HOME. Es donde el CLI escribe los PLANES del modo plan, que no viven bajo el cwd de
 // ninguna conversacion: sin esta raiz, el panel de Ficheros listaba el plan y luego se negaba a abrirlo
 // ("el fichero está fuera de la carpeta de la conversación" — reporte del usuario).
@@ -1595,8 +1585,7 @@ function isUnderManagedPlans(targetPath: string): boolean {
   return rest !== null && rest[0] === 'plans' && rest.length >= 2;
 }
 
-// Tercera raiz (P-028, 15): la MEMORIA del CLI, `<cuenta>/projects/<slug>/memory/…` (y la del perfil
-// privado). Un tercio de los ficheros que el panel no abria eran estos `.md`. Anclada por estructura
+// Tercera raiz (P-028, 15): la MEMORIA del CLI, `<cuenta>/projects/<slug>/memory/…`. Un tercio de los ficheros que el panel no abria eran estos `.md`. Anclada por estructura
 // como `plans`: solo el subdirectorio `memory` de un proyecto, nunca `projects` entero (ahi viven las
 // transcripciones de todas las conversaciones).
 function isUnderManagedMemory(targetPath: string): boolean {
@@ -1604,14 +1593,14 @@ function isUnderManagedMemory(targetPath: string): boolean {
   return rest !== null && rest[0] === 'projects' && rest[2] === 'memory' && rest.length >= 4;
 }
 
-// Segmentos de la ruta DENTRO del config dir de una cuenta gestionada (saltando `mage-private` si
-// esta), o null si no cuelga de ninguna. Es la base comun de las raices ancladas por estructura.
+// Segmentos de la ruta DENTRO del config dir de una cuenta gestionada, o null si no cuelga de ninguna.
+// Es la base comun de las raices ancladas por estructura.
 function segmentsInsideManagedConfigDir(targetPath: string): readonly string[] | null {
   const resolved = resolve(targetPath);
   if (!isInsideHome(resolved)) return null;
   const segments = resolved.slice(accountsHome().length).split(sep).filter(Boolean);
   if (!ACCOUNT_DIR_PATTERN.test(segments[0] ?? '')) return null;
-  return segments[1] === PRIVATE_PROFILE_SEGMENT ? segments.slice(2) : segments.slice(1);
+  return segments.slice(1);
 }
 
 // Ficheros de fuera del cwd que el usuario aprobo abrir EN ESTA EJECUCION (P-028, 15). En memoria a
@@ -2885,13 +2874,12 @@ function relaySessionEvent(payload: { readonly sessionId: string; readonly event
   { sender, configDir, accountDir }: { sender: Electron.WebContents | null; configDir: string; accountDir: string }): void {
   sessionSettings.observe(payload.sessionId, payload.event);
       // Cache del catalogo "/" (2.2): la sesion es la UNICA fuente del catalogo real, y una
-      // conversacion recien abierta no tiene sesion. Se escribe con el config dir EFECTIVO (para una
-      // conversacion privada, el perfil `mage-private`), nunca con el de la cuenta: si no, la cache de
-      // una cuenta acabaria con el catalogo de otra.
+      // conversacion recien abierta no tiene sesion. Se escribe con el config dir de la sesion: si no,
+      // la cache de una cuenta acabaria con el catalogo de otra.
       if (payload.event.kind === 'commands_available') {
         cacheCommandCatalog(configDir, payload.event.commands);
       }
-      // Y el de modelos (P-026 2.4), del mismo `initialize` y con el mismo config dir efectivo.
+      // Y el de modelos (P-026 2.4), del mismo `initialize` y con el mismo config dir.
       if (payload.event.kind === 'models_available') {
         cacheModelCatalog(configDir, payload.event.models);
       }
@@ -2900,12 +2888,9 @@ function relaySessionEvent(payload: { readonly sessionId: string; readonly event
       // bloque en cuanto llega un evento que no es un delta de pensamiento.
       captureThinking(payload.sessionId, payload.event);
       // Uso por stream (9.3): el CLI regala la foto de consumo en cada turno, sin que Mage gaste una
-      // peticion. Va al config dir EFECTIVO, igual que el catalogo: el perfil privado y su cuenta
-      // comparten login, asi que comparten uso, pero cada dir guarda el suyo y nadie pisa a nadie.
+      // peticion.
       if (payload.event.kind === 'usage_limits') {
-        // Con la clave de la CUENTA, no con el config dir efectivo: `UsageGet` solo sirve cuentas
-        // gestionadas (rechaza `mage-private`), asi que guardarlo bajo el perfil privado era escribir
-        // en una entrada que nadie lee jamas. Y es correcto compartirlo: mismo login, mismo uso.
+        // Con la clave de la CUENTA: `UsageGet` solo sirve cuentas gestionadas.
         usageService.recordStreamUsage(accountDir, {
           fiveHour: payload.event.fiveHour,
           sevenDay: payload.event.sevenDay,
@@ -2933,12 +2918,8 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
     assertLaunchable(params);
     assertConversationNotLockedElsewhere(params);
     prepareAgyResume(params);
-    // M2.6: una conversacion privada se lanza bajo el perfil privado de la cuenta (mismo login,
-    // projects propio). Compartida (default) usa la cuenta tal cual. El config dir efectivo vuelve al
-    // renderer para localizar transcripciones/memoria de la conversacion.
-    // El perfil privado es de Claude: en otro proveedor la privacidad no cambia el dir de la cuenta.
-    const configDir =
-      params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
+    // El config dir vuelve al renderer para localizar transcripciones/memoria de la conversacion.
+    const configDir = params.accountDir;
     const project = params.projectId === undefined ? undefined : getSettingsStore().load().chatProjects.find((candidate) => candidate.id === params.projectId);
     const task = params.provider === 'claude' || params.provider === 'codex'
       ? getTaskService().claimForLaunch({ provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, resumeSessionId: params.resumeSessionId, taskId: params.taskId })
@@ -3075,8 +3056,6 @@ function createIpcConversationAdminService() {
     ensureDir: (p) => mkdirSync(p, { recursive: true }),
     move: (from, to) => renameSync(from, to),
     realpath: (p) => realpathSync(p),
-    privateProfileDir: (dir) => join(dir, PRIVATE_PROFILE_SEGMENT),
-    ensurePrivateProfile: (dir) => accountService.ensurePrivateProfile(dir),
     runtimeRoot: runtimeTranscriptRoot(),
   });
 }
@@ -3842,8 +3821,7 @@ function conversationMigration(): ConversationMigrationService {
     nowMs: Date.now,
     newId: randomUUID,
     claude: {
-      effectiveDir: (accountDir, privacy) => (privacy === 'private' ? accountService.ensurePrivateProfile(accountDir) : accountDir),
-      deleteConversation: (ref) => createIpcConversationAdminService().deleteConversation({ accountDir: ref.accountDir, sessionId: ref.sessionId, cwd: ref.cwd, privacy: ref.privacy }),
+      deleteConversation: (ref) => createIpcConversationAdminService().deleteConversation({ accountDir: ref.accountDir, sessionId: ref.sessionId, cwd: ref.cwd }),
     },
     codex: {
       homeOf: (accountDir) => getProviderAccounts().find('codex', accountDir)?.home ?? failMigration(`Cuenta de Codex no valida: ${accountDir}`),
@@ -4184,10 +4162,6 @@ function registerBrowserIpcFromMain(): void {
 function registerPromptIpc2(deps: IpcDependencies): void {
   const { promptService } = deps;
   ipcMain.handle(IpcChannel.PromptHandoff, (_e, params: HandoffPromptParams): Promise<string> => {
-    // El handoff reanuda la sesion con el config dir EFECTIVO, que en una conversacion privada es el
-    // perfil privado: hay que convergir sus credenciales antes de spawnear igual que al crear la
-    // sesion, o el CLI arrancaria con el token que quedo divergido tras el ultimo refresh.
-    accountService.ensureCredentialsFor(params.accountDir);
     return promptService.handoff(params);
   });
   // Notificacion del SO (M2.3): solo si la ventana NO tiene el foco (si el usuario ya esta mirando,
@@ -4622,7 +4596,7 @@ if (cliRelay !== null) {
   });
 }
 
-// Las conversaciones privadas ya no existen: las que hubiera en `<cuenta>/mage-private/projects` pasan al historial
+// Las conversaciones privadas ya no existen: las que hubiera en el perfil privado de su cuenta pasan al historial
 // normal de su cuenta, antes de listar nada o lanzar una sesión. Idempotente; no borra ninguna carpeta.
 function movePrivateConversationsOnce(): void {
   const claudeDirs = listAllAccounts().filter((account) => account.providerId === 'claude').map((account) => account.configDir);

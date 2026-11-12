@@ -20,7 +20,6 @@ function tab(id: string, overrides: Partial<Tab> = {}): Tab {
     model: 'sonnet',
     provider: 'claude',
     title: id,
-    privacy: 'shared',
     ...overrides,
   };
 }

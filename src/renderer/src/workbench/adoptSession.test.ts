@@ -14,7 +14,7 @@ function session(over: Partial<AdoptableSession> = {}): AdoptableSession {
 }
 
 function tab(id: string, over: Partial<Tab> = {}): Tab {
-  return { id, accountId: ACCOUNT, accountAlias: 'principal', cwd: '/proj', model: 'sonnet', provider: 'claude', title: id, privacy: 'shared', ...over };
+  return { id, accountId: ACCOUNT, accountAlias: 'principal', cwd: '/proj', model: 'sonnet', provider: 'claude', title: id, ...over };
 }
 
 function snapshot(over: Partial<ConversationSnapshot> = {}): ConversationSnapshot {
@@ -54,7 +54,7 @@ describe('adoptedTab', () => {
   it('adoptedTab_fullSession_mapsAllFields', () => {
     const result = adoptedTab(session({ effort: 'high', permissionMode: 'plan', configDir: '/priv' }), ids);
     expect(result).toEqual({ id: 'tab7', accountId: ACCOUNT, accountAlias: 'principal', cwd: '/proj/app', model: 'sonnet', provider: 'claude',
-      title: 'app', privacy: 'shared', accountPinned: true, resolvedConfigDir: '/priv', resumeSessionId: 'n1', effort: 'high', permissionMode: 'plan', createdAtMs: 1234, worktreeOff: true });
+      title: 'app', accountPinned: true, resolvedConfigDir: '/priv', resumeSessionId: 'n1', effort: 'high', permissionMode: 'plan', createdAtMs: 1234, worktreeOff: true });
   });
 
   it('adoptedTab_nullNativeId_noResumeSessionId', () => {

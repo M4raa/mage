@@ -69,7 +69,6 @@ import { readOnlyLockMessage, type ConversationLockStatus } from '@shared/conver
 import { lockRefOf } from './conversationLockSync';
 import { conversationIdOfTab } from './conversationId';
 import type { Account, AccountSwitchPrompt, Block, ChatStatus, ContextInfo, ImageAttachment, PermissionView, PromptDraft, RateLimitNotice, SessionExtensions, Tab } from './types';
-import type { ConversationPrivacy } from '@shared/state';
 import type { ConversationSummary } from '@shared/conversations';
 import { planOpenConversation, tabFromConversation } from './conversationList';
 import { hasConversationBlocks, modelForReassignedTab, planAccountSwitch } from './accountSwitch';
@@ -552,10 +551,10 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   deleteAccount: (configDir: string) => Promise<void>;
   newTab: (params: NewTabParams) => Promise<void>;
   // Crea una conversacion SIN friccion (M2.6): cuenta activa implicita, cwd temporal, modelo
-  // auto-resuelto, titulo pendiente del primer prompt, con la privacidad de la seccion (comun/privada).
+  // auto-resuelto, titulo pendiente del primer prompt.
   // Carpeta: `cwd` la fija (un proyecto elegido en la pantalla sin pestañas); `scratch` fuerza la temporal;
   // sin ninguna de las dos, la que diga el ajuste `newConversationFolder`.
-  createConversation: (privacy: ConversationPrivacy, folder?: ConversationFolderChoice) => Promise<void>;
+  createConversation: (folder?: ConversationFolderChoice) => Promise<void>;
   // Renombra una pestana (M2.6): titulo editable a mano; ignora un titulo vacio. Persiste.
   renameTab: (tabId: string, title: string) => void;
   // Renombrado hecho por el USUARIO: titulo local + `/rename` al CLI (D3). `renameTab` es el de siempre,
@@ -586,7 +585,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // Elimina una conversacion en disco (#2): cierra su pestana si esta abierta, borra el .jsonl y
   // refresca el historial. accountDir = cuenta activa.
   // `accountDir` (opcional) sustituye a la cuenta activa: la cuenta de la fila del lateral.
-  deleteConversation: (sessionId: string, cwd: string, privacy: ConversationPrivacy, accountDir?: string) => Promise<void>;
+  deleteConversation: (sessionId: string, cwd: string, accountDir?: string) => Promise<void>;
   // Filtro y búsqueda del lateral. Viven aquí (no en el componente) para que la barra de título pueda activar el chip
   // «Trabajando». No se persisten.
   sidebarFilter: SidebarFilter;
@@ -599,14 +598,12 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   moveProject: (key: string, beforeKey: string | null) => void;
   // Archiva o desarchiva una conversación del lateral.
   setConversationArchived: (sessionId: string, archived: boolean) => void;
-  // Mueve una conversacion (#2) entre secciones (compartido/privado) y/o cuentas: cierra su pestana si
+  // Mueve una conversacion (#2) entre cuentas: cierra su pestana si
   // esta abierta, reubica el .jsonl y refresca el historial.
   moveConversation: (
     sessionId: string,
     cwd: string,
-    privacy: ConversationPrivacy,
     destAccountDir: string,
-    destPrivacy: ConversationPrivacy,
     // Cuenta ORIGEN. Por defecto la activa, que es lo que quiere el menu del sidebar (lista la activa).
     // Explicita para `continueInAccount`: con el workspace dividido, el panel que agota el limite no
     // tiene por que ser el de la cuenta seleccionada.
@@ -703,7 +700,6 @@ export interface NewTabParams {
   readonly title?: string;
   readonly effort?: string; // nivel --effort (M2.4); undefined -> default del CLI
   readonly maxBudgetUsdCents?: number; // tope --max-budget-usd (M2.4) en centavos enteros
-  readonly privacy?: ConversationPrivacy; // M2.6; ausente -> 'shared'
   // Modo de permiso inicial; ausente -> el `defaultPermissionMode` de Ajustes (solo Claude), y '' = el de la cuenta.
   readonly permissionMode?: PermissionMode;
   readonly projectId?: string;
@@ -826,7 +822,6 @@ function recordPublishedArtifacts(
 ): void {
   const tab = state.tabs.find((t) => t.id === tabId);
   if (tab === undefined) return;
-  // Config dir EFECTIVO: en una conversacion privada, quien publico fue el perfil `mage-private`.
   const accountDir = tab.resolvedConfigDir ?? tab.accountId;
   const publishedBefore = new Set(before.filter((b) => b.kind === 'tool' && b.artifact !== null).map((b) => b.id));
   for (const block of after) {
@@ -1122,7 +1117,7 @@ function reassignNewChat(
         const { resolvedConfigDir: _olvidado, effort: _e, permissionMode: _p, ...base } = t;
         const fresh = dest.providerId === 'claude'
           ? { provider: 'claude', model: reresolve(), effort: defaultEffortForProvider(state.settings.defaultModelByProvider, 'claude'), permissionMode: state.settings.defaultPermissionMode }
-          : newTabForProviderAccount(dest, t.cwd, t.privacy, state.settings);
+          : newTabForProviderAccount(dest, t.cwd, state.settings);
         return {
           ...base,
           accountId: dest.id,
@@ -1270,7 +1265,6 @@ async function createSessionFor(
       model: tab.model,
       provider: tab.provider,
       cwd: get().tabs.find((t) => t.id === tabId)?.cwd ?? tab.cwd,
-      privacy: tab.privacy,
       ...(tab.resumeSessionId === undefined ? {} : { resumeSessionId: tab.resumeSessionId }),
       ...(tab.effort === undefined ? {} : { effort: tab.effort }),
       ...(tab.maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents: tab.maxBudgetUsdCents }),
@@ -1289,8 +1283,7 @@ async function createSessionFor(
     await mage.stop(sessionId).catch(() => undefined);
     throw new Error(`La pestana se cerro mientras arrancaba su sesion: ${tabId}`);
   }
-    // Guarda el config dir EFECTIVO (cuenta o perfil privado) en la pestana: localiza sus
-    // transcripciones/memoria y se persiste para reabrir una conversacion privada tras reiniciar.
+    // Guarda el config dir en la pestana: localiza sus transcripciones/memoria y se persiste.
     set((s) => ({
       sessionIdByChat: { ...s.sessionIdByChat, [tabId]: sessionId },
       tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resolvedConfigDir: configDir } : t)),
@@ -1584,7 +1577,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if (plan === 'reassign' && tab !== undefined) reassignNewChat(mage, get, set, { tabId: tab.id, destAccountId });
       get().setActiveAccount(destAccountId);
       // El turno sigue en su cuenta; en la destino se empieza de cero (D5).
-      if (plan === 'switch-and-new-chat') void get().createConversation('shared');
+      if (plan === 'switch-and-new-chat') void get().createConversation();
     },
 
     closeAccountSwitchPrompt: () => set({ accountSwitchPrompt: null }),
@@ -2143,7 +2136,7 @@ export function createWorkbenchStore(mage: MageClient) {
 
     // Abre una pestana real ligada a {cuenta, proyecto, modelo}. La sesion del motor se crea perezosa
     // al primer mensaje (ensureSession) para no lanzar procesos hasta que se use.
-    newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, privacy, permissionMode, projectId, importedContext, forkFrom }) => {
+    newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, permissionMode, projectId, importedContext, forkFrom }) => {
       // El runtime propio no necesita cuenta (A6 de la revision de P-032): una pestaña de Ollama abre
       // aunque no haya ninguna cuenta de Claude, Codex ni agy.
       const accountRequired = !runsOnMageRuntime(provider);
@@ -2170,7 +2163,6 @@ export function createWorkbenchStore(mage: MageClient) {
         title: title ?? deriveTitle(cwd),
         ...(projectId === undefined ? {} : { projectId }),
         ...(importedContext === undefined ? {} : { importedContext }),
-        privacy: privacy ?? 'shared',
         // Una conversacion recien creada es la mas reciente de su seccion hasta que se escriba en otra.
         createdAtMs: Date.now(),
         // #52: worktree desactivado por defecto en las conversaciones nuevas; las ya guardadas conservan el suyo.
@@ -2194,20 +2186,20 @@ export function createWorkbenchStore(mage: MageClient) {
 
     // Crea una conversacion sin friccion (M2.6): la cuenta activa, una carpeta temporal (scratch), el
     // modelo auto-resuelto (ultimo usado en la cuenta -> configurado -> sonnet) y el titulo placeholder
-    // (el primer prompt lo fija). `privacy` viene de la seccion del sidebar (compartida/privada).
-    createConversation: async (privacy, folder = {}) => {
+    // (el primer prompt lo fija).
+    createConversation: async (folder = {}) => {
       const accountId = get().activeAccountId;
       const account = get().accounts.find((a) => a.id === accountId);
       if (account === undefined) {
         // Sin ninguna cuenta: si hay un proveedor del usuario, la conversacion es suya (A6).
-        const fallback = runtimeTabWithoutAccount(get().settings, privacy);
+        const fallback = runtimeTabWithoutAccount(get().settings);
         if (fallback !== null) await get().newTab({ ...fallback, cwd: await resolveNewConversationCwd(mage, get(), folder), projectId: folder.projectId });
         return;
       }
       const cwd = await resolveNewConversationCwd(mage, get(), folder);
       // Una cuenta de otro CLI (Codex, agy por clave) abre conversaciones de SU proveedor (grupo E).
       if (account.providerId === CODEX_PROVIDER_ID || account.providerId === AGY_PROVIDER_ID) {
-        await get().newTab({ ...newTabForProviderAccount(account, cwd, privacy, get().settings), projectId: folder.projectId, importedContext: folder.importedContext });
+        await get().newTab({ ...newTabForProviderAccount(account, cwd, get().settings), projectId: folder.projectId, importedContext: folder.importedContext });
         return;
       }
       // Ultima conversacion Claude de la cuenta (las pestanas se anaden al final -> la ultima es la mas
@@ -2228,7 +2220,6 @@ export function createWorkbenchStore(mage: MageClient) {
         model,
         provider: 'claude',
         title: '',
-        privacy,
         projectId: folder.projectId,
         importedContext: folder.importedContext,
         ...(effort.length === 0 ? {} : { effort }),
@@ -2405,7 +2396,7 @@ export function createWorkbenchStore(mage: MageClient) {
 
     // Cierra la pestana abierta de una conversacion (por sessionId) para que ningun proceso siga
     // escribiendo su .jsonl antes de borrarlo/moverlo. No-op si no esta abierta.
-    deleteConversation: async (sessionId, cwd, privacy, accountDirOverride) => {
+    deleteConversation: async (sessionId, cwd, accountDirOverride) => {
       const accountDir = accountDirOverride ?? get().activeAccountId;
       if (accountDir.length === 0 || sessionId.length === 0) return;
       // ORDEN: primero cerrar la pestaña, DESPUES parar la sesion. Al reves no valia: `closeTab` manda
@@ -2414,7 +2405,7 @@ export function createWorkbenchStore(mage: MageClient) {
       await closeMatchingTab(get, sessionId);
       await get().discardBackgroundConversation(sessionId);
       try {
-        await mage.deleteConversation({ accountDir, sessionId, cwd, privacy });
+        await mage.deleteConversation({ accountDir, sessionId, cwd });
       } catch (err) {
         reportActionError(t('errors.workbench.deleteConversationFailed'), err, 'history');
       }
@@ -2429,17 +2420,17 @@ export function createWorkbenchStore(mage: MageClient) {
       await get().loadConversationHistory();
     },
 
-    moveConversation: async (sessionId, cwd, privacy, destAccountDir, destPrivacy, sourceAccountDir) => {
+    moveConversation: async (sessionId, cwd, destAccountDir, sourceAccountDir) => {
       const accountDir = sourceAccountDir ?? get().activeAccountId;
       if (accountDir.length === 0 || sessionId.length === 0) return;
       // Sin cambio real de ubicacion: nada que hacer.
-      if (accountDir === destAccountDir && privacy === destPrivacy) return;
+      if (accountDir === destAccountDir) return;
       await closeMatchingTab(get, sessionId); // mismo orden que al borrar: cerrar y LUEGO parar
       await get().discardBackgroundConversation(sessionId);
       // El error SUBE (P-026 2.7): tragarselo con un console.warn dejaba a `continueInAccount` cambiando
       // de cuenta y reabriendo nada, sin decir por que. El historial se refresca igual.
       try {
-        await mage.moveConversation({ accountDir, sessionId, cwd, privacy, destAccountDir, destPrivacy });
+        await mage.moveConversation({ accountDir, sessionId, cwd, destAccountDir });
       } finally {
         await get().loadConversationHistory();
       }
@@ -2471,7 +2462,7 @@ export function createWorkbenchStore(mage: MageClient) {
       await releaseTabSessionForMigration(mage, get, set, { tabId, conversationId: sessionId });
       await get().discardBackgroundConversation(sessionId);
       try {
-        await mage.moveConversation({ accountDir: tab.accountId, sessionId, cwd: tab.cwd, privacy: tab.privacy, destAccountDir: destAccountId, destPrivacy: tab.privacy });
+        await mage.moveConversation({ accountDir: tab.accountId, sessionId, cwd: tab.cwd, destAccountDir: destAccountId });
       } finally {
         await get().loadConversationHistory();
       }
@@ -2488,7 +2479,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if (tab === undefined || destAccountId === tab.accountId) return;
       const context = importedConversationContext(get().blocksByChat[tabId] ?? [], { title: isPlaceholderTitle(tab.title) ? MODEL_UNTITLED_TITLE : tab.title, fromProvider: providerLabel(tab.provider, get().settings.customProviders) }, get().settings.importedContextMaxChars);
       get().setActiveAccount(destAccountId);
-      await get().createConversation(tab.privacy, { cwd: tab.cwd, ...(context === null ? {} : { importedContext: context }) });
+      await get().createConversation({ cwd: tab.cwd, ...(context === null ? {} : { importedContext: context }) });
     },
 
     answerTrustRequest: async (folder, granted, trustParent = false) => {
@@ -2550,13 +2541,13 @@ export function createWorkbenchStore(mage: MageClient) {
     // quiera elegir carpeta/proveedor/modelo: `openNewTabDialog` (clic derecho sobre el ＋).
     openNewTab: () => {
       set({ newTabAnchorTabId: null });
-      void get().createConversation('shared');
+      void get().createConversation();
     },
     addTabToPane: async (path) => {
       const { splitLayout } = get();
       // El ancla es la pestaña activa de ESA hoja: la nueva aterriza en el panel que pulso su ＋.
       set({ newTabAnchorTabId: leafAt(splitLayout, path).activeTabId });
-      await get().createConversation('shared');
+      await get().createConversation();
     },
     openNewTabDialog: (path) => {
       const { splitLayout } = get();
@@ -2632,7 +2623,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if (text.length === 0) return;
       const src = get().tabs.find((t) => t.id === get().activeTabId);
       if (src === undefined) return;
-      await get().newTab({ accountId: src.accountId, cwd: src.cwd, model: src.model, provider: src.provider, privacy: src.privacy });
+      await get().newTab({ accountId: src.accountId, cwd: src.cwd, model: src.model, provider: src.provider });
       await get().sendActiveMessage(text);
     },
 
@@ -3226,7 +3217,7 @@ async function migrateToOtherProvider(
   await releaseTabSessionForMigration(mage, get, set, { tabId: ctx.tabId, conversationId: ctx.sessionId });
   await get().discardBackgroundConversation(ctx.sessionId);
   const result = await mage.migrateConversation({
-    sourceAccountDir: source.id, sourceProvider: asAccountProvider(source.providerId), sessionId: ctx.sessionId, cwd: tab.cwd, privacy: tab.privacy,
+    sourceAccountDir: source.id, sourceProvider: asAccountProvider(source.providerId), sessionId: ctx.sessionId, cwd: tab.cwd,
     destAccountDir: dest.id, destProvider: asAccountProvider(dest.providerId),
     ...(isPlaceholderTitle(tab.title) ? {} : { title: tab.title }),
   });
@@ -3965,7 +3956,7 @@ async function openDivergedTab(get: () => WorkbenchState, set: SetFn, origin: Ta
     return;
   }
   await get().newTab({
-    accountId: origin.accountId, cwd: origin.cwd, model: origin.model, provider: origin.provider, title, privacy: origin.privacy,
+    accountId: origin.accountId, cwd: origin.cwd, model: origin.model, provider: origin.provider, title,
     forkFrom: result.forkFrom,
     ...(origin.effort === undefined ? {} : { effort: origin.effort }),
     ...(isPermissionMode(origin.permissionMode) ? { permissionMode: origin.permissionMode } : {}),
@@ -4015,7 +4006,6 @@ async function updateLegacyCodexConversation(mage: MageClient, get: () => Workbe
 function newTabForProviderAccount(
   account: Account,
   cwd: string,
-  privacy: ConversationPrivacy,
   settings: AppSettings,
 ): Parameters<WorkbenchState['newTab']>[0] {
   const provider = account.providerId;
@@ -4027,7 +4017,6 @@ function newTabForProviderAccount(
     model,
     provider,
     title: '',
-    privacy,
     ...(effort.length === 0 ? {} : { effort }),
   };
 }
@@ -4046,13 +4035,13 @@ export function notifyMcpLogin(mage: Pick<MageClient, 'openMcpLogin'>, server: s
 
 // Pestaña del runtime propio cuando no hay ninguna cuenta: el proveedor por defecto si es del usuario y,
 // si no, el primero que haya dado de alta. null = no hay ninguno (no se puede abrir nada).
-function runtimeTabWithoutAccount(settings: AppSettings, privacy: ConversationPrivacy): Omit<Parameters<WorkbenchState['newTab']>[0], 'cwd'> | null {
+function runtimeTabWithoutAccount(settings: AppSettings): Omit<Parameters<WorkbenchState['newTab']>[0], 'cwd'> | null {
   const byDefault = settings.customProviders.find((p) => p.id === settings.defaultProvider);
   const provider = byDefault ?? settings.customProviders[0];
   if (provider === undefined) return null;
   const model = defaultModelForProvider(settings.defaultModelByProvider, provider.id) || (providerFallbackModel(provider.id, settings.customProviders) ?? '');
   if (model.length === 0) return null;
-  return { accountId: '', model, provider: provider.id, title: '', privacy };
+  return { accountId: '', model, provider: provider.id, title: '' };
 }
 
 function providerLabel(provider: string, customProviders: readonly CustomProvider[]): string {

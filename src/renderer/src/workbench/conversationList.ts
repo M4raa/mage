@@ -2,7 +2,6 @@
 // cuenta y privacidad. Una conversacion abierta (pestana) se muestra con su estado vivo; el resto del
 // historial se muestra como filas reabribles. Sin store ni IPC -> testable.
 import type { ConversationSummary } from '@shared/conversations';
-import type { ConversationPrivacy } from '@shared/state';
 import type { Tab } from './types';
 import type { ReopenedTabPrefs } from './conversationPrefs';
 import { conversationIdOfTab } from './conversationId';
@@ -39,9 +38,8 @@ export function mergeConversationRows(
   history: readonly ConversationSummary[],
   sessionIdByChat: Readonly<Record<string, string>>,
   accountId: string,
-  privacy: ConversationPrivacy,
 ): ConversationRow[] {
-  const openTabs = tabs.filter((tab) => tab.accountId === accountId && tab.privacy === privacy);
+  const openTabs = tabs.filter((tab) => tab.accountId === accountId);
   // Indice sessionId -> resumen del historial (acceso O(1)): deduplica, data una pestaña reabierta que
   // aun no ha recibido mensajes en esta ejecucion y le da su peso en disco.
   const historyBySession = new Map(history.map((item) => [item.sessionId, item]));
@@ -51,7 +49,7 @@ export function mergeConversationRows(
   const rows: ConversationRow[] = [
     ...openTabs.map((tab) => tabRow(tab, historyBySession.get(sessionIdOf(tab, sessionIdByChat) ?? ''))),
     ...history
-      .filter((item) => item.privacy === privacy && !openSessionIds.has(item.sessionId))
+      .filter((item) => !openSessionIds.has(item.sessionId))
       .map((item): ConversationRow => ({ kind: 'history', item })),
   ];
   return rows.sort((a, b) => rowRecency(b) - rowRecency(a));
@@ -139,7 +137,6 @@ export function tabFromConversation(context: ConversationTabContext): Tab {
     // El runtime con el que se abrio (P-032 R4); lo antiguo, y lo que no dejo nada guardado, es Claude.
     provider: item.providerId ?? prefs.provider ?? 'claude',
     title: item.title,
-    privacy: item.privacy,
     resolvedConfigDir: item.configDir,
     resumeSessionId: item.sessionId,
     ...(prefs.effort === undefined ? {} : { effort: prefs.effort }),

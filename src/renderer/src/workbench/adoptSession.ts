@@ -30,7 +30,7 @@ export interface AdoptedTabIds {
   readonly nowMs: number;
 }
 
-// El host nunca crea conversaciones privadas, y no usa worktree de Mage.
+// El host no usa worktree de Mage.
 export function adoptedTab(session: AdoptableSession, ids: AdoptedTabIds): Tab {
   return {
     id: ids.tabId,
@@ -40,7 +40,6 @@ export function adoptedTab(session: AdoptableSession, ids: AdoptedTabIds): Tab {
     model: session.model,
     provider: session.provider,
     title: ids.title,
-    privacy: 'shared',
     accountPinned: true,
     resolvedConfigDir: session.configDir,
     ...(session.createdBy === null ? {} : { createdBy: session.createdBy }),

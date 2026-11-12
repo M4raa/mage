@@ -82,7 +82,7 @@ describe('host 1.2 — capacidades y esquemas', () => {
     ['proveedorAgy', { provider: 'agy' }],
     ['sinTrust', { trust: undefined }],
     ['permissionModeRaro', { permissionMode: 'yolo' }],
-    ['campoExtra', { privacy: 'private' }],
+    ['campoExtra', { extra: 'x' }],
     ['cwdVacio', { cwd: '' }],
   ])('sessionCreate_invalidos_fallan_%s', (_name, override) => {
     expect(HOST_METHOD_SCHEMAS['session.create'].safeParse({ ...CREATE, ...override }).success).toBe(false);

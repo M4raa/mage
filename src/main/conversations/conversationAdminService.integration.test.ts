@@ -20,8 +20,6 @@ function service(): ConversationAdminService {
     ensureDir: (p) => mkdirSync(p, { recursive: true }),
     move: (from, to) => renameSync(from, to),
     realpath: (p) => realpathSync(p),
-    privateProfileDir: (dir) => join(dir, 'mage-private'),
-    ensurePrivateProfile: (dir) => join(dir, 'mage-private'),
   });
 }
 
@@ -48,9 +46,7 @@ describe('ConversationAdminService.moveConversation (FS real)', () => {
       accountDir: main,
       sessionId: 'sess-1',
       cwd: 'C:/proj',
-      privacy: 'shared',
       destAccountDir: other,
-      destPrivacy: 'shared',
     });
 
     expect(result).toEqual({ configDir: other });
@@ -65,7 +61,7 @@ describe('ConversationAdminService.moveConversation (FS real)', () => {
     mkdirSync(join(other, 'projects'), { recursive: true });
     writeFileSync(file, 'x');
 
-    service().moveConversation({ accountDir: main, sessionId: 'sess-2', cwd: 'C:/proj', privacy: 'shared', destAccountDir: other, destPrivacy: 'shared' });
+    service().moveConversation({ accountDir: main, sessionId: 'sess-2', cwd: 'C:/proj', destAccountDir: other });
 
     expect(existsSync(file)).toBe(false);
     expect(existsSync(resolveTranscriptPath(other, 'C:/proj', 'sess-2'))).toBe(true);

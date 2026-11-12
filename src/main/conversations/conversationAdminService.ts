@@ -5,13 +5,11 @@ import type {
   MoveConversationResult,
 } from '@shared/conversations';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
-import type { ConversationPrivacy } from '@shared/state';
 import { resolveTranscriptPath } from '../transcripts/transcriptPath';
 import { pathEquals } from '../os/pathUtils';
 
 // Borra y mueve conversaciones EN DISCO (#2 de AJUSTES): reubica/elimina el `.jsonl` de la sesion (y
-// su carpeta de subagentes) bajo el projects/ del dir efectivo. Solo FS con DI -> testeable. La
-// resolucion del perfil privado se inyecta (la sabe AccountService); NO se hardcodea aqui.
+// su carpeta de subagentes) bajo el projects/ de la cuenta. Solo FS con DI -> testeable.
 
 export interface ConversationAdminDeps {
   readonly exists: (path: string) => boolean;
@@ -22,10 +20,6 @@ export interface ConversationAdminDeps {
   // Ruta REAL (sigue enlaces). `projects/` es un junction COMPARTIDO entre cuentas, asi que dos rutas
   // distintas pueden ser el mismo fichero.
   readonly realpath: (path: string) => string;
-  // Ruta del perfil privado de una cuenta SIN crearlo (para el ORIGEN, que ya existe).
-  readonly privateProfileDir: (accountDir: string) => string;
-  // Ruta del perfil privado CREANDOLO si falta (para el DESTINO privado).
-  readonly ensurePrivateProfile: (accountDir: string) => string;
   // Raiz de las transcripciones del runtime propio (P-032): no son de ninguna cuenta.
   readonly runtimeRoot?: string;
 }
@@ -36,8 +30,7 @@ export class ConversationAdminService {
   // Elimina la transcripcion de una conversacion y su carpeta de subagentes (si existe). Idempotente:
   // si el fichero ya no esta, no falla (el objetivo —que no exista— se cumple igual).
   deleteConversation(params: DeleteConversationParams): void {
-    const effective = this.sourceDir(params.accountDir, params.privacy);
-    const file = resolveTranscriptPath(effective, params.cwd, params.sessionId);
+    const file = resolveTranscriptPath(params.accountDir, params.cwd, params.sessionId);
     if (this.deps.exists(file)) this.deps.removeFile(file);
     const subagents = join(dirname(file), params.sessionId);
     if (this.deps.exists(subagents)) this.deps.removeDir(subagents);
@@ -52,11 +45,8 @@ export class ConversationAdminService {
   // Mueve la transcripcion (y subagentes) al projects/ del destino. Devuelve el dir efectivo destino
   // (la pestana lo usa como configDir para reanudar/localizar la conversacion movida).
   moveConversation(params: MoveConversationParams): MoveConversationResult {
-    const srcDir = this.sourceDir(params.accountDir, params.privacy);
-    const destDir =
-      params.destPrivacy === 'private'
-        ? this.deps.ensurePrivateProfile(params.destAccountDir)
-        : params.destAccountDir;
+    const srcDir = params.accountDir;
+    const destDir = params.destAccountDir;
 
     const srcFile = resolveTranscriptPath(srcDir, params.cwd, params.sessionId);
     const destFile = resolveTranscriptPath(destDir, params.cwd, params.sessionId);
@@ -98,10 +88,5 @@ export class ConversationAdminService {
   private isSameFile(a: string, b: string): boolean {
     if (!this.deps.exists(a) || !this.deps.exists(b)) return false;
     return pathEquals(this.deps.realpath(a), this.deps.realpath(b));
-  }
-
-  // Dir efectivo de ORIGEN: el perfil privado (sin crearlo, ya existe) o la cuenta tal cual.
-  private sourceDir(accountDir: string, privacy: ConversationPrivacy): string {
-    return privacy === 'private' ? this.deps.privateProfileDir(accountDir) : accountDir;
   }
 }

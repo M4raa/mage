@@ -14,6 +14,12 @@ import { join } from 'node:path';
 const PRIVATE_PROFILE_DIR = 'mage-private';
 const PROJECTS_DIR = 'projects';
 
+// Dónde vivía el perfil privado de una cuenta. Lo usa también el borrado de cuenta, para desenlazar
+// los enlaces que ese perfil antiguo conserve hacia el comun.
+export function retiredProfileDirOf(accountDir: string): string {
+  return join(accountDir, PRIVATE_PROFILE_DIR);
+}
+
 export interface PrivateMigrationDeps {
   readonly exists: (path: string) => boolean;
   readonly listDir: (path: string) => readonly string[];

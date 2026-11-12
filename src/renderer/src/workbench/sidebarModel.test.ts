@@ -36,7 +36,6 @@ const tab = (over: Partial<Tab> = {}): Tab => ({
   model: 'sonnet',
   provider: 'claude',
   title: 'abierta',
-  privacy: 'shared',
   ...over,
 });
 
@@ -45,7 +44,6 @@ const summary = (over: Partial<ConversationSummary> = {}): ConversationSummary =
   configDir: 'acc-a',
   cwd: 'C:\\vg\\proyecto-a',
   title: 'historica',
-  privacy: 'shared',
   updatedAtMs: 1000,
   sizeBytes: 2048,
   isScheduled: false,
@@ -183,15 +181,6 @@ describe('proveedores y carpetas', () => {
 });
 
 describe('groupSidebarRows', () => {
-  it('groupSidebarRows_privatePinned_staysPrivate', () => {
-    const row = historyRow({ sessionId: 'x', privacy: 'private' });
-
-    const groups = groupSidebarRows([row], groupCtx({ pinnedIds: new Set(['x']) }));
-
-    expect(groups.private).toEqual([row]);
-    expect(groups.pinned).toEqual([]);
-  });
-
   it('groupSidebarRows_pinnedTab_goesPinned', () => {
     const row: SidebarRow = { kind: 'tab', tab: tab({ pinned: true }), accountId: 'acc-a' };
 
@@ -409,10 +398,6 @@ describe('accountToOpenWith', () => {
     expect(accountToOpenWith(historyRow({}, 'acc-b'), { id: 'cx', providerId: 'codex' })).toBe('acc-b');
     expect(accountToOpenWith(historyRow({ providerId: 'codex' }, 'cx-b'), active)).toBe('cx-b');
     expect(accountToOpenWith(historyRow({}, 'acc-b'), undefined)).toBe('acc-b');
-  });
-
-  it('accountToOpenWith_private_usesRowAccount', () => {
-    expect(accountToOpenWith(historyRow({ privacy: 'private' }, 'acc-b'), active)).toBe('acc-b');
   });
 });
 

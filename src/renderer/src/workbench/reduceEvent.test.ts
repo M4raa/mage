@@ -569,8 +569,7 @@ describe('reduceEvent — limite de uso (H4)', () => {
   });
 });
 
-// P-026 2.4: el catalogo de la sesion viva se guarda por config dir EFECTIVO (el perfil privado tiene
-// el suyo) y manda sobre la cache.
+// P-026 2.4: el catalogo de la sesion viva se guarda por config dir y manda sobre la cache.
 describe('reduceEvent — catalogo de modelos', () => {
   const MODELS = [{ id: 'opus', label: 'Opus 5.5' }];
 
@@ -580,13 +579,13 @@ describe('reduceEvent — catalogo de modelos', () => {
     expect(reduceEvent(current, TAB, { kind: 'models_available', models: MODELS }).modelCatalogByAccount).toEqual({ '/home/u/.claude': MODELS });
   });
 
-  it('reduceEvent_modelsAvailableEnConversacionPrivada_usaElConfigDirEfectivo', () => {
+  it('reduceEvent_modelsAvailableConConfigDirResuelto_usaElConfigDirResuelto', () => {
     const current = state({
-      tabs: [{ id: TAB, accountId: '/home/u/.claude', resolvedConfigDir: '/home/u/.claude/mage-private' }],
+      tabs: [{ id: TAB, accountId: '/home/u/.claude', resolvedConfigDir: '/home/u/.claude-resuelto' }],
     } as unknown as Partial<WorkbenchState>);
 
     expect(Object.keys(reduceEvent(current, TAB, { kind: 'models_available', models: MODELS }).modelCatalogByAccount ?? {})).toEqual([
-      '/home/u/.claude/mage-private',
+      '/home/u/.claude-resuelto',
     ]);
   });
 });

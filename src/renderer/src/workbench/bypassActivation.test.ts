@@ -3,7 +3,7 @@ import { bypassActivatedTabs } from './bypassActivation';
 import type { Tab } from './types';
 
 function tab(id: string, overrides: Partial<Tab> = {}): Tab {
-  return { id, accountId: 'acc', accountAlias: 'acc', cwd: 'C:/p', model: 'sonnet', provider: 'claude', title: id, privacy: 'shared', ...overrides };
+  return { id, accountId: 'acc', accountAlias: 'acc', cwd: 'C:/p', model: 'sonnet', provider: 'claude', title: id, ...overrides };
 }
 
 const ids = (tabs: readonly Tab[]): string[] => tabs.map((t) => t.id);

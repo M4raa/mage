@@ -205,7 +205,6 @@ export class CodexHistoryService {
         configDir: home,
         cwd: head.cwd,
         title: this.decorateTitle?.(head.sessionId, head.title) ?? head.title,
-        privacy: 'shared',
         updatedAtMs,
         sizeBytes,
         isScheduled: false,

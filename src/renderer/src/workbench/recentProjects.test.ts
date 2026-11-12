@@ -8,7 +8,6 @@ function item(cwd: string, updatedAtMs: number, overrides: Partial<ConversationS
     configDir: 'C:\\Users\\u\\.claude',
     cwd,
     title: 't',
-    privacy: 'shared',
     updatedAtMs,
     sizeBytes: 1,
     isScheduled: false,
@@ -61,10 +60,6 @@ describe('recentProjects', () => {
     const result = recentProjects(input([item('C:\\Temp\\mage-scratch\\uuid-1', 99), item('C:\\src\\a', 1)]));
 
     expect(result.map((p) => p.cwd)).toEqual(['C:\\src\\a']);
-  });
-
-  it('recentProjects_conversacionesPrivadas_seDescartan', () => {
-    expect(recentProjects(input([item('C:\\src\\secreto', 10, { privacy: 'private' })]))).toEqual([]);
   });
 
   it('recentProjects_masQueElLimite_recorta', () => {

@@ -5,7 +5,6 @@ import type { Account } from '../types';
 import type { ConversationSummary } from '@shared/conversations';
 import { backgroundMoveBlockedReason, backgroundOfConversation } from '../backgroundWork';
 import { ConversationContextMenu, type ConversationTarget } from './ConversationContextMenu';
-import type { ConversationPrivacy } from '@shared/state';
 import { reportActionError } from '../notificationStore';
 import type { ChatProject } from '@shared/settings';
 import { conversationIdOfTab } from '../conversationId';
@@ -35,8 +34,7 @@ interface MenuState {
 
 function menuTargetOf(row: SidebarRow, sessionId: string | undefined, title: string): ConversationTarget {
   const cwd = row.kind === 'tab' ? row.tab.cwd : row.item.cwd;
-  const privacy = row.kind === 'tab' ? row.tab.privacy : row.item.privacy;
-  return { sessionId, cwd, privacy, title, accountId: row.accountId };
+  return { sessionId, cwd, title, accountId: row.accountId };
 }
 
 function rowKey(row: SidebarRow): string {
@@ -44,7 +42,7 @@ function rowKey(row: SidebarRow): string {
 }
 
 // Lateral de conversaciones de TODAS las cuentas con historial (D6): Fijadas → Proyectos (por carpeta y los
-// del usuario) → Sin proyecto → Privadas; la cuenta y el proveedor son filtros. Una pestaña = una conversación
+// del usuario) → Sin proyecto; la cuenta y el proveedor son filtros. Una pestaña = una conversación
 // real. El modelo (fusión, grupos, filtros) vive en `sidebarModel.ts` y `useSidebarModel`; esto solo pinta.
 export function ChatSidebar(): React.JSX.Element {
   const t = useT();
@@ -112,7 +110,7 @@ export function ChatSidebar(): React.JSX.Element {
   );
   const { groups } = view;
   const shownProjects = groups.projects.filter((group) => !filter.archived || group.rows.length > 0);
-  const isEmpty = groups.pinned.length + groups.unassigned.length + groups.private.length === 0 && groups.projects.every((group) => group.rows.length === 0);
+  const isEmpty = groups.pinned.length + groups.unassigned.length === 0 && groups.projects.every((group) => group.rows.length === 0);
   const menuSessionId = menu?.target.sessionId ?? '';
 
   return (
@@ -124,7 +122,7 @@ export function ChatSidebar(): React.JSX.Element {
       <SidebarHeader
         filter={filter}
         onFilter={setFilter}
-        onNewConversation={() => void actions.createConversation('shared')}
+        onNewConversation={() => void actions.createConversation()}
         onNewWithOptions={actions.openNewTabDialog}
         workingCount={view.workingCount}
         providers={view.providers}
@@ -161,7 +159,7 @@ export function ChatSidebar(): React.JSX.Element {
                   forceOpen={view.filterActive}
                   emptyHint={t('sidebar.projects.empty')}
                   onMove={actions.moveProject}
-                  onCreate={() => void actions.createConversation('shared', userProject === undefined
+                  onCreate={() => void actions.createConversation(userProject === undefined
                     ? (group.cwd === null ? {} : { cwd: group.cwd })
                     : { projectId: userProject.id, ...(userProject.cwd === null ? { scratch: true } : { cwd: userProject.cwd }) })}
                   onEdit={userProject === undefined ? null : () => setEditingProject(userProject)}
@@ -178,7 +176,6 @@ export function ChatSidebar(): React.JSX.Element {
           </div>
         )}
         {groups.unassigned.length > 0 && <FlatGroup kind="unassigned" title={t('sidebar.unassigned.title')} rows={groups.unassigned} renderRow={renderRow} unlimited={view.filterActive} />}
-        {groups.private.length > 0 && <FlatGroup kind="private" title={t('sidebar.private.title')} rows={groups.private} renderRow={renderRow} unlimited={view.filterActive} />}
       </div>
 
       <AnimatePresence>
@@ -226,11 +223,11 @@ export function ChatSidebar(): React.JSX.Element {
             }
             newWindowBlockedReason={menu.item === undefined ? null : backgroundMoveBlockedReason(backgroundOfConversation(backgroundSessions, menu.item.sessionId))}
             onDelete={() => {
-              void actions.deleteConversation(menuSessionId, menu.target.cwd, menu.target.privacy, menu.target.accountId);
+              void actions.deleteConversation(menuSessionId, menu.target.cwd, menu.target.accountId);
               setMenu(null);
             }}
-            onMove={(destAccountDir: string, destPrivacy: ConversationPrivacy) => {
-              actions.moveConversation(menuSessionId, menu.target.cwd, menu.target.privacy, destAccountDir, destPrivacy, menu.target.accountId).catch(
+            onMove={(destAccountDir: string) => {
+              actions.moveConversation(menuSessionId, menu.target.cwd, destAccountDir, menu.target.accountId).catch(
                 (err: unknown) => console.error('No se pudo mover la conversacion:', err instanceof Error ? err.message : String(err)),
               );
               setMenu(null);

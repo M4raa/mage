@@ -2,7 +2,6 @@ import type { AccountProviderId } from '@shared/accounts';
 import type { MigrateConversationParams, MigrateConversationResult } from '@shared/conversations';
 import type { NeutralConversation } from '@shared/neutralConversation';
 import { localized, localizedWithParts, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
-import type { ConversationPrivacy } from '@shared/state';
 
 // Migrar una conversación a otra cuenta/proveedor SIN que deje de ser la misma: se lee en el formato del origen, se
 // escribe en el nativo del destino (el CLI de destino la reanuda como suya, medido), se COMPRUEBA leyendo lo escrito
@@ -13,7 +12,6 @@ export interface ConversationRef {
   readonly accountDir: string;
   readonly sessionId: string;
   readonly cwd: string;
-  readonly privacy: ConversationPrivacy;
 }
 
 export interface ConversationSource {
@@ -22,13 +20,13 @@ export interface ConversationSource {
 }
 
 export interface ConversationSink {
-  write(conversation: NeutralConversation, dest: { readonly accountDir: string; readonly privacy: ConversationPrivacy }): { readonly sessionId: string; readonly configDir: string };
+  write(conversation: NeutralConversation, dest: { readonly accountDir: string }): { readonly sessionId: string; readonly configDir: string };
   // Deshace lo escrito por `write` (verificación fallida).
   discard(ref: ConversationRef): Promise<void>;
   // Copia sin pérdida entre cuentas del MISMO proveedor, si el CLI lo permite (Codex: el rollout, medido). null: esa
   // conversación no se puede copiar sin pérdida (Codex con revert: el rollout guarda el turno descartado) y se migra
   // leyendo y escribiendo, como entre proveedores.
-  copyFrom?(source: ConversationRef, dest: { readonly accountDir: string; readonly privacy: ConversationPrivacy }): { readonly sessionId: string; readonly configDir: string } | null;
+  copyFrom?(source: ConversationRef, dest: { readonly accountDir: string }): { readonly sessionId: string; readonly configDir: string } | null;
 }
 
 export interface MigrationEndpoints {
@@ -43,15 +41,14 @@ export class ConversationMigrationService {
     this.assertMigratable(params);
     const origin = this.endpoints[params.sourceProvider];
     const target = this.endpoints[params.destProvider];
-    const ref: ConversationRef = { accountDir: params.sourceAccountDir, sessionId: params.sessionId, cwd: params.cwd, privacy: params.privacy };
+    const ref: ConversationRef = { accountDir: params.sourceAccountDir, sessionId: params.sessionId, cwd: params.cwd };
     const conversation = await origin.source.read(ref);
     if (conversation.items.length === 0) throw new UserFacingError(localized('errors.conversations.migrationEmpty', { sessionId: params.sessionId }));
-    const dest = { accountDir: params.destAccountDir, privacy: params.privacy };
+    const dest = { accountDir: params.destAccountDir };
     const copied = params.sourceProvider === params.destProvider ? target.sink.copyFrom?.(ref, dest) : undefined;
     const titled = params.title === undefined ? conversation : { ...conversation, title: params.title };
     const written = copied ?? target.sink.write({ ...titled, cwd: conversation.cwd || params.cwd }, dest);
-    // `configDir` ya es el directorio EFECTIVO (cuenta o perfil privado): no se vuelve a resolver la privacidad.
-    const writtenRef: ConversationRef = { accountDir: written.configDir, sessionId: written.sessionId, cwd: conversation.cwd || params.cwd, privacy: 'shared' };
+    const writtenRef: ConversationRef = { accountDir: written.configDir, sessionId: written.sessionId, cwd: conversation.cwd || params.cwd };
     await this.verifyOrDiscard(target, writtenRef, conversation.items.length);
     await origin.source.remove(ref);
     return { sessionId: written.sessionId, configDir: written.configDir, provider: params.destProvider };

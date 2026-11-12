@@ -33,7 +33,7 @@ describe('CodexHistoryService.list', () => {
     const [first, ...rest] = service.list(HOME);
 
     expect(rest).toEqual([]);
-    expect(first).toMatchObject({ sessionId: '11111111-2222-3333-4444-555555555555', cwd: 'C:\\proyecto', title: 'Lista los ficheros', configDir: HOME, providerId: 'codex', privacy: 'shared' });
+    expect(first).toMatchObject({ sessionId: '11111111-2222-3333-4444-555555555555', cwd: 'C:\\proyecto', title: 'Lista los ficheros', configDir: HOME, providerId: 'codex' });
   });
 
   it('list_rolloutSinMensajeDeUsuario_noSale', () => {

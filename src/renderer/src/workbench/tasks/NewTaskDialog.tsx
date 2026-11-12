@@ -24,7 +24,7 @@ function realDeps(): StartTaskDeps {
     reloadTasks: () => useTaskStore.getState().load(),
     activeAccountId: () => store().activeAccountId,
     setActiveAccount: (accountId) => store().setActiveAccount(accountId),
-    createConversation: (folder) => store().createConversation('shared', folder),
+    createConversation: (folder) => store().createConversation(folder),
     activeTabId: () => store().activeTabId,
     attachTask: (tabId, taskId) => store().attachTaskToTab(tabId, taskId),
     ensureSession: (tabId) => store().ensureSession(tabId),

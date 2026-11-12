@@ -14,7 +14,6 @@ function makeTab(overrides: Partial<Tab> = {}): Tab {
     model: 'sonnet',
     provider: 'claude',
     title: 'proj',
-    privacy: 'shared',
     ...overrides,
   };
 }

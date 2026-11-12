@@ -50,8 +50,6 @@ export function AgentsPanel(): React.JSX.Element {
   const [expandedAgents, setExpandedAgents] = useState<ReadonlySet<string>>(new Set());
 
   if (tab === undefined) return <Hint text={t('chat.agents.noConversation')} />;
-  // Config dir EFECTIVO: en una conversacion privada la transcripcion del subagente vive bajo
-  // `mage-private`, y con el de la cuenta se buscaria donde no esta.
   const accountDir = tab.resolvedConfigDir ?? tab.accountId;
 
   // Con un subagente abierto se pinta SOLO su transcripcion, en una caja `relative h-full`: la capa es

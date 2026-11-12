@@ -55,9 +55,9 @@ export function RowList<T>({ rows, renderRow, unlimited, collapsed = COLLAPSED_L
   );
 }
 
-// Grupo plano (Fijadas, Sin proyecto, Privadas).
+// Grupo plano (Fijadas, Sin proyecto).
 export function FlatGroup({ kind, title, rows, renderRow, unlimited }: RowListProps & {
-  readonly kind: 'pinned' | 'unassigned' | 'private';
+  readonly kind: 'pinned' | 'unassigned';
   readonly title: string;
 }): React.JSX.Element {
   return (

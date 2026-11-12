@@ -38,7 +38,7 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
   const newChatInDest = (): void => {
     close();
     setActiveAccount(prompt.destAccountId);
-    void createConversation('shared');
+    void createConversation();
   };
   const handoff = (): void => {
     setBusy(true);

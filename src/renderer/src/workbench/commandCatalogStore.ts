@@ -14,8 +14,7 @@ import { useWorkbenchStore } from './workbenchStore';
 const EMPTY: readonly SlashCommandInfo[] = [];
 
 export function useCachedCommandCatalog(): readonly SlashCommandInfo[] {
-  // El config dir EFECTIVO de la pestaña activa (para una conversacion privada, su perfil
-  // `mage-private`): es la clave con la que main escribio la cache.
+  // El config dir de la pestaña activa: es la clave con la que main escribio la cache.
   const accountDir = useWorkbenchStore((s) => {
     const tab = s.tabs.find((t) => t.id === s.activeTabId);
     return tab === undefined ? s.activeAccountId : (tab.resolvedConfigDir ?? tab.accountId);

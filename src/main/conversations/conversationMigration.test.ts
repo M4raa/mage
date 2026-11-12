@@ -9,7 +9,7 @@ const CONVERSATION: NeutralConversation = {
   title: 't',
   items: [{ kind: 'user', text: 'hola', atMs: null }, { kind: 'assistant', text: 'ok', atMs: null }],
 };
-const PARAMS: MigrateConversationParams = { sourceAccountDir: 'A', sourceProvider: 'codex', sessionId: 's1', cwd: 'C:\\p', privacy: 'shared', destAccountDir: 'B', destProvider: 'claude' };
+const PARAMS: MigrateConversationParams = { sourceAccountDir: 'A', sourceProvider: 'codex', sessionId: 's1', cwd: 'C:\\p', destAccountDir: 'B', destProvider: 'claude' };
 
 function endpoints(over: { source?: Partial<ConversationSource>; sink?: Partial<ConversationSink> } = {}): MigrationEndpoints {
   const source: ConversationSource = { read: async () => CONVERSATION, remove: vi.fn().mockResolvedValue(undefined), ...over.source };
@@ -29,8 +29,8 @@ describe('ConversationMigrationService.migrate', () => {
     const result = await service(origin, target).migrate(PARAMS);
 
     expect(result).toEqual({ sessionId: 'nuevo', configDir: 'B', provider: 'claude' });
-    expect(target.sink.write).toHaveBeenCalledWith(CONVERSATION, { accountDir: 'B', privacy: 'shared' });
-    expect(origin.source.remove).toHaveBeenCalledWith({ accountDir: 'A', sessionId: 's1', cwd: 'C:\\p', privacy: 'shared' });
+    expect(target.sink.write).toHaveBeenCalledWith(CONVERSATION, { accountDir: 'B' });
+    expect(origin.source.remove).toHaveBeenCalledWith({ accountDir: 'A', sessionId: 's1', cwd: 'C:\\p' });
   });
 
   it('migrate_conTitulo_loEscribeEnLaConversacionDelDestino', async () => {
@@ -39,7 +39,7 @@ describe('ConversationMigrationService.migrate', () => {
 
     await service(origin, target).migrate({ ...PARAMS, title: 'Refactor del login' });
 
-    expect(target.sink.write).toHaveBeenCalledWith({ ...CONVERSATION, title: 'Refactor del login' }, { accountDir: 'B', privacy: 'shared' });
+    expect(target.sink.write).toHaveBeenCalledWith({ ...CONVERSATION, title: 'Refactor del login' }, { accountDir: 'B' });
   });
 
   it('migrate_laVerificacionLeeMenosMensajes_deshaceElDestinoYNoTocaElOrigen', async () => {
@@ -99,7 +99,7 @@ describe('ConversationMigrationService.migrate', () => {
     const result = await new ConversationMigrationService({ codex: { source: origin.source, sink: target.sink }, claude: endpoints(), agy: endpoints() }).migrate({ ...PARAMS, destProvider: 'codex' });
 
     expect(copyFrom).toHaveBeenCalledTimes(1);
-    expect(target.sink.write).toHaveBeenCalledWith(CONVERSATION, { accountDir: 'B', privacy: 'shared' });
+    expect(target.sink.write).toHaveBeenCalledWith(CONVERSATION, { accountDir: 'B' });
     expect(result).toEqual({ sessionId: 'nuevo', configDir: 'B', provider: 'codex' });
   });
 

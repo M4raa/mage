@@ -99,7 +99,7 @@ describe('AgyHistoryService', () => {
     const [first, ...rest] = new AgyHistoryService(store(STEPS)).list(PROFILE, 'cfg');
 
     expect(rest).toEqual([]);
-    expect(first).toMatchObject({ sessionId: 'aaaa-1111', configDir: 'cfg', title: 'Lista el proyecto', providerId: 'agy', privacy: 'shared' });
+    expect(first).toMatchObject({ sessionId: 'aaaa-1111', configDir: 'cfg', title: 'Lista el proyecto', providerId: 'agy' });
   });
 
   it('list_baseSinEntradaDeUsuario_noSale', () => {

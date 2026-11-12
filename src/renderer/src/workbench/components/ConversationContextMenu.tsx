@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
-import type { ConversationPrivacy } from '@shared/state';
 import type { Account } from '../types';
 import type { ChatProject } from '@shared/settings';
 import { POPOVER_VARIANTS } from '../motionPresets';
@@ -19,13 +18,12 @@ import { notify, reportActionError } from '../notificationStore';
 export interface ConversationTarget {
   readonly sessionId: string | undefined;
   readonly cwd: string;
-  readonly privacy: ConversationPrivacy;
   readonly title: string;
   // Cuenta de la fila (el lateral enseña todas las cuentas): borrar y mover actúan sobre ELLA, no sobre la activa.
   readonly accountId: string;
 }
 
-// Menu contextual de una conversacion (#2 de AJUSTES): eliminar y mover (entre Compartido/Privado y a
+// Menu contextual de una conversacion (#2 de AJUSTES): eliminar y mover (a
 // otra cuenta). Portal a body con posicion fija (no lo recorta el overflow del sidebar). Se cierra al
 // hacer clic fuera o con Escape. La eliminacion pide confirmacion EN EL MENU (no dialogo nativo).
 export function ConversationContextMenu({
@@ -54,7 +52,7 @@ export function ConversationContextMenu({
   readonly activeAccountId: string;
   readonly onClose: () => void;
   readonly onDelete: () => void;
-  readonly onMove: (destAccountDir: string, destPrivacy: ConversationPrivacy) => void;
+  readonly onMove: (destAccountDir: string) => void;
   // Reanuda ESTA conversacion en una pestaña. Solo lo pasa el HISTORIAL: una conversacion que ya tiene
   // pestaña abierta no se puede "abrir en una nueva" (dos procesos del CLI sobre la misma transcripcion
   // la corromperian), asi que ahi la opcion no existe en vez de existir deshabilitada.
@@ -87,7 +85,6 @@ export function ConversationContextMenu({
 
   const hasSession = target.sessionId !== undefined && target.sessionId.length > 0;
   const otherAccounts = accounts.filter((a) => a.id !== activeAccountId);
-  const oppositePrivacy: ConversationPrivacy = target.privacy === 'private' ? 'shared' : 'private';
 
   // Clamp para no salir de la ventana (el menu mide ~200x?; se aproxima con un margen).
   const left = Math.min(x, window.innerWidth - 220);
@@ -136,7 +133,6 @@ export function ConversationContextMenu({
         )}
         {(onTogglePinned !== undefined || onToggleArchived !== undefined) && <div className="my-[3px] h-px bg-mg-border-subtle" />}
 
-        {/* Mover a la otra seccion de la MISMA cuenta. */}
         {onAssignProject !== undefined && (
           <>
             <div className="px-[10px] pt-[5px] text-[9.5px] font-bold tracking-[.06em] text-mg-ter">{t('sidebar.contextMenu.projectHeader')}</div>
@@ -145,19 +141,12 @@ export function ConversationContextMenu({
             <div className="my-[3px] h-px bg-mg-border-subtle" />
           </>
         )}
-        <MenuItem
-          disabled={!hasSession}
-          onClick={() => onMove(activeAccountId, oppositePrivacy)}
-        >
-          {oppositePrivacy === 'private' ? t('sidebar.contextMenu.moveToPrivate') : t('sidebar.contextMenu.moveToShared')}
-        </MenuItem>
-
-        {/* Mover a otra cuenta (conserva la privacidad de origen). */}
+        {/* Mover a otra cuenta. */}
         {otherAccounts.length > 0 && (
           <>
             <div className="px-[10px] pt-[5px] text-[9.5px] font-bold tracking-[.06em] text-mg-ter">{t('sidebar.contextMenu.moveToAccountHeader')}</div>
             {otherAccounts.map((account) => (
-              <MenuItem key={account.id} disabled={!hasSession} onClick={() => onMove(account.id, target.privacy)}>
+              <MenuItem key={account.id} disabled={!hasSession} onClick={() => onMove(account.id)}>
                 <span className="inline-flex items-center gap-[7px]">
                   <span className="h-[7px] w-[7px] flex-none rounded-[2px]" style={{ background: account.accent.base }} />
                   <span className="truncate">{account.alias}</span>

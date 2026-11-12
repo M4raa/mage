@@ -86,9 +86,6 @@ export interface MessageValues {
   readonly "accounts.delete.error": { readonly "error": string | number };
   readonly "accounts.delete.folder": never;
   readonly "accounts.delete.loginAndSettings": never;
-  readonly "accounts.delete.privateCount": { readonly "count": number };
-  readonly "accounts.delete.privateCountFailed": { readonly "error": string | number };
-  readonly "accounts.delete.privateCounting": never;
   readonly "accounts.delete.sharedUntouched": never;
   readonly "accounts.delete.title": { readonly "alias": string | number };
   readonly "accounts.error.unknown": { readonly "error": string | number };
@@ -513,11 +510,7 @@ export interface MessageValues {
   readonly "chat.hint.retry": never;
   readonly "chat.hostOwner.accountMissing": { readonly "account": string | number };
   readonly "chat.info.folderTitle": { readonly "cwd": string | number };
-  readonly "chat.info.private": never;
-  readonly "chat.info.privateTitle": never;
   readonly "chat.info.scratchpad": never;
-  readonly "chat.info.shared": never;
-  readonly "chat.info.sharedTitle": never;
   readonly "chat.instructions.bridgeOwnFile": { readonly "cli": string | number };
   readonly "chat.instructions.bridgeUsed": { readonly "cli": string | number; readonly "target": string | number };
   readonly "chat.instructions.emptyFile": never;
@@ -553,7 +546,6 @@ export interface MessageValues {
   readonly "chat.memory.typeReference": never;
   readonly "chat.memory.typeUser": never;
   readonly "chat.noConversation.newChat": never;
-  readonly "chat.noConversation.newPrivateChat": never;
   readonly "chat.noConversation.noAccount": never;
   readonly "chat.noConversation.title": never;
   readonly "chat.notice.backgroundTask": { readonly "summary": string | number };
@@ -2262,8 +2254,6 @@ export interface MessageValues {
   readonly "sidebar.contextMenu.deleteCancel": never;
   readonly "sidebar.contextMenu.deleteConfirm": never;
   readonly "sidebar.contextMenu.moveToAccountHeader": never;
-  readonly "sidebar.contextMenu.moveToPrivate": never;
-  readonly "sidebar.contextMenu.moveToShared": never;
   readonly "sidebar.contextMenu.openInNewTab": never;
   readonly "sidebar.contextMenu.openInNewWindow": never;
   readonly "sidebar.contextMenu.pin": never;
@@ -2297,8 +2287,6 @@ export interface MessageValues {
   readonly "sidebar.orphan.message": never;
   readonly "sidebar.orphan.refreshFailed": never;
   readonly "sidebar.pinned.title": never;
-  readonly "sidebar.private.empty": never;
-  readonly "sidebar.private.title": never;
   readonly "sidebar.project.reorderHint": never;
   readonly "sidebar.projectEditor.cancel": never;
   readonly "sidebar.projectEditor.linkApp": never;

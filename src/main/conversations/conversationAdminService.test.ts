@@ -25,8 +25,6 @@ function makeDeps(existing: readonly string[], over: Partial<ConversationAdminDe
     move,
     // Sin enlaces: cada ruta es su propio fichero (el caso del junction lo cubre el test de integracion).
     realpath: (p) => p,
-    privateProfileDir: (dir) => join(dir, 'mage-private'),
-    ensurePrivateProfile: (dir) => join(dir, 'mage-private'),
     ...over,
   };
   return { deps, removeFile, removeDir, ensureDir, move };
@@ -41,14 +39,7 @@ describe('ConversationAdminService.deleteConversation', () => {
   it('deleteConversation_compartida_borraFichero', () => {
     const file = resolveTranscriptPath(ACC, CWD, SID);
     const { deps, removeFile } = makeDeps([file]);
-    new ConversationAdminService(deps).deleteConversation({ accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared' });
-    expect(removeFile).toHaveBeenCalledWith(file);
-  });
-
-  it('deleteConversation_privada_usaPerfilPrivado', () => {
-    const file = resolveTranscriptPath(join(ACC, 'mage-private'), CWD, SID);
-    const { deps, removeFile } = makeDeps([file]);
-    new ConversationAdminService(deps).deleteConversation({ accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'private' });
+    new ConversationAdminService(deps).deleteConversation({ accountDir: ACC, sessionId: SID, cwd: CWD });
     expect(removeFile).toHaveBeenCalledWith(file);
   });
 
@@ -56,7 +47,7 @@ describe('ConversationAdminService.deleteConversation', () => {
     const file = resolveTranscriptPath(ACC, CWD, SID);
     const subDir = join(file, '..', SID); // hermano del .jsonl con el nombre de la sesion
     const { deps, removeDir } = makeDeps([file, join(ACC, 'projects', encoded(CWD), SID)]);
-    new ConversationAdminService(deps).deleteConversation({ accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared' });
+    new ConversationAdminService(deps).deleteConversation({ accountDir: ACC, sessionId: SID, cwd: CWD });
     expect(removeDir).toHaveBeenCalledWith(join(ACC, 'projects', encoded(CWD), SID));
     void subDir;
   });
@@ -64,31 +55,19 @@ describe('ConversationAdminService.deleteConversation', () => {
   it('deleteConversation_ficheroInexistente_noFalla', () => {
     const { deps, removeFile } = makeDeps([]);
     expect(() =>
-      new ConversationAdminService(deps).deleteConversation({ accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared' }),
+      new ConversationAdminService(deps).deleteConversation({ accountDir: ACC, sessionId: SID, cwd: CWD }),
     ).not.toThrow();
     expect(removeFile).not.toHaveBeenCalled();
   });
 });
 
 describe('ConversationAdminService.moveConversation', () => {
-  it('moveConversation_compartidaAPrivada_mueveFichero', () => {
-    const src = resolveTranscriptPath(ACC, CWD, SID);
-    const dest = resolveTranscriptPath(join(ACC, 'mage-private'), CWD, SID);
-    const { deps, move, ensureDir } = makeDeps([src]);
-    const result = new ConversationAdminService(deps).moveConversation({
-      accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared', destAccountDir: ACC, destPrivacy: 'private',
-    });
-    expect(ensureDir).toHaveBeenCalled();
-    expect(move).toHaveBeenCalledWith(src, dest);
-    expect(result.configDir).toBe(join(ACC, 'mage-private'));
-  });
-
   it('moveConversation_aOtraCuenta_mueveAlProjectsDelDestino', () => {
     const src = resolveTranscriptPath(ACC, CWD, SID);
     const dest = resolveTranscriptPath(ACC2, CWD, SID);
     const { deps, move } = makeDeps([src]);
     new ConversationAdminService(deps).moveConversation({
-      accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared', destAccountDir: ACC2, destPrivacy: 'shared',
+      accountDir: ACC, sessionId: SID, cwd: CWD, destAccountDir: ACC2,
     });
     expect(move).toHaveBeenCalledWith(src, dest);
   });
@@ -97,7 +76,7 @@ describe('ConversationAdminService.moveConversation', () => {
     const src = resolveTranscriptPath(ACC, CWD, SID);
     const { deps, move } = makeDeps([src]);
     const result = new ConversationAdminService(deps).moveConversation({
-      accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared', destAccountDir: ACC, destPrivacy: 'shared',
+      accountDir: ACC, sessionId: SID, cwd: CWD, destAccountDir: ACC,
     });
     expect(move).not.toHaveBeenCalled();
     expect(result.configDir).toBe(ACC);
@@ -107,7 +86,7 @@ describe('ConversationAdminService.moveConversation', () => {
     const { deps } = makeDeps([]);
     expect(() =>
       new ConversationAdminService(deps).moveConversation({
-        accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared', destAccountDir: ACC2, destPrivacy: 'shared',
+        accountDir: ACC, sessionId: SID, cwd: CWD, destAccountDir: ACC2,
       }),
     ).toThrow(/No existe/);
   });
@@ -121,7 +100,7 @@ describe('ConversationAdminService.moveConversation', () => {
 
     expect(() =>
       new ConversationAdminService(deps).moveConversation({
-        accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared', destAccountDir: ACC2, destPrivacy: 'shared',
+        accountDir: ACC, sessionId: SID, cwd: CWD, destAccountDir: ACC2,
       }),
     ).toThrow(/ya existe y no se sobrescribe/i);
     expect(move).not.toHaveBeenCalled();
@@ -138,7 +117,7 @@ describe('ConversationAdminService.moveConversation', () => {
 
     expect(() =>
       new ConversationAdminService(deps).moveConversation({
-        accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared', destAccountDir: ACC2, destPrivacy: 'shared',
+        accountDir: ACC, sessionId: SID, cwd: CWD, destAccountDir: ACC2,
       }),
     ).toThrow(/ya existe y no se sobrescribe/i);
     expect(move).not.toHaveBeenCalled();
@@ -150,7 +129,7 @@ describe('ConversationAdminService.moveConversation', () => {
     const destSub = join(ACC2, 'projects', encoded(CWD), SID);
     const { deps, move } = makeDeps([src, srcSub]);
     new ConversationAdminService(deps).moveConversation({
-      accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared', destAccountDir: ACC2, destPrivacy: 'shared',
+      accountDir: ACC, sessionId: SID, cwd: CWD, destAccountDir: ACC2,
     });
     expect(move).toHaveBeenCalledWith(srcSub, destSub);
   });
@@ -168,7 +147,7 @@ describe('ConversationAdminService con el runtime propio (P-032 R4)', () => {
     const file = resolveTranscriptPath(RUNTIME, CWD, SID);
     const { deps, removeFile } = makeDeps([file], { runtimeRoot: RUNTIME });
 
-    new ConversationAdminService(deps).deleteConversation({ accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared' });
+    new ConversationAdminService(deps).deleteConversation({ accountDir: ACC, sessionId: SID, cwd: CWD });
 
     expect(removeFile).toHaveBeenCalledWith(file);
   });
@@ -180,9 +159,7 @@ describe('ConversationAdminService con el runtime propio (P-032 R4)', () => {
       accountDir: ACC,
       sessionId: SID,
       cwd: CWD,
-      privacy: 'shared',
       destAccountDir: ACC2,
-      destPrivacy: 'shared',
     });
 
     expect(move).not.toHaveBeenCalled();
@@ -191,7 +168,7 @@ describe('ConversationAdminService con el runtime propio (P-032 R4)', () => {
 });
 
 describe('ConversationAdminService — errores de cara al usuario', () => {
-  const PARAMS = { accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared', destAccountDir: ACC2, destPrivacy: 'shared' } as const;
+  const PARAMS = { accountDir: ACC, sessionId: SID, cwd: CWD, destAccountDir: ACC2 } as const;
 
   it('moveConversation_origenInexistente_lanzaLaClaveConLaRuta', () => {
     const { deps } = makeDeps([]);

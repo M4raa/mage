@@ -1,12 +1,12 @@
-import { basename, dirname, join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { AccountInfo, LoginStatus } from '@shared/accounts';
 import type { LogLevel } from '@shared/debug';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { AccountLayout } from '../engine/providerAdapter';
 import type { LinkService } from '../os/linkService';
 import { pathEquals } from '../os/pathUtils';
+import { retiredProfileDirOf } from '../conversations/privateConversationsMigration';
 import {
-  decideCredentialsConvergence,
   parseCredentialsSide,
   type CredentialsSide,
 } from './credentialsConvergence';
@@ -15,12 +15,8 @@ import {
 // `commands` y `agents` desde P-026 2.6 (D11): los comandos y subagentes del usuario tambien son suyos
 // en cualquier cuenta. Son directorios, asi que el enlace sobrevive al tmp+rename del CLI.
 const SHARED_FOLDERS = ['paste-cache', 'plugins', 'projects', 'sessions', 'skills', 'todos', 'commands', 'agents'] as const;
-// Perfil privado de una cuenta (M2.6): subdir anidado con `projects` PROPIO (historial privado) y el
-// MISMO login de la cuenta (hard link de .credentials.json). Anidado -> nunca se descubre como cuenta
-// (discoverConfigDirs solo escanea el nivel superior de HOME).
-const PRIVATE_PROFILE_DIR = 'mage-private';
-// El perfil privado comparte todo lo comun MENOS `projects` (justo lo que se aisla).
-const PRIVATE_SHARED_FOLDERS = SHARED_FOLDERS.filter((folder) => folder !== 'projects');
+// El antiguo perfil privado enlazaba todo lo comun MENOS `projects` (que era propio).
+const LEGACY_LINKED_FOLDERS = SHARED_FOLDERS.filter((folder) => folder !== 'projects');
 // Nombre de comando/cuenta valido al crear (letra inicial + letras/numeros/-/_).
 export const ACCOUNT_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
 const CREDENTIALS_FILE = '.credentials.json';
@@ -110,14 +106,14 @@ export class AccountService {
   }
 
   // Elimina una cuenta: desenlaza las carpetas compartidas (SIN tocar los datos comunes) y borra su
-  // directorio ENTERO: login, ajustes y conversaciones privadas (`mage-private/projects`, que es suyo).
+  // directorio ENTERO: login, ajustes y conversaciones.
   // Guardas de seguridad: nunca la principal, debe existir y ser un dir de cuenta bajo HOME.
   // Dos guardas contra perder datos COMUNES (P-028, punto 30):
   //  - ANTES de tocar nada: si alguna carpeta compartida es un dir REAL con contenido (el CLI puede
   //    convertir un enlace en carpeta real, y las cuentas previas a P-026 tienen `commands`/`agents`
   //    reales), aborta con la ruta. El rmrf se llevaria por delante lo que deberia estar en el comun.
   //  - Si algun enlace compartido no se pudo quitar, ABORTA.
-  // Incluye los enlaces del PERFIL PRIVADO (mage-private/<compartida>), que tambien apuntan al comun.
+  // Incluye los enlaces del antiguo perfil privado, que tambien apuntan al comun.
   deleteAccount(configDir: string): void {
     if (this.isMainDir(configDir)) {
       throw new Error(`No se puede eliminar la cuenta principal (${this.mainDir}): ${configDir}`);
@@ -129,7 +125,9 @@ export class AccountService {
 
     const linkPaths = [
       ...SHARED_FOLDERS.map((folder) => join(configDir, folder)),
-      ...PRIVATE_SHARED_FOLDERS.map((folder) => join(configDir, PRIVATE_PROFILE_DIR, folder)),
+      // Un perfil antiguo que Mage ya no crea pero que sigue en disco con sus enlaces al comun: se
+      // desenlazan igual, o el borrado recursivo cruzaria el enlace y se llevaria datos comunes.
+      ...LEGACY_LINKED_FOLDERS.map((folder) => join(retiredProfileDirOf(configDir), folder)),
     ];
     this.assertNoPopulatedRealSharedFolder(linkPaths);
     for (const linkPath of linkPaths) {
@@ -153,42 +151,12 @@ export class AccountService {
     }
   }
 
-  // Asegura (idempotente) el PERFIL PRIVADO de una cuenta y devuelve su config dir (M2.6). El perfil
-  // reutiliza el LOGIN de la cuenta (misma identidad, misma facturacion) pero tiene su propio
-  // `projects/` (historial privado). Las demas carpetas comunes se enlazan al comun como en una
-  // cuenta normal. Solo cuentas gestionadas o la principal.
-  //
-  // Las credenciales NO se comparten con un enlace: se CONVERGEN copiando el lado con el token
-  // vigente sobre el otro (ver credentialsConvergence.ts). El hard link que habia aqui antes partia
-  // de que el CLI reescribe el fichero in-place sobre el mismo inode; se comprobo en disco que es
-  // FALSO (escribe con tmp+rename, el inode cambia y el enlace muere sin aviso).
-  ensurePrivateProfile(accountConfigDir: string): string {
-    const dir = accountConfigDir.trim();
-    if (dir.length === 0) {
-      throw new Error(`Config dir de cuenta vacio para el perfil privado: ${JSON.stringify(accountConfigDir)}`);
-    }
-    if (!this.isMainDir(dir) && !this.isManagedAccountDir(dir)) {
-      throw new Error(
-        `Ruta de cuenta no valida para perfil privado (debe ser ${this.mainDir} o ${this.mainDir}-* bajo HOME): ${dir}`,
-      );
-    }
-
-    const profileDir = join(dir, PRIVATE_PROFILE_DIR);
-    this.deps.mkdir(join(profileDir, 'projects')); // projects PRIVADO real (mkdir recursivo crea el perfil)
-    for (const folder of PRIVATE_SHARED_FOLDERS) {
-      this.deps.linkService.createDirLink(join(this.mainDir, folder), join(profileDir, folder));
-    }
-    this.convergeCredentials(dir, profileDir);
-    this.seedSettings(profileDir);
-    return profileDir;
-  }
-
   // Adopta el login de otra cuenta: copia su fichero de credenciales sobre el de `targetConfigDir`
   // (Fase 9.2). Para quien ya usa Claude Code, su primera cuenta extra en Mage no necesita ningun
   // login: hereda la sesion de `~/.claude`.
   //
   // No es un atajo sospechoso: las dos cuentas quedan con la MISMA identidad de Anthropic, que es
-  // exactamente lo que ya hace el perfil privado de una cuenta desde M2.6. Lo que cambia entre ellas
+  // exactamente lo que compartian las cuentas con su antiguo perfil privado. Lo que cambia entre ellas
   // es el `projects/` y los ajustes, no quien factura.
   //
   // Se exige que el origen tenga una sesion USABLE (los dos tokens y un expiresAt valido). Copiar un
@@ -215,44 +183,7 @@ export class AccountService {
     this.deps.log('info', `Login adoptado: "${source}" -> "${target}"`);
   }
 
-  // Prepara el login del config dir con el que se va a lanzar el CLI, sea cual sea el punto de
-  // arranque (crear conversacion, handoff con --resume, ...). Si es un PERFIL PRIVADO converge sus
-  // credenciales con las de su cuenta; si es el dir de una cuenta no hay nada que converger.
-  // Idempotente. Frontera de seguridad: solo perfiles privados de cuentas gestionadas o la principal.
-  ensureCredentialsFor(configDir: string): void {
-    const dir = configDir.trim();
-    if (dir.length === 0) {
-      throw new Error(`Config dir vacio al preparar credenciales: ${JSON.stringify(configDir)}`);
-    }
-    if (basename(dir) !== PRIVATE_PROFILE_DIR) return;
-
-    const accountDir = dirname(dir);
-    if (!this.isMainDir(accountDir) && !this.isManagedAccountDir(accountDir)) {
-      throw new Error(`Perfil privado con cuenta padre no valida: ${dir}`);
-    }
-    this.convergeCredentials(accountDir, dir);
-  }
-
   // --- Interno --------------------------------------------------------------------------------
-
-  // Converge el .credentials.json de la cuenta con el de su perfil privado, en la direccion que
-  // decida el modulo puro (NUNCA una direccion fija: si fue la sesion privada la que refresco el
-  // token, copiar cuenta->perfil destruiria el refresh token bueno y dejaria la cuenta sin login).
-  // Se ejecuta antes de spawnear al hijo, asi que el CLI siempre arranca sobre el token vigente.
-  private convergeCredentials(accountDir: string, profileDir: string): void {
-    const account = this.readCredentialsSide(join(accountDir, CREDENTIALS_FILE));
-    const profile = this.readCredentialsSide(join(profileDir, CREDENTIALS_FILE));
-    const decision = decideCredentialsConvergence(account, profile);
-    if (decision.action === 'none') {
-      this.deps.log('debug', `Credenciales del perfil privado sin convergir: ${decision.reason}`);
-      return;
-    }
-    this.deps.copyCredentialsFile(decision.from, decision.to);
-    this.deps.log(
-      'info',
-      `Credenciales del perfil privado convergidas: "${decision.from}" -> "${decision.to}" (${decision.reason})`,
-    );
-  }
 
   // Lee un lado para la convergencia. Solo saca metadata (existe / expiresAt / si hay tokens); el
   // token en si nunca se copia a memoria ni sale de aqui.

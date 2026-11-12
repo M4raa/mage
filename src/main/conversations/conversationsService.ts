@@ -1,15 +1,12 @@
 import { join } from 'node:path';
 import type { ConversationSummary } from '@shared/conversations';
-import type { ConversationPrivacy } from '@shared/state';
 import { deriveConversationMeta, type ConversationMeta } from './conversationMeta';
 
-// Lista las conversaciones EN DISCO de una cuenta para el sidebar-historial (M2.6): las compartidas
-// (pozo comun, `<cuenta>/projects`) y las privadas (`<cuenta>/mage-private/projects`). Solo FS con DI
+// Lista las conversaciones EN DISCO de una cuenta para el sidebar-historial (M2.6): `<cuenta>/projects`. Solo FS con DI
 // -> testable. Lectura TOLERANTE por fichero (un .jsonl corrupto/desaparecido no aborta la lista; es
 // una vista de historial, no un dato critico). No lee el contenido completo: un prefijo basta para
 // cwd/titulo.
 
-const PRIVATE_PROFILE_DIR = 'mage-private';
 const JSONL_EXT = '.jsonl';
 const PREFIX_BYTES = 64 * 1024; // prefijo por fichero para derivar cwd/titulo (cwd y 1er prompt van arriba)
 // Cola por fichero: el CLI re-añade `custom-title`/`ai-title` al final, y el que vale es el ULTIMO
@@ -63,8 +60,7 @@ interface CachedMeta {
 
 interface Root {
   readonly projectsDir: string;
-  readonly configDir: string; // dir efectivo (cuenta o perfil privado)
-  readonly privacy: ConversationPrivacy;
+  readonly configDir: string; // la cuenta que lista
 }
 
 export class ConversationsService {
@@ -76,18 +72,17 @@ export class ConversationsService {
 
   constructor(private readonly deps: ConversationsDeps) {}
 
-  // Devuelve las conversaciones de la cuenta (compartidas + privadas), mas recientes primero, acotadas.
+  // Devuelve las conversaciones de la cuenta, mas recientes primero, acotadas.
   listConversations(accountDir: string): ConversationSummary[] {
     const dir = accountDir.trim();
     if (dir.length === 0) {
       throw new Error(`accountDir vacio al listar conversaciones: ${JSON.stringify(accountDir)}`);
     }
     const roots: readonly Root[] = [
-      { projectsDir: join(dir, 'projects'), configDir: dir, privacy: 'shared' },
-      { projectsDir: join(dir, PRIVATE_PROFILE_DIR, 'projects'), configDir: join(dir, PRIVATE_PROFILE_DIR), privacy: 'private' },
+      { projectsDir: join(dir, 'projects'), configDir: dir },
       // `configDir` es la CUENTA que lista, no la raiz del runtime: la pestaña reabierta sigue bajo esa
       // cuenta y main encuentra el fichero por su id (`conversationTranscriptPath`).
-      ...(this.deps.runtimeProjectsDir === undefined ? [] : [{ projectsDir: this.deps.runtimeProjectsDir(), configDir: dir, privacy: 'shared' as const }]),
+      ...(this.deps.runtimeProjectsDir === undefined ? [] : [{ projectsDir: this.deps.runtimeProjectsDir(), configDir: dir }]),
     ];
     const all = roots.flatMap((root) => this.listRoot(root));
     all.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
@@ -126,7 +121,6 @@ export class ConversationsService {
         configDir: root.configDir,
         cwd: meta.cwd,
         title: meta.title.length > 0 ? meta.title : sessionId,
-        privacy: root.privacy,
         updatedAtMs: stat.mtimeMs,
         sizeBytes: stat.sizeBytes,
         isScheduled: meta.isScheduled,
