@@ -31,7 +31,7 @@ import { notify } from '../notificationStore';
 import { displayTitle } from '../conversationTitle';
 import { Dropdown, type DropdownOption } from './Dropdown';
 import { ModelMenu } from './ModelMenu';
-import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortStepLabel, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
+import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
 import { usePaneTabId } from '../paneContext';
 import { renderLocalized, type LocalizedText } from '@shared/i18n/localizedText';
 import { t as translate, useT } from '../../i18n/uiLanguage';

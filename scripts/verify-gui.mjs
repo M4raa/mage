@@ -2390,15 +2390,16 @@ const CHECKS = [
         permissionModes: { claude: null, codex: [':read-only', ':workspace', ':danger-full-access'] },
       })));
       const measured = await page.evaluate(() => ({
-        model: document.querySelectorAll(`[aria-label="${window.__mageDev.t('prompt.model.ariaLabel').replace(/["\\]/g, '\\$&')}"]`).length,
-        effort: document.querySelectorAll(`[aria-label="${window.__mageDev.t('prompt.effort.ariaLabel').replace(/["\\]/g, '\\$&')}"]`).length,
+        model: document.querySelectorAll('[data-model-menu]').length,
         permission: document.querySelectorAll(`[aria-label^="${window.__mageDev.t('chat.permissions.mode.title').replace(/["\\]/g, '\\$&')}"]`).length,
       }));
-      await page.getByRole('button', { name: ui('prompt.model.ariaLabel') }).click();
-      await page.getByRole('option', { name: 'GPT-6-Astra' }).click();
-      await page.getByRole('button', { name: ui('prompt.effort.ariaLabel') }).click();
-      await page.locator('[data-step-slider-popover] input[type="range"]').press('ArrowRight');
-      await page.keyboard.press('Escape');
+      // El esfuerzo vive DENTRO del menú del modelo: una fila «Esfuerzo» con su submenú.
+      await page.locator('[data-model-menu]').click();
+      const effortRows = await page.locator('[data-menu-effort]').count();
+      await page.getByRole('menuitemradio', { name: 'GPT-6-Astra' }).click();
+      await page.locator('[data-model-menu]').click();
+      await page.locator('[data-menu-effort]').click();
+      await page.getByRole('menuitemradio', { name: ui('prompt.effort.step.medium') }).click();
       await page.getByRole('button', { name: new RegExp('^' + uiPrefix('prompt.permission.ariaLabel').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).click();
       await page.locator('[role="listbox"] [data-value=":workspace|never"]').click();
       const selected = await page.evaluate(() => {
@@ -2406,9 +2407,9 @@ const CHECKS = [
         const tab = state.tabs.find((item) => item.id === state.activeTabId);
         return { model: tab?.model, effort: tab?.effort, permissionMode: tab?.permissionMode };
       });
-      return { ok: measured.model === 1 && measured.effort === 1 && measured.permission === 1
+      return { ok: measured.model === 1 && effortRows === 1 && measured.permission === 1
         && selected.model === 'gpt-6-astra' && selected.effort === 'medium' && selected.permissionMode === ':workspace|never',
-        detail: JSON.stringify({ ...measured, selected }) };
+        detail: JSON.stringify({ ...measured, effortRows, selected }) };
     },
   },
   {
@@ -3049,12 +3050,14 @@ const CHECKS = [
       });
       await clearNotifications(page);
       await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      const initial = (await trigger.innerText()).trim();
-      // Elegir la opción que ya está puesta no es un cambio: no avisa (el Dropdown no dispara onChange).
-      await pickDropdownOption(page, ui('prompt.model.ariaLabel'), new RegExp(`^${escapeRegExp(initial)}$`, 'i'));
+      // El chip dice «modelo esfuerzo»: la etiqueta del modelo es su primer tramo.
+      const modelLabel = () => trigger.locator('[data-model-label]').innerText().then((text) => text.trim());
+      const initial = await modelLabel();
+      // Elegir la opción que ya está puesta no es un cambio: no avisa (el menú no dispara onModel).
+      await pickModelOption(page, new RegExp(`^${escapeRegExp(initial)}$`, 'i'));
       await page.waitForTimeout(CONFIG.settleMs);
       const avisosSinCambio = await page.locator('[data-notification-toasts="true"] [data-notification-level]').count();
-      const opus = await pickDropdownOption(page, ui('prompt.model.ariaLabel'), /opus/i);
+      const opus = await pickModelOption(page, /opus/i);
       if (opus === null) return { ok: false, detail: `no hay ninguna opcion de Opus en el selector (modelo actual=${JSON.stringify(initial)})` };
       // Grupo G: el aviso es un toast de la pestaña (`warning` si encarece), con su ✕.
       const toast = page.locator('[data-notification-toasts="true"] [data-notification-level]');
@@ -3066,10 +3069,10 @@ const CHECKS = [
       await toast.first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
       const dismissed = await toast.count();
       // Reponer el modelo de partida y vaciar los avisos que provoca el propio cambio de vuelta.
-      await pickDropdownOption(page, ui('prompt.model.ariaLabel'), new RegExp(`^${escapeRegExp(initial)}$`, 'i'));
+      await pickModelOption(page, new RegExp(`^${escapeRegExp(initial)}$`, 'i'));
       await page.waitForTimeout(CONFIG.settleMs);
       await clearNotifications(page);
-      const restored = (await trigger.innerText()).trim();
+      const restored = await modelLabel();
       if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       else if (modeloPrevio !== null) await page.evaluate((m) => window.__mageDev.store.getState().setActiveModel(m), modeloPrevio);
       await clearNotifications(page);
@@ -3106,50 +3109,83 @@ const CHECKS = [
     },
   },
   {
-    // Ronda 3, item 5: el menu "nacia desde arriba de la pantalla, no del boton". El calculo del `top`
-    // clampaba contra el borde de la VENTANA sin mirar el trigger; con el boton abajo (PromptBar) el
-    // menu aparecia muy por encima, desconectado. Se mide la separacion REAL entre las dos cajas: da
-    // igual si vuelca hacia arriba o hacia abajo, pero tiene que estar PEGADO a una de las dos caras.
-    // Solo se ABRE el menu (Escape para cerrarlo): elegir una opcion cambiaria el esfuerzo de verdad.
-    name: 'Esfuerzo: el popover del deslizador nace pegado a su chip y trae sus pasos (StepSlider)',
+    // B1 (0.1.6): el modelo y el esfuerzo son UN chip. Antes el popover del deslizador de esfuerzo «nacía
+    // desde arriba de la pantalla, no del botón» (Ronda 3, item 5): se sigue midiendo la separación REAL
+    // entre el menú y su chip, ahora con el menú del modelo, sus modelos más nuevos y los dos submenús.
+    // El nivel de esfuerzo se cambia de verdad en la pestaña y se REPONE por el mismo camino al acabar.
+    name: 'Modelo: el menú se abre pegado a su chip, con los modelos más nuevos, Esfuerzo y Más modelos',
     async run(page) {
-      // P-028 32/33: modo y esfuerzo son deslizadores de pasos. Grupo A (0.1.2, punto 4): se RECORREN todos
-      // los pasos con el teclado midiendo que ni el chip ni el popover se mueven (el de modo saltaba 16 px
-      // y el popover iba un paso por detras) y que el pulgar dibujado llega a su sitio con transicion. Al
-      // terminar se vuelve al paso de partida: el modo o el esfuerzo cambiado romperia las siguientes.
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
       });
-      const propia = (await page.locator(`button[aria-label^="${cssAttr(uiPrefix('prompt.permission.ariaLabel'))}"]`).count()) === 0;
+      const propia = (await page.locator('[data-model-menu]').count()) === 0;
       if (propia) await openTemporaryConversation(page);
-      const casos = [
-        { chip: `button[aria-label="${cssAttr(ui('prompt.effort.ariaLabel'))}"]`, pasos: 6 },
-      ];
-      const medidas = [];
+      const chip = page.locator('[data-model-menu]').first();
+      const nivelActual = () => chip.evaluate((node) => node.lastElementChild?.textContent?.trim() ?? '');
+      const dentroDeLaVentana = (selector) =>
+        page.evaluate((css) => {
+          const r = document.querySelector(css).getBoundingClientRect();
+          return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, dentro: r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight };
+        }, selector);
       try {
-        for (const caso of casos) {
-          medidas.push(await walkStepSlider(page, caso));
-          await clearNotifications(page); // avisos provocados por este recorrido, fuera de la medida siguiente
-        }
+        await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const proveedor = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          return s.tabs.find((t) => t.id === s.activeTabId)?.provider ?? null;
+        });
+        const chipBox = await chip.boundingBox();
+        const nivelInicial = await nivelActual();
+        await chip.click();
+        const menu = page.getByRole('menu', { name: ui('prompt.model.ariaLabel') });
+        await menu.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await waitForStillBox(page, '[role="menu"][aria-label]');
+        const principal = await dentroDeLaVentana('[role="menu"][aria-label]');
+        const etiquetas = await menu.getByRole('menuitemradio').evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim() ?? ''));
+        const familias = etiquetas.map((e) => /^(\S+)\s+\d/.exec(e)?.[1] ?? e);
+        const hueco = chipBox.y - principal.bottom;
+        await page.screenshot({ path: path.join(CONFIG.outDir, 'b1-menu-modelo.png') });
+        // «Más modelos»: se abre al pasar el ratón y no se sale de la ventana.
+        await page.locator('[data-menu-more]').hover();
+        await page.locator('[data-model-submenu="more"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const masModelos = await dentroDeLaVentana('[data-model-submenu="more"]');
+        const nMas = await page.locator('[data-model-submenu="more"] [role="menuitemradio"]').count();
+        await page.screenshot({ path: path.join(CONFIG.outDir, 'b1-submenu-mas-modelos.png') });
+        // «Esfuerzo»: se abre al pasar el ratón, no se sale de la ventana y lleva UN ✓.
+        await page.locator('[data-menu-effort]').hover();
+        const sub = page.locator('[data-model-submenu="effort"]');
+        await sub.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const esfuerzo = await dentroDeLaVentana('[data-model-submenu="effort"]');
+        const marcas = await sub.locator('[aria-checked="true"]').count();
+        const marcaConIcono = await sub.locator('[aria-checked="true"] svg').count();
+        await page.screenshot({ path: path.join(CONFIG.outDir, 'b1-submenu-esfuerzo.png') });
+        const otro = sub.locator('[role="menuitemradio"][aria-checked="false"]').first();
+        const otroNivel = ((await otro.textContent()) ?? '').trim();
+        await otro.click();
+        await menu.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const nivelNuevo = await nivelActual();
+        // Reponer el nivel de partida por el mismo camino y vaciar los avisos de coste que provoca.
+        await chip.click();
+        await page.locator('[data-menu-effort]').click();
+        await page.locator('[data-model-submenu="effort"]').getByRole('menuitemradio', { name: nivelInicial, exact: true }).click();
+        await menu.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const nivelRepuesto = await nivelActual();
+        await clearNotifications(page);
+        const ok =
+          proveedor === 'claude' &&
+          principal.dentro &&
+          hueco >= 0 && hueco <= 8 &&
+          etiquetas.length > 0 && new Set(familias).size === etiquetas.length &&
+          nMas > 0 && masModelos.dentro &&
+          esfuerzo.dentro && marcas === 1 && marcaConIcono === 1 &&
+          nivelNuevo === otroNivel && nivelNuevo !== nivelInicial && nivelRepuesto === nivelInicial;
+        return {
+          ok,
+          detail: JSON.stringify({ proveedor, principal, hueco, etiquetas, masModelos: { ...masModelos, modelos: nMas }, esfuerzo, marcas, marcaConIcono, nivelInicial, otroNivel, nivelNuevo, nivelRepuesto }),
+        };
       } finally {
         if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       }
-      // Tolerancia de 24 px en el hueco: el `top` se calcula con una estimacion del alto del popover.
-      const ok = medidas.every(
-        (m) =>
-          m.gap <= 24 &&
-          m.pasos === m.esperados &&
-          m.recorridos === m.esperados &&
-          m.desplazamientoChip <= SLIDER_STILL_TOLERANCE_PX &&
-          m.desplazamientoPopover <= SLIDER_STILL_TOLERANCE_PX &&
-          Math.max(...Object.values(m.filaDeriva)) <= SLIDER_STILL_TOLERANCE_PX &&
-          m.errorPulgar <= 1 &&
-          m.transicion !== '0s' &&
-          m.vuelveAlInicio &&
-          m.valuetext.length > 0,
-      );
-      return { ok, detail: JSON.stringify(medidas) };
     },
   },
   {
@@ -3304,6 +3340,8 @@ const CHECKS = [
       // el aviso del dialogo sigue en el DOM y se contaria como si fuera el del estado vacio (dos
       // recuadros en vez de uno). Con `modalExitMs` la medida salia distinta segun la ejecucion.
       await page.locator(NEW_TAB_DIALOG).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      // Abre el menú del modelo para que su fila «Esfuerzo» (si la hay) esté en el DOM al medir.
+      await page.locator('[data-model-menu]').first().click();
       const measured = await page.evaluate((head) => {
         // El chip de la PromptBar es el unico role=status con aria-label; el recuadro del estado vacio
         // lleva el aviso como TEXTO. Distinguirlos importa: si se contaran juntos, tener solo uno de los
@@ -3324,11 +3362,14 @@ const CHECKS = [
             return `${node.tagName.toLowerCase()}${inDialog ? ' en-dialogo' : ''}${nested ? ' anidado' : ''}`;
           }),
           permissionModeControls: document.querySelectorAll(`[aria-label^="${window.__mageDev.t('chat.permissions.mode.title').replace(/["\\]/g, '\\$&')}"]`).length,
-          effortControls: document.querySelectorAll(`[aria-label="${window.__mageDev.t('prompt.effort.ariaLabel').replace(/["\\]/g, '\\$&')}"]`).length,
-          modelControls: document.querySelectorAll(`[aria-label="${window.__mageDev.t('prompt.model.ariaLabel').replace(/["\\]/g, '\\$&')}"]`).length,
+          // El esfuerzo es una fila del menú del modelo: se cuenta con el menú abierto (más abajo).
+          effortControls: document.querySelectorAll('[data-menu-effort]').length,
+          modelControls: document.querySelectorAll('[data-model-menu]').length,
           modelo: (() => { const s = window.__mageDev.store.getState(); return s.tabs.find((t) => t.id === s.activeTabId)?.model ?? null; })(),
         };
       }, NO_PERMISSION_HEAD);
+      await page.keyboard.press('Escape');
+      await page.locator('[data-model-menu][aria-expanded="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       // Un modelo de agy con sufijo de esfuerzo lo fija y oculta el control (I2, `agyModelFixesEffort`).
       const esfuerzoFijado = typeof measured.modelo === 'string' && AGY_EFFORT_LEVELS_FUENTE.some((nivel) => measured.modelo.endsWith(`-${nivel}`));
       const esfuerzoEsperado = esfuerzoFijado ? 0 : 1;
@@ -4613,7 +4654,8 @@ const CHECKS = [
       await openTemporaryConversation(page);
       await page.waitForTimeout(CONFIG.settleMs);
       const medido = await page.evaluate(() => {
-        const selector = document.querySelector(`[aria-label="${window.__mageDev.t('prompt.model.ariaLabel').replace(/["\\]/g, '\\$&')}"]`);
+        // La etiqueta del modelo va dentro de `[data-model-menu]`; el esfuerzo, apagado, va al lado.
+        const selector = document.querySelector('[data-model-menu] [data-model-label]');
         const etiqueta = (selector?.textContent ?? '').replace(/[▾⌄]/g, '').trim();
         const visibles = [...document.querySelectorAll('body *')].filter(
           (n) => n.children.length === 0 && (n.textContent ?? '').replace(/[▾⌄]/g, '').trim() === etiqueta && n.getClientRects().length > 0,
@@ -4624,6 +4666,31 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
       const ok = medido.etiqueta.length > 0 && medido.visibles === 1;
       return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // B1 (0.1.6, U-B2): debajo del input, a la derecha, primero PERMISOS y después MODELO (el esfuerzo vive
+    // dentro del menú del modelo). Se mide por posición, en la fila de información del chat.
+    name: 'Prompt: debajo del input, permisos antes que modelo',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      try {
+        const modelo = page.locator('[data-chat-info-bar] [data-model-menu]').first();
+        await modelo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const permisos = page.locator('[data-chat-info-bar] [data-permission-mode]').first();
+        await permisos.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const [p, m] = [await permisos.boundingBox(), await modelo.boundingBox()];
+        // Mismo renglón y el de permisos a la izquierda; si la fila se parte en dos líneas, el de permisos va antes.
+        const antes = p.y < m.y - 1 || (Math.abs(p.y - m.y) <= 1 && p.x + p.width <= m.x);
+        return { ok: antes, detail: `permisos=${JSON.stringify({ x: p.x, y: p.y, w: p.width })} modelo=${JSON.stringify({ x: m.x, y: m.y, w: m.width })}` };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
     },
   },
   {
@@ -5351,10 +5418,10 @@ const CHECKS = [
           return id;
         });
         const status = () => page.evaluate((id) => window.__mageDev.store.getState().statusByChat[id], tabId);
-        await page.locator(`button[aria-label="${cssAttr(ui('prompt.model.ariaLabel'))}"]`).first().click();
-        await page.locator('[role="listbox"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.locator('[data-model-menu]').first().click();
+        await page.locator('[role="menuitemradio"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         await page.keyboard.press('Escape');
-        await page.locator('[role="listbox"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await page.locator('[role="menuitemradio"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         const trasDesplegable = await status();
         // Deja que venza el aplazamiento del contador antes de abrir el segundo menú.
         await page.waitForTimeout(CONFIG.settleMs);
@@ -7341,6 +7408,7 @@ const CHECKS = [
         });
         await page.locator('[data-prompt-actions] button[aria-haspopup="menu"]').first().click();
         const entradasCommit = await page.locator('[data-prompt-actions] [data-action="git-commit"]').count();
+        await page.screenshot({ path: path.join(CONFIG.outDir, 'b1-menu-mas-commit.png') });
         await page.locator('[data-prompt-actions] [data-action="git-commit"]').first().click();
         await page.waitForTimeout(CONFIG.settleMs);
         const trasConfirmar = await page.evaluate(() => {
@@ -12726,12 +12794,12 @@ async function readModelSelectorColors(page, trigger, tema) {
   });
   await page.mouse.move(2, 2);
   await trigger.click();
-  await page.getByRole('listbox', { name: ui('prompt.model.ariaLabel') }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await page.getByRole('menu', { name: ui('prompt.model.ariaLabel') }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  // El modelo elegido lleva un ✓ y la tinta normal del menú: se mide su color contra el fondo del propio menú.
   const opcion = await page.evaluate(() => {
-    const elegida = document.querySelector('[role="listbox"] [role="option"][aria-selected="true"]');
+    const elegida = document.querySelector('[role="menu"] [role="menuitemradio"][aria-checked="true"]');
     if (elegida === null) throw new Error('el selector abierto no tiene ninguna opción elegida');
-    const estilo = getComputedStyle(elegida);
-    return { color: estilo.color, fondo: estilo.backgroundColor };
+    return { color: getComputedStyle(elegida).color, fondo: getComputedStyle(elegida.closest('[role="menu"]')).backgroundColor };
   });
   await page.screenshot({ path: path.join(CONFIG.outDir, `i2-selector-${tema}.png`) });
   await page.mouse.click(2, 2);
@@ -12964,20 +13032,27 @@ async function focusLocation(page) {
   }, MODAL);
 }
 
-// Abre un Dropdown propio por su aria-label, elige la primera opcion que case y devuelve su texto (null si
-// ninguna casa: el menu se cierra con Escape para no dejar un popover abierto).
-async function pickDropdownOption(page, ariaLabel, pattern) {
-  await page.getByRole('button', { name: ariaLabel }).click();
-  const listbox = page.getByRole('listbox', { name: ariaLabel });
-  await listbox.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-  const labels = await listbox.getByRole('option').evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim() ?? ''));
-  const match = labels.find((label) => pattern.test(label));
+// Abre el menú del modelo, elige el primer modelo que case (en la lista principal y, si no, en «Más modelos»)
+// y devuelve su etiqueta (null si ninguno casa: se cierra con Escape para no dejar el menú abierto).
+async function pickModelOption(page, pattern) {
+  await page.locator('[data-model-menu]').first().click();
+  const menu = page.locator('[role="menu"][aria-label]').filter({ has: page.locator('[role="menuitemradio"]') }).first();
+  await menu.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const labelsOf = (root) => root.getByRole('menuitemradio').evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim() ?? ''));
+  let root = menu;
+  let match = (await labelsOf(root)).find((label) => pattern.test(label));
+  if (match === undefined && (await page.locator('[data-menu-more]').count()) > 0) {
+    await page.locator('[data-menu-more]').click();
+    root = page.locator('[data-model-submenu="more"]');
+    await root.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+    match = (await labelsOf(root)).find((label) => pattern.test(label));
+  }
   if (match === undefined) {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(CONFIG.settleMs);
     return null;
   }
-  await listbox.getByRole('option', { name: match, exact: true }).first().click();
+  await root.getByRole('menuitemradio', { name: match, exact: true }).first().click();
   return match;
 }
 
@@ -13589,9 +13664,6 @@ function waitForNoExitingToasts(page) {
   );
 }
 
-// Tolerancia de «no se ha movido» del chip y del popover de un StepSlider entre pasos (subpixel).
-const SLIDER_STILL_TOLERANCE_PX = 0.5;
-
 // Espera a que TERMINEN las animaciones finitas del documento (WAAPI de motion y transiciones CSS; las
 // infinitas, como la constelacion, no). No vale un tiempo fijo: con la ventana tapada por otras (el usuario
 // trabajando mientras corre el harness), Windows deja de consumir frames y una animacion compuesta se
@@ -13609,8 +13681,6 @@ async function waitForFiniteAnimations(page) {
     if (!done) throw new Error(`${finite.length} animaciones sin terminar tras ${timeoutMs} ms`);
   }, CONFIG.actionTimeoutMs);
 }
-
-const STEP_SLIDER_POPOVER = '[data-step-slider-popover="true"]';
 
 // Frames seguidos con la caja quieta para darla por asentada.
 const STILL_FRAMES = 3;
@@ -13639,83 +13709,6 @@ async function waitForStillBox(page, selector) {
       }),
     { selector, frames: STILL_FRAMES, timeoutMs: CONFIG.actionTimeoutMs },
   );
-}
-
-// Abre el deslizador de `caso.chip`, lo lleva al primer paso con Home y lo recorre con ArrowRight hasta el
-// ultimo. En CADA paso mide la caja del chip y la del popover (su mayor desviacion respecto a la de
-// apertura) y, pasada la transicion, donde esta el pulgar dibujado respecto a la fraccion que le toca.
-// Deja el valor como lo encontro (Home + tantos ArrowRight como su posicion inicial) y cierra con Escape.
-async function walkStepSlider(page, caso) {
-  const trigger = page.locator(caso.chip).first();
-  await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-  await trigger.click();
-  const popover = page.locator('[data-step-slider-popover="true"]');
-  await popover.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-  // La entrada del popover: opacidad por WAAPI y escala 0,97 -> 1 por el bucle de motion.
-  await waitForStillBox(page, STEP_SLIDER_POPOVER);
-  const range = popover.locator('input[type="range"]');
-  const inicio = await range.evaluate((el) => ({ value: Number(el.value), max: Number(el.max), valuetext: el.getAttribute('aria-valuetext') ?? '' }));
-  const fila = page.locator('[data-prompt-controls="true"]').first();
-  // El chip se mide RELATIVO a su fila de controles y la fila, aparte: son dos fallos distintos. El chip
-  // cambiaba de ancho (Manual sin icono); la fila bajaba 5,5 px cuando el aviso de coste de «Muy alto»
-  // pasaba a dos lineas y la columna, con el estado vacio sin encoger, desbordaba.
-  const chipEnFila = async () => {
-    const [chip, row] = [await trigger.boundingBox(), await fila.boundingBox()];
-    return { x: chip.x - row.x, y: chip.y - row.y, width: chip.width, height: chip.height };
-  };
-  const chipAbs = await trigger.boundingBox();
-  const chip0 = await chipEnFila();
-  const fila0 = await fila.boundingBox();
-  const pop0 = await popover.boundingBox();
-  // Mayor desviacion por eje ({x, y, width, height}) de una caja respecto a la de apertura.
-  const chipDeriva = { x: 0, y: 0, width: 0, height: 0 };
-  const popDeriva = { x: 0, y: 0, width: 0, height: 0 };
-  const filaDeriva = { x: 0, y: 0, width: 0, height: 0 };
-  const acumular = (acc, box, base) => {
-    for (const eje of Object.keys(acc)) acc[eje] = Math.max(acc[eje], Number(Math.abs(box[eje] - base[eje]).toFixed(2)));
-  };
-  let errorPulgar = 0;
-  let recorridos = 0;
-  await range.press('Home');
-  for (let paso = 0; paso <= inicio.max; paso += 1) {
-    if (paso > 0) await range.press('ArrowRight');
-    await waitForStillBox(page, STEP_SLIDER_POPOVER); // la transicion del pulgar y lo que mueva el cambio de paso
-    const pulgar = await popover.evaluate((el) => {
-      const pista = el.querySelector('.mg-step-thumb-track').getBoundingClientRect();
-      const punto = el.querySelector('.mg-step-thumb-dot').getBoundingClientRect();
-      return { offset: punto.left - pista.left, recorrido: pista.width, value: Number(el.querySelector('input[type="range"]').value) };
-    });
-    if (pulgar.value === paso) recorridos += 1;
-    const esperado = inicio.max === 0 ? 0 : (paso / inicio.max) * pulgar.recorrido;
-    errorPulgar = Math.max(errorPulgar, Math.abs(pulgar.offset - esperado));
-    acumular(chipDeriva, await chipEnFila(), chip0);
-    acumular(filaDeriva, await fila.boundingBox(), fila0);
-    acumular(popDeriva, await popover.boundingBox(), pop0);
-  }
-  const transicion = await popover.locator('.mg-step-thumb').evaluate((el) => getComputedStyle(el).transitionDuration);
-  await range.press('Home');
-  for (let paso = 0; paso < inicio.value; paso += 1) await range.press('ArrowRight');
-  const final = await range.evaluate((el) => Number(el.value));
-  await page.keyboard.press('Escape');
-  await popover.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-  const gapBelow = Math.abs(pop0.y - (chipAbs.y + chipAbs.height));
-  const gapAbove = Math.abs(chipAbs.y - (pop0.y + pop0.height));
-  return {
-    chip: caso.chip,
-    gap: Math.min(gapBelow, gapAbove),
-    pasos: inicio.max + 1,
-    esperados: caso.pasos,
-    recorridos,
-    desplazamientoChip: Math.max(...Object.values(chipDeriva)),
-    desplazamientoPopover: Math.max(...Object.values(popDeriva)),
-    chipDeriva,
-    popDeriva,
-    filaDeriva,
-    errorPulgar: Number(errorPulgar.toFixed(2)),
-    transicion,
-    vuelveAlInicio: final === inicio.value,
-    valuetext: inicio.valuetext,
-  };
 }
 
 // Siembra el lateral de Q02 con 6 conversaciones sintéticas de dos cuentas (una real y una ficticia): 1 fijada, 2

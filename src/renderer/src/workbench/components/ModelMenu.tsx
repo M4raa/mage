@@ -51,7 +51,7 @@ export function ModelMenu({ models, value, onModel, effort, interactive, tip, ar
   const label = menuLabelOf(models, value);
   const chipText = (
     <>
-      {label}
+      <span data-model-label="true">{label}</span>
       {effort !== null && <span className="text-mg-muted"> {effortStepLabel(effort.value)}</span>}
     </>
   );
