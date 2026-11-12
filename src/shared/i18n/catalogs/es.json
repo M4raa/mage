@@ -662,6 +662,7 @@
   "chat.scheduledTask.note": "Las tareas programadas las lanza la app de escritorio de Claude; Mage solo las muestra.",
   "chat.scheduledTask.unnamed": "sin nombre",
   "chat.sessionResult.label": "Respuesta de la sesión",
+  "chat.sessionResult.received": "Recibió {count, plural, one {# mensaje} other {# mensajes}}",
   "chat.sessionResult.unnamed": "sin título",
   "chat.status.done": "Respuesta completada.",
   "chat.status.error": "Se produjo un error en la conversación.",

@@ -1,5 +1,6 @@
 import { artifactCardFrom } from './artifactView';
 import { delegationCardFrom } from './delegationView';
+import { groupSessionResults } from './sessionResultGroups';
 import { isSubagentRunning, SUBAGENT_STATUS, subagentStatusLabel } from './engineBlocks';
 import { formatElapsed } from './thinkingStatus';
 import type { IconName } from './components/Icon';
@@ -49,7 +50,9 @@ export type ChatRow =
   | { readonly kind: 'block'; readonly block: Block; readonly repeat?: number }
   | { readonly kind: 'tool-failed'; readonly block: ToolBlock }
   // Los subagentes que lanzo el orquestador en un turno, en UNA linea (D21), donde salio el primero.
-  | { readonly kind: 'subagents'; readonly id: string; readonly blocks: readonly SubagentBlock[] };
+  | { readonly kind: 'subagents'; readonly id: string; readonly blocks: readonly SubagentBlock[] }
+  // Las respuestas de subsesión recibidas SEGUIDAS, en una línea plegada «Recibió N mensajes».
+  | { readonly kind: 'session-results'; readonly id: string; readonly blocks: readonly Extract<Block, { kind: 'user' }>[] };
 
 export function chatRows(blocks: readonly Block[]): readonly ChatRow[] {
   const rows: ChatRow[] = [];
@@ -68,7 +71,7 @@ export function chatRows(blocks: readonly Block[]): readonly ChatRow[] {
       if (!mergeRepeatedError(rows, block)) rows.push({ kind: 'block', block });
     }
   }
-  return rows;
+  return groupSessionResults(rows);
 }
 
 // Un error igual (mismo mensaje y mismo comando denegado) que la ULTIMA fila visible se funde con ella

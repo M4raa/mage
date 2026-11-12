@@ -6,6 +6,8 @@ import { CopyButton } from './CopyButton';
 import { firstImageOf } from '../clipboardContent';
 import { withImagePaths } from '@shared/imageRefs';
 import { Icon, type IconName } from './Icon';
+import { RotatingChevron } from './AnimatedIcon';
+import { useOpenSubsession } from '../useOpenSubsession';
 import { AgyCommandsDialog } from './AgyCommandsDialog';
 import { RewindDialog } from './RewindDialog';
 import { canOfferRewind } from '../rewindActions';
@@ -354,6 +356,7 @@ function missingConversationText(t: Translate, provider: string): string {
 // de identidad, y eso ya cambia `rows`.
 function tailContentSize(rows: readonly ChatRow[]): number {
   const last = rows[rows.length - 1];
+  if (last?.kind === 'session-results') return last.blocks.length; // una respuesta más entra en el mismo grupo
   if (last === undefined || last.kind !== 'block') return 0;
   const block = last.block;
   if (block.kind === 'agent') return block.runs.reduce((total, run) => total + run.text.length, 0);
@@ -707,7 +710,7 @@ function TurnCapabilityChip({ capability }: { readonly capability: TurnCapabilit
 const EMPTY: readonly Block[] = [];
 
 function rowKey(row: ChatRow): string {
-  return row.kind === 'subagents' ? row.id : row.block.id;
+  return row.kind === 'subagents' || row.kind === 'session-results' ? row.id : row.block.id;
 }
 
 // Una fila del hilo (P-026 3.4): un bloque, la linea de una herramienta que fallo (D22) o la de los
@@ -715,6 +718,7 @@ function rowKey(row: ChatRow): string {
 function ChatRowView({ row, accent }: { readonly row: ChatRow; readonly accent: string }): React.JSX.Element {
   if (row.kind === 'block') return <BlockView block={row.block} accent={accent} repeat={row.repeat ?? 1} />;
   if (row.kind === 'tool-failed') return <ToolFailedLine block={row.block} />;
+  if (row.kind === 'session-results') return <SessionResultsGroup id={row.id} blocks={row.blocks} />;
   return <SubagentsLine blocks={row.blocks} />;
 }
 
@@ -1051,6 +1055,63 @@ function SessionResultCard({ id, name, body }: { readonly id: string; readonly n
         <div className="mt-[6px] whitespace-pre-wrap break-words text-mg-body2">{body}</div>
       </details>
     </div>
+  );
+}
+
+// Las respuestas de subsesión recibidas seguidas: una línea a la izquierda «Recibió N mensajes ›», plegada por defecto;
+// desplegada, cada respuesta con el nombre de su subsesión (que la abre).
+function SessionResultsGroup({ id, blocks }: { readonly id: string; readonly blocks: readonly Extract<Block, { kind: 'user' }>[] }): React.JSX.Element {
+  const t = useT();
+  const { isExpanded, setExpanded } = useExpandedRows();
+  const open = isExpanded(`${id}:group`);
+  return (
+    <div className="flex justify-start">
+      <details
+        data-session-results="true"
+        open={open}
+        onToggle={(event) => setExpanded(`${id}:group`, event.currentTarget.open)}
+        className="min-w-0 max-w-full text-[11.5px] text-mg-sec">
+        <summary className="flex cursor-pointer items-center gap-[5px]">
+          <span>{t('chat.sessionResult.received', { count: blocks.length })}</span>
+          <span aria-hidden="true" className="text-mg-icon"><RotatingChevron open={open} size={10} /></span>
+        </summary>
+        <div className="mt-[6px] flex flex-col gap-[6px]">
+          {blocks.map((block) => <GroupedSessionResult key={block.id} block={block} />)}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function GroupedSessionResult({ block }: { readonly block: Extract<Block, { kind: 'user' }> }): React.JSX.Element | null {
+  const t = useT();
+  const openSubsession = useOpenSubsession();
+  const { isExpanded, setExpanded } = useExpandedRows();
+  const wrapper = useMemo(() => classifySystemWrapper(block.text), [block.text]);
+  if (wrapper.kind !== 'mage-session-result') return null;
+  const name = wrapper.name.length > 0 ? wrapper.name : t('chat.sessionResult.unnamed');
+  return (
+    <details
+      data-session-result="true"
+      open={isExpanded(`${block.id}:result`)}
+      onToggle={(event) => setExpanded(`${block.id}:result`, event.currentTarget.open)}
+      className="min-w-0 rounded-[9px] border border-mg-border-subtle bg-mg-block p-[6px_11px]">
+      <summary className="cursor-pointer text-mg-sec">
+        {t('chat.sessionResult.label')}{' '}
+        <button
+          type="button"
+          data-session-result-open={wrapper.conversationId}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openSubsession(wrapper.conversationId);
+          }}
+          className="font-semibold text-mg-text underline-offset-2 hover:underline">
+          {name}
+        </button>
+      </summary>
+      <div className="mt-[6px] whitespace-pre-wrap break-words text-mg-body2">{wrapper.body}</div>
+    </details>
   );
 }
 
