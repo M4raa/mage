@@ -3910,6 +3910,8 @@ const CHECKS = [
           pastillas: document.querySelectorAll('[data-background-badge]').length,
           estado: badge?.getAttribute('data-background-badge') ?? null,
           texto: (row?.textContent ?? '').trim(),
+          // U-A2: la fila ya no escribe el estado en una segunda línea; lo dice la pastilla y el nombre accesible.
+          nombreAccesible: row?.querySelector('button[data-history-session]')?.getAttribute('aria-label') ?? '',
         };
       });
 
@@ -3920,7 +3922,7 @@ const CHECKS = [
         cerrado.sigueAbierta === false &&
         fila.pastillas === 1 &&
         fila.estado === 'done' &&
-        fila.texto.includes(ui('history.background.done'));
+        fila.nombreAccesible.includes(ui('history.background.done'));
       return {
         ok,
         detail: `al cerrar: estado=${cerrado.estado} pestaña cerrada=${!cerrado.sigueAbierta} · fila: pastillas=${fila.pastillas} estado=${fila.estado} texto=${JSON.stringify(fila.texto)}`,
@@ -10104,15 +10106,18 @@ const CHECKS = [
         const item = { sessionId: 'verify-project-chat', configDir: '.claude', cwd: 'C:/proyecto/python', title: 'Chat Python de prueba', privacy: 'shared', updatedAtMs: Date.now(), sizeBytes: 100, isScheduled: false };
         window.__mageDev.store.setState((s) => ({ conversationHistory: [item], allConversationHistory: [{ accountId: s.activeAccountId, item }] }));
       });
-      // Q02: el lateral agrupa por carpeta y los grupos nacen plegados: se despliega el de la carpeta de la fila.
-      await page.locator('[data-project-key$="/proyecto/python"]').click();
+      // Q02: el lateral agrupa por carpeta y los grupos nacen desplegados (U-A4): se despliega el de la carpeta de la fila solo si no lo está.
+      const carpetaPython = page.locator('[data-project-key$="/proyecto/python"]');
+      await carpetaPython.waitFor({ state: 'visible' });
+      if ((await carpetaPython.getAttribute('aria-expanded')) !== 'true') await carpetaPython.click();
       const history = page.locator('[data-history-session="verify-project-chat"]');
       await history.waitFor({ state: 'visible' });
       await waitForStillBox(page, '[data-history-session="verify-project-chat"]');
       await history.click({ button: 'right' });
       await page.getByRole('menuitem', { name: 'Python' }).click();
-      // La fila pasa al proyecto del usuario, que también nace plegado.
-      await project.locator('[data-project-key]').click();
+      // La fila pasa al proyecto del usuario, que también nace desplegado.
+      const cabeceraProyecto = project.locator('[data-project-key]');
+      if ((await cabeceraProyecto.getAttribute('aria-expanded')) !== 'true') await cabeceraProyecto.click();
       const assigned = await project.locator('[data-history-session="verify-project-chat"]').count();
       const saved = await page.evaluate(() => window.__mageDev.store.getState().settings.chatProjects[0]);
       await project.getByRole('button', { name: uiRegExp('dialogs.newTab.title') }).click();
@@ -10464,20 +10469,23 @@ const CHECKS = [
       try {
         const cabecera = page.locator('[data-project-key$="/proyecto-a"]');
         await cabecera.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-        // Los grupos nacen plegados; si ya estuviera abierto, se pliega antes de medir el despliegue.
-        if ((await cabecera.getAttribute('aria-expanded')) === 'true') {
-          await cabecera.click();
-          await page.waitForTimeout(300);
-        }
+        // U-A4: los grupos nacen DESPLEGADOS (90°): se pliega (0°) y se vuelve a desplegar (90°).
+        const angulo = () =>
+          page.evaluate(() => {
+            const chevron = document.querySelector('[data-project-key$="/proyecto-a"] [aria-hidden="true"] > span');
+            if (chevron === null) return null;
+            const m = new DOMMatrix(getComputedStyle(chevron).transform);
+            return Math.round((Math.atan2(m.b, m.a) * 180) / Math.PI);
+          });
+        const inicial = await angulo();
         await cabecera.click();
         await page.waitForTimeout(300);
-        const medido = await page.evaluate(() => {
-          const chevron = document.querySelector('[data-project-key$="/proyecto-a"] [aria-hidden="true"] > span');
-          if (chevron === null) return { angulo: null };
-          const m = new DOMMatrix(getComputedStyle(chevron).transform);
-          return { angulo: Math.round((Math.atan2(m.b, m.a) * 180) / Math.PI) };
-        });
-        return { ok: medido.angulo === 90, detail: JSON.stringify(medido) };
+        const plegado = await angulo();
+        await cabecera.click();
+        await page.waitForTimeout(300);
+        const desplegado = await angulo();
+        const medido = { inicial, plegado, desplegado };
+        return { ok: inicial === 90 && plegado === 0 && desplegado === 90, detail: JSON.stringify(medido) };
       } finally {
         await restoreSidebar(page, previo);
       }
@@ -12122,7 +12130,8 @@ const CHECKS = [
           }, { id: projectId, name: F36_LONG_TEXT, title: F36_LONG_TEXT, cwd: F36_LONG_TOKEN });
           const proyecto = page.locator(`[data-chat-project="${projectId}"]`);
           await proyecto.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-          await proyecto.locator('[data-project-key]').click();
+          const cabeceraF36 = proyecto.locator('[data-project-key]');
+          if ((await cabeceraF36.getAttribute('aria-expanded')) !== 'true') await cabeceraF36.click();
           await proyecto.locator('[data-history-session="vg-f36-chat"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
           await waitForStillBox(page, '[data-history-session="vg-f36-chat"]');
           // La franja sale en la pestaña cuya sesión es la de la tarea: se enlaza una pestaña temporal a una sesión ficticia (no se lanza nada).

@@ -2,7 +2,6 @@ import { useLocalPopover } from '../../localPopovers';
 import { useState } from 'react';
 import { Icon } from '../Icon';
 import { RotatingChevron } from '../AnimatedIcon';
-import { useWorkbenchStore } from '../../workbenchStore';
 import { projectSummary, type ProjectGroup, type RowIndicator, type SidebarRow } from '../../sidebarModel';
 import { useT } from '../../../i18n/uiLanguage';
 
@@ -84,14 +83,12 @@ export interface ProjectGroupViewProps {
 }
 
 // Proyecto: cabecera con chevron, carpeta, nombre, resumen (ámbar con el nº que piden algo, anillo si trabaja)
-// y nº de conversaciones; «＋» y «⋯» solo con el ratón encima o el foco dentro. Plegado salvo el que contiene la
-// pestaña activa; el estado de plegado vive aquí y no se persiste.
+// y nº de conversaciones; «＋» y «⋯» solo con el ratón encima o el foco dentro. Desplegado por defecto; el
+// plegado que elige el usuario vive aquí y no se persiste.
 export function ProjectGroupView(props: ProjectGroupViewProps): React.JSX.Element {
   const { group, renderRow, indicatorOf, unlimited, forceOpen, emptyHint } = props;
-  // Booleano primitivo: solo se vuelve a pintar el grupo cuyo «contiene la activa» cambia al cambiar de pestaña.
-  const hasActive = useWorkbenchStore((s) => group.rows.some((row) => row.kind === 'tab' && row.tab.id === s.activeTabId));
   const [override, setOverride] = useState<boolean | null>(null);
-  const open = forceOpen || (override ?? hasActive);
+  const open = forceOpen || (override ?? true);
   const summary = projectSummary(group.rows.map(indicatorOf));
   return (
     <section data-sidebar-group="project" {...(group.projectId === null ? {} : { 'data-chat-project': group.projectId })} className="flex flex-col gap-px">
