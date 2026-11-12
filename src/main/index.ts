@@ -202,7 +202,7 @@ import { claudeSharedLaunch } from './config/mcpProviderTranslate';
 import { mergeServerLists, selectForTarget, type ResolvedMcpServer } from './config/mcpResolved';
 import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
-import { ConversationsService, withHostOwner, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
+import { ConversationsService, withCreator, withHostOwner, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
 import { migratePrivateConversations } from './conversations/privateConversationsMigration';
 import { CodexHistoryService } from './conversations/codexHistory';
 import { deleteCodexConversation } from './conversations/codexDeletion';
@@ -3661,6 +3661,11 @@ function listClaudeConversations(accountDir: string): readonly ConversationSumma
   return withHostOwner(listed, (id) => getConversationIndexStore().loadPrefs(id)?.hostOwnerAccountId);
 }
 
+// Añade a cada conversación del historial la que la creó con `mage_create_session` (el índice de Mage la guarda).
+function withCreatorOfDelegation(items: readonly ConversationSummary[]): ConversationSummary[] {
+  return withCreator(items, (id) => getConversationIndexStore().delegationOf(id).createdBy?.conversationId);
+}
+
 function registerTranscriptIpc2(deps: IpcDependencies): void {
   const { conversationAdminService, requireSafeConversation } = deps;
   ipcMain.handle(IpcChannel.TranscriptCancel, (_e, transcriptId: string) => {
@@ -3681,10 +3686,10 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
   // ser un dir de cuenta gestionado bajo HOME (nunca una ruta arbitraria via IPC).
   ipcMain.handle(IpcChannel.ConversationsList, (_e, accountDir: string): readonly ConversationSummary[] => {
     const codex = getProviderAccounts().find('codex', accountDir);
-    if (codex !== null) return codexHistory.list(codex.home);
+    if (codex !== null) return withCreatorOfDelegation(codexHistory.list(codex.home));
     const agyProfile = agyProfileOfAccount(accountDir);
-    if (agyProfile !== null) return agyHistory.list(agyProfile, accountDir, agyExternalProfileOf(accountDir));
-    return listClaudeConversations(accountDir);
+    if (agyProfile !== null) return withCreatorOfDelegation(agyHistory.list(agyProfile, accountDir, agyExternalProfileOf(accountDir)));
+    return withCreatorOfDelegation(listClaudeConversations(accountDir));
   });
   ipcMain.handle(IpcChannel.ConversationsDelete, async (_e, params: DeleteConversationParams): Promise<void> => {
     requireSafeConversation(params.accountDir, params.sessionId);

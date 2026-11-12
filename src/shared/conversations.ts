@@ -24,6 +24,8 @@ export interface ConversationSummary {
   readonly lastAccountId?: string;
   // Cuenta dueña de una conversación creada fuera de la ventana (terminal o MCP), del índice de Mage; solo Claude.
   readonly hostOwnerAccountId?: string;
+  // Del índice de Mage: la conversación que la creó con `mage_create_session` (el lateral la anida bajo ella).
+  readonly createdByConversationId?: string;
 }
 
 // Borrado de una conversacion en disco (#2 de AJUSTES). accountDir es la cuenta que la guarda.

@@ -1438,7 +1438,7 @@ async function adoptLiveSessionInto(mage: MageClient, get: () => WorkbenchState,
   let tabId = isNew ? '' : target.tabId;
   if (isNew) {
     advanceTabSeqPast(get().tabs);
-    const tab = adoptedTab(session, { tabId: nextTabId(), accountAlias: account.alias, title: deriveTitle(session.cwd), nowMs: Date.now() });
+    const tab = adoptedTab(session, { tabId: nextTabId(), accountAlias: account.alias, title: session.title ?? deriveTitle(session.cwd), nowMs: Date.now() });
     tabId = tab.id;
     set((s) => addBackgroundTab(s, tab));
   }
@@ -1455,6 +1455,9 @@ async function adoptLiveSessionInto(mage: MageClient, get: () => WorkbenchState,
   }
   set((s) => ({ statusByChat: { ...s.statusByChat, [tabId]: chatStatusOf(snapshot.state) } }));
   for (const event of snapshotEvents(snapshot)) get().handleEvent(session.sessionId, event);
+  // El nombre que dio la creadora se graba como el que escribe el usuario al renombrar: en Claude queda también
+  // pendiente de `/rename` para su transcripción (sale al acabar el turno); en Codex y agy solo es el título local.
+  if (isNew && session.title !== undefined) get().renameConversation(tabId, session.title);
   schedulePersist(mage, get);
 }
 

@@ -37,6 +37,17 @@ export function withHostOwner(
   });
 }
 
+// Añade la conversación que creó a cada una por delegación (la sabe el índice de Mage). Sin dato, el objeto queda igual.
+export function withCreator(
+  items: readonly ConversationSummary[],
+  creatorOf: (sessionId: string) => string | undefined,
+): ConversationSummary[] {
+  return items.map((item) => {
+    const createdByConversationId = creatorOf(item.sessionId);
+    return createdByConversationId === undefined ? item : { ...item, createdByConversationId };
+  });
+}
+
 export interface ConversationsDeps {
   readonly exists: (path: string) => boolean;
   readonly listDir: (path: string) => string[];

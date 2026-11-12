@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationSummary } from '@shared/conversations';
-import { ConversationsService, withHostOwner, withLastAccount, type ConversationsDeps } from './conversationsService';
+import { ConversationsService, withCreator, withHostOwner, withLastAccount, type ConversationsDeps } from './conversationsService';
 
 const ACC = join('/home/u', '.claude-p');
 const SHARED = join(ACC, 'projects');
@@ -268,6 +268,26 @@ describe('withHostOwner', () => {
     const item = summary('a');
 
     const result = withHostOwner([item], () => undefined);
+
+    expect(result[0]).toBe(item);
+  });
+});
+
+describe('withCreator', () => {
+  const summary = (sessionId: string): ConversationSummary => ({
+    sessionId, configDir: ACC, cwd: '', title: sessionId, updatedAtMs: 0, sizeBytes: 0, isScheduled: false,
+  });
+
+  it('withCreator_conDato_loAnade', () => {
+    const result = withCreator([summary('a')], () => 'creadora-1');
+
+    expect(result).toEqual([{ ...summary('a'), createdByConversationId: 'creadora-1' }]);
+  });
+
+  it('withCreator_sinDato_igual', () => {
+    const item = summary('a');
+
+    const result = withCreator([item], () => undefined);
 
     expect(result[0]).toBe(item);
   });
