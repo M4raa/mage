@@ -7335,10 +7335,13 @@ const CHECKS = [
             bloqueada: rama?.getAttribute('aria-disabled') === 'true',
             motivo: rama?.getAttribute('aria-label') ?? '',
             cambios: document.querySelector('[data-git-diff]')?.textContent?.trim() ?? null,
-            boton: document.querySelectorAll('[data-git-commit]').length,
+            // «Pedir commit al agente» vive en el menú «+»: el botón suelto ya no existe en la página.
+            botonSuelto: document.querySelectorAll('[data-git-commit]').length,
           };
         });
-        await page.locator('[data-git-commit]').first().click();
+        await page.locator('[data-prompt-actions] button[aria-haspopup="menu"]').first().click();
+        const entradasCommit = await page.locator('[data-prompt-actions] [data-action="git-commit"]').count();
+        await page.locator('[data-prompt-actions] [data-action="git-commit"]').first().click();
         await page.waitForTimeout(CONFIG.settleMs);
         const trasConfirmar = await page.evaluate(() => {
           const s = window.__mageDev.store.getState();
@@ -7363,13 +7366,14 @@ const CHECKS = [
           sucio.bloqueada &&
           sucio.motivo.includes(ui('history.branchSwitch.dirty')) &&
           sucio.cambios === '+2−0' &&
-          sucio.boton === 1 &&
+          sucio.botonSuelto === 0 &&
+          entradasCommit === 1 &&
           trasConfirmar.borrador.startsWith('Haz commit de los cambios pendientes') &&
           trasConfirmar.enElEditor.includes('Haz commit') &&
           trasConfirmar.estado === 'idle' &&
           trasConfirmar.mensajes === 0 &&
           ramas.join(',') === 'main,otra';
-        return { ok, detail: `antes=${chipsAntesDeConfiar} sucio=${JSON.stringify(sucio)} confirmar=${JSON.stringify({ ...trasConfirmar, enElEditor: trasConfirmar.enElEditor.slice(0, 30) })} ramas=${JSON.stringify(ramas)}` };
+        return { ok, detail: `antes=${chipsAntesDeConfiar} sucio=${JSON.stringify(sucio)} entradasCommit=${entradasCommit} confirmar=${JSON.stringify({ ...trasConfirmar, enElEditor: trasConfirmar.enElEditor.slice(0, 30) })} ramas=${JSON.stringify(ramas)}` };
       } finally {
         await page.evaluate((cwd) => window.__mageDev.store.getState().revokeTrustedFolder(cwd), repo);
         await page.evaluate((state) => window.__mageDev.store.setState(state), previo);

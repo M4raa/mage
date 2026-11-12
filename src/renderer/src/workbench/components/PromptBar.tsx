@@ -25,6 +25,7 @@ import { useCachedCommandCatalog } from '../commandCatalogStore';
 import { resolveKeyEvent, shortcutText } from '../keybindings/resolver';
 import { isMacPlatform } from '../keybindings/platform';
 import { ChatInfoBar } from './ChatInfoBar';
+import { diffChip } from '../chatInfoView';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
 import { notify } from '../notificationStore';
 import { displayTitle } from '../conversationTitle';
@@ -185,6 +186,13 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   const sendMessageToTab = useWorkbenchStore((s) => s.sendMessageToTab);
   const activeTab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === activeTabId));
   const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[activeTabId]);
+  const insertCommitPrompt = useWorkbenchStore((s) => s.insertCommitPrompt);
+  // «Pedir commit al agente» (menú «+»): mismo criterio que tenía el botón de GitChips, repo con cambios.
+  const canAskCommit = useWorkbenchStore((s) => {
+    const cwd = s.tabs.find((tab) => tab.id === activeTabId)?.cwd;
+    const snapshot = cwd === undefined ? undefined : s.gitByCwd[cwd]?.snapshot;
+    return snapshot?.kind === 'repo' && diffChip(snapshot) !== null;
+  });
   // #55 (F2.8): la conversación la tiene otra instancia de Mage; aquí se lee pero no se escribe.
   const lock = useWorkbenchStore((s) => s.lockByChat[activeTabId]);
   const readOnlyLock = lock !== undefined && !lock.owner ? lock : null;
@@ -819,6 +827,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
                   title: canHandoff ? t('prompt.actions.compactTip') : t('prompt.actions.compactDisabled'),
                 },
                 { icon: 'monitor', label: t('prompt.actions.openTerminal'), onClick: () => void window.mage.openTerminal(activeTab.cwd).catch(() => undefined) },
+                { icon: 'branch', label: t('chat.git.askCommit'), onClick: () => insertCommitPrompt(activeTabId), hidden: !canAskCommit, title: t('chat.git.askCommitTip'), action: 'git-commit' },
                 // "Abrir en <editor>": un item por editor detectado; si no hay ninguno, un unico
                 // item deshabilitado con el motivo en el title.
                 ...(editors.length > 0
@@ -1034,6 +1043,7 @@ interface ActionItem {
   readonly disabled?: boolean;
   readonly hidden?: boolean; // no aplica al proveedor/estado actual -> ni se lista
   readonly title?: string; // motivo cuando esta deshabilitado
+  readonly action?: string; // marca estable (`data-action`) para medir la entrada desde verify:gui
 }
 
 // Menu «+» que agrupa las acciones de la barra (adjuntar, mejorar, handoff, compactar, terminal, editor) en un
@@ -1064,6 +1074,7 @@ function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; r
               <button
                 key={item.label}
                 role="menuitem"
+                data-action={item.action}
                 onClick={() => run(item)}
                 disabled={item.disabled === true}
                 data-tip={item.title}
