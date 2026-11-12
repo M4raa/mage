@@ -167,17 +167,9 @@ export function PromptEditor({
     [],
   );
 
-  // `flex: 1 1 160px` y no `flex-1` (que es basis 0): con basis 0 el editor era el UNICO item elastico de
-  // una fila donde los controles van `shrink-0`, asi que en una ventana estrecha se quedaba en 0 px de
-  // ancho y el placeholder envolvia letra a letra — 562 px de contenido recortados al `max-height` del
-  // editor, o sea una caja de 222 px vacia con los chips flotando en medio (reporte del usuario: "en
-  // modo ventana mira como se ve el input"). Con 160 px de base, la fila —que ahora es `flex-wrap`—
-  // baja los controles a la linea siguiente antes de estrujar el editor. `min-w-0` se queda: si ni eso
-  // cabe, que encoja en vez de desbordar la barra.
-  //
-  // Apilado (P-026 3.1): la base es casi toda la fila (menos el `›` y el hueco), asi que los selectores
-  // no caben detras y bajan a la siguiente. Sigue siendo HIJO DIRECTO de la fila: la comprobacion de
-  // ventana pequena de `verify:gui` mide `host.parentElement`.
+  // `flex-1`: el editor es el item elastico de la fila de la caja (los controles van `shrink-0`) y
+  // `min-w-0` deja que encoja en vez de desbordar la barra en una ventana estrecha. Sigue siendo HIJO
+  // DIRECTO de la fila: la comprobacion de ventana pequena de `verify:gui` mide `host.parentElement`.
   return (
     <div
       ref={hostRef}

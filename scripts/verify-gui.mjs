@@ -4328,7 +4328,9 @@ const CHECKS = [
           const controles = pane?.querySelector('[data-prompt-controls="true"]');
           if (!host || !fila || !mas || !enviar || !controles) return null;
           const [f, h, m, e, c] = [fila, host, mas, enviar, controles].map((n) => n.getBoundingClientRect());
-          return { filaBottom: f.bottom, editorTop: h.top, editorRight: h.right, editorAlto: h.height, masBottom: m.bottom, enviarTop: e.top, enviarLeft: e.left, enviarBottom: e.bottom, controlesTop: c.top };
+          const linea = host.querySelector('.cm-line')?.getBoundingClientRect();
+          const centro = (r) => (r ? (r.top + r.bottom) / 2 : null);
+          return { centroLinea: centro(linea), centroEnviar: centro(e), centroMas: centro(m), filaBottom: f.bottom, editorTop: h.top, editorRight: h.right, editorAlto: h.height, masBottom: m.bottom, enviarTop: e.top, enviarLeft: e.left, enviarBottom: e.bottom, controlesTop: c.top };
         }, tabId);
       // El editor se carga en diferido: sin esperarlo, la primera medida de una tanda corta sale null.
       await page.locator(`[data-pane-tab-id="${tabId}"] [data-prompt-editor="true"] .cm-editor`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -4339,7 +4341,13 @@ const CHECKS = [
         await page.waitForTimeout(CONFIG.settleMs * 3);
         const largo = await medir();
         // Con el texto largo el editor crece hacia arriba: enviar se queda abajo y por encima de él no hay texto.
-        const ok = caso(vacio) && caso(largo) && largo.editorAlto > vacio.editorAlto + 10 && largo.enviarTop > largo.editorTop + 10;
+        // U-A1: con UNA línea, su centro coincide (±1,5 px) con el de enviar y el de «+».
+        const centrado =
+          vacio !== null &&
+          vacio.centroLinea !== null &&
+          Math.abs(vacio.centroLinea - vacio.centroEnviar) <= 1.5 &&
+          Math.abs(vacio.centroLinea - vacio.centroMas) <= 1.5;
+        const ok = centrado && caso(vacio) && caso(largo) && largo.editorAlto > vacio.editorAlto + 10 && largo.enviarTop > largo.editorTop + 10;
         return { ok, detail: JSON.stringify({ vacio, largo }) };
       } finally {
         await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, null), tabId);
