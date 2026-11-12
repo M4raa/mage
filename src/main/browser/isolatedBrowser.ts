@@ -1,17 +1,19 @@
 import type { Session, WebContents, WebContentsView } from 'electron';
 import type { RawCapture } from './annotatedCapture';
-import { hardenContents, hardenSession } from './browserHardening';
+import { hardenContents, hardenSession, type ServeFile } from './browserHardening';
 import { deriveDeviceScale } from './deviceScale';
 import { buildDomReadScript } from './domReadScript';
 import { parseDomSnapshot, resolveReadDomOptions, type ReadDomOptions } from './domSnapshot';
 import { ElementRegistry, type DomElement } from './elementRegistry';
+import { createFileAccess, type FileAccess, type FileAccessDeps } from './fileAccess';
 import { partitionNameFor } from './isolationConfig';
 import { normalizeNavigationUrl } from './navigationPolicy';
 
-export interface BrowserDeps {
+export interface BrowserDeps extends FileAccessDeps {
   createSession(partition: string): Session;
   createView(session: Session): WebContentsView;
   now(): Date;
+  readonly serveFile: ServeFile;
 }
 
 export interface BrowserScreenshot {
@@ -56,22 +58,26 @@ const STATE_EVENTS = ['did-navigate', 'did-navigate-in-page', 'page-title-update
 export class IsolatedBrowser {
   readonly view: WebContentsView;
   private readonly session: Session;
+  private readonly files: FileAccess | null;
   private readonly elements = new ElementRegistry();
   private readonly stateListeners = new Set<() => void>();
   private closed = false;
 
+  /** `fileRoot`: carpeta de trabajo de la conversación; sus .html se pueden abrir (P-040). null: ningún fichero. */
   constructor(
     instanceId: string,
     private readonly deps: BrowserDeps,
+    fileRoot: string | null,
   ) {
     const partition = partitionNameFor(instanceId);
+    this.files = createFileAccess(fileRoot, deps);
     this.session = deps.createSession(partition);
     if (this.session.isPersistent()) {
       throw new Error(`La partición del navegador es persistente y debe ser en memoria: ${partition}`);
     }
-    hardenSession(this.session);
+    hardenSession(this.session, this.files, deps.serveFile);
     this.view = deps.createView(this.session);
-    hardenContents(this.view.webContents);
+    hardenContents(this.view.webContents, this.files);
     for (const event of STATE_EVENTS) {
       this.view.webContents.on(event as 'did-navigate', () => this.notifyStateChange());
     }
@@ -91,7 +97,7 @@ export class IsolatedBrowser {
 
   async navigate(url: string): Promise<string> {
     this.assertOpen();
-    const target = normalizeNavigationUrl(url);
+    const target = normalizeNavigationUrl(url, this.files);
     this.elements.clear();
     try {
       await this.contents.loadURL(target);

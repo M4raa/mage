@@ -2972,7 +2972,7 @@ const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordina
 // Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel o, sin panel, en la de aparcamiento (D-S3, Z01).
 const viewPlacement = new ViewPlacement(createParkingHost(createParkingWindow));
 const browserRegistry = new BrowserRegistry({
-  createBrowser: (instanceId) => new IsolatedBrowser(instanceId, electronBrowserDeps),
+  createBrowser: (instanceId, sessionId) => new IsolatedBrowser(instanceId, electronBrowserDeps, sessionCoordinator.rewindContext(sessionId).cwd),
   newId: randomUUID,
   isLive: (sessionId) => sessionCoordinator.ownerOf(sessionId) !== undefined,
   onChange: (states) => windowManager.broadcast(BROWSER_STATE_CHANNEL, states),

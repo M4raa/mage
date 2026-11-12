@@ -42,6 +42,8 @@ const HIGHLIGHT_CLASSES = ['bg-mg-sel', 'text-mg-sel-ink'];
 // Extensiones que se pintan como Markdown. El resto va en monospace tal cual: adivinar el formato de un
 // fichero por su contenido es una fuente de sorpresas, y aqui el objetivo es LEER lo que hay.
 const MARKDOWN_EXTENSIONS = ['.md', '.markdown', '.mdx'];
+// P-040: estos se pueden abrir en el navegador de Mage (main solo deja los de la carpeta de la conversación).
+const BROWSER_PAGE = /\.html?$/i;
 
 function isMarkdown(name: string): boolean {
   const lower = name.toLowerCase();
@@ -413,6 +415,19 @@ function FileViewer({
   };
 
   const openFolder = (): void => void window.mage.openPath(file.dir).catch(() => undefined);
+  const tabId = usePaneTabId();
+  const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[tabId]);
+  const canOpenInBrowser = sessionId !== undefined && BROWSER_PAGE.test(file.name) && loaded?.outsideCwd !== true;
+  const openInBrowser = (): void => {
+    if (sessionId === undefined) return;
+    setError(null);
+    void window.mage
+      .browserNavigate({ sessionId, url: file.path })
+      // Import dinámico, como en browserStore: panelLayoutStore importa el registro de paneles.
+      .then(() => import('../panelLayoutStore'))
+      .then((m) => m.usePanelLayoutStore.getState().revealPanelById('browser'))
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
+  };
 
   return (
     // Sin `flex-1`: aqui dentro el visor mide por su CONTENIDO y empuja hacia abajo los ficheros que
@@ -437,6 +452,11 @@ function FileViewer({
             <PanelButton onClick={openFolder} label={t('chat.files.openFolder')}>
               {t('chat.files.folder')}
             </PanelButton>
+            {canOpenInBrowser && (
+              <PanelButton onClick={openInBrowser} label={t('chat.files.openInBrowser')}>
+                {t('chat.files.browser')}
+              </PanelButton>
+            )}
           </>
         ) : (
           <>

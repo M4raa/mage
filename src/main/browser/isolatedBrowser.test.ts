@@ -1,9 +1,19 @@
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { Session, WebContentsView } from 'electron';
 import { describe, expect, it, vi } from 'vitest';
 import { IsolatedBrowser } from './isolatedBrowser';
 import { DEFAULT_DOM_SELECTOR } from './domSnapshot';
 
 type Handler = (...args: unknown[]) => unknown;
+
+// Carpeta de la conversación y sus ficheros (realpath falso: solo existen estos).
+const ROOT = path.resolve('/proyecto');
+const PAGE = path.join(ROOT, 'index.html');
+const STYLE = path.join(ROOT, 'style.css');
+const OUTSIDE = path.resolve('/fuera/secreto.html');
+const EXISTING: ReadonlySet<string> = new Set([ROOT, PAGE, STYLE, OUTSIDE]);
+const fileUrl = (target: string): string => pathToFileURL(target).href;
 
 const okButton = { role: 'button', name: 'ok', rectDip: [178, 67, 29, 21] };
 
@@ -13,6 +23,7 @@ function createFakes() {
     permissionRequest: undefined as Handler | undefined,
     permissionCheck: undefined as Handler | undefined,
     download: undefined as Handler | undefined,
+    fileProtocol: undefined as ((request: { url: string }) => Promise<Response>) | undefined,
     windowOpen: undefined as Handler | undefined,
     contentsEvents: new Map<string, Handler>(),
   };
@@ -28,6 +39,11 @@ function createFakes() {
       if (event === 'will-download') handlers.download = handler;
     }),
     clearData: vi.fn(async () => undefined),
+    protocol: {
+      handle: vi.fn((scheme: string, handler: (request: { url: string }) => Promise<Response>) => {
+        if (scheme === 'file') handlers.fileProtocol = handler;
+      }),
+    },
   };
   const debuggerFake = {
     attached: false,
@@ -75,13 +91,18 @@ function createFakes() {
     createSession: vi.fn((_partition: string) => fakeSession as unknown as Session),
     createView: vi.fn((_session: Session) => view as unknown as WebContentsView),
     now: () => new Date('2026-10-31T12:00:00.000Z'),
+    realpath: (target: string): string => {
+      if (!EXISTING.has(target)) throw new Error(`ENOENT: ${target}`);
+      return target;
+    },
+    serveFile: vi.fn(async (realPath: string) => new Response(`contenido de ${realPath}`)),
   };
   return { handlers, fakeSession, debuggerFake, history, image, contents, view, deps };
 }
 
-function createBrowser() {
+function createBrowser(fileRoot: string | null = ROOT) {
   const fakes = createFakes();
-  return { ...fakes, browser: new IsolatedBrowser('t1', fakes.deps) };
+  return { ...fakes, browser: new IsolatedBrowser('t1', fakes.deps, fileRoot) };
 }
 
 async function browserWithElement() {
@@ -98,7 +119,7 @@ describe('IsolatedBrowser constructor', () => {
   it('constructor_validId_usesInMemoryPartition', () => {
     const fakes = createFakes();
 
-    new IsolatedBrowser('t1', fakes.deps);
+    new IsolatedBrowser('t1', fakes.deps, ROOT);
 
     expect(fakes.deps.createSession).toHaveBeenCalledWith('mage-browser-t1');
   });
@@ -107,14 +128,14 @@ describe('IsolatedBrowser constructor', () => {
     const fakes = createFakes();
     fakes.fakeSession.isPersistent.mockReturnValue(true);
 
-    expect(() => new IsolatedBrowser('t1', fakes.deps)).toThrow(/persistente/);
+    expect(() => new IsolatedBrowser('t1', fakes.deps, ROOT)).toThrow(/persistente/);
     expect(fakes.deps.createView).not.toHaveBeenCalled();
   });
 
   it('constructor_invalidId_throwsBeforeCreatingSession', () => {
     const fakes = createFakes();
 
-    expect(() => new IsolatedBrowser('a/b', fakes.deps)).toThrow(/no válido/);
+    expect(() => new IsolatedBrowser('a/b', fakes.deps, ROOT)).toThrow(/no válido/);
     expect(fakes.deps.createSession).not.toHaveBeenCalled();
   });
 });
@@ -157,6 +178,9 @@ describe('IsolatedBrowser hardening', () => {
     ['will-navigate', 'https://example.com/', false],
     ['will-redirect', 'chrome://gpu', true],
     ['will-redirect', 'http://localhost:3000/', false],
+    ['will-navigate', fileUrl(PAGE), false],
+    ['will-navigate', fileUrl(OUTSIDE), true],
+    ['will-navigate', fileUrl(STYLE), true],
   ])('hardening_navigationEvents_blockDisallowed (%s %s)', (eventName, url, blocked) => {
     const { handlers } = createBrowser();
     const details = { url, preventDefault: vi.fn() };
@@ -164,6 +188,35 @@ describe('IsolatedBrowser hardening', () => {
     handlers.contentsEvents.get(eventName)?.(details);
 
     expect(details.preventDefault.mock.calls.length > 0).toBe(blocked);
+  });
+});
+
+describe('IsolatedBrowser file protocol', () => {
+  it('fileProtocol_resourceInsideRoot_servesRealPath', async () => {
+    const { handlers, deps } = createBrowser();
+
+    const response = await handlers.fileProtocol!({ url: fileUrl(STYLE) });
+
+    expect(deps.serveFile).toHaveBeenCalledWith(STYLE);
+    expect(await response.text()).toBe(`contenido de ${STYLE}`);
+  });
+
+  it.each([
+    ['fuera', fileUrl(OUTSIDE)],
+    ['no existe', fileUrl(path.join(ROOT, 'nada.js'))],
+  ])('fileProtocol_notAllowed_returns403 (%s)', async (_case, url) => {
+    const { handlers, deps } = createBrowser();
+
+    const response = await handlers.fileProtocol!({ url });
+
+    expect(response.status).toBe(403);
+    expect(deps.serveFile).not.toHaveBeenCalled();
+  });
+
+  it('fileProtocol_withoutRoot_returns403', async () => {
+    const { handlers } = createBrowser(null);
+
+    expect((await handlers.fileProtocol!({ url: fileUrl(PAGE) })).status).toBe(403);
   });
 });
 
@@ -180,7 +233,33 @@ describe('IsolatedBrowser navigate', () => {
   it('navigate_deniedScheme_throwsWithoutLoading', async () => {
     const { browser, contents } = createBrowser();
 
-    await expect(browser.navigate('file:///C:/x')).rejects.toThrow(/file:/);
+    await expect(browser.navigate('chrome://gpu')).rejects.toThrow(/chrome:/);
+    expect(contents.loadURL).not.toHaveBeenCalled();
+  });
+
+  it('navigate_htmlInsideRootByPath_loadsFileUrl', async () => {
+    const { browser, contents } = createBrowser();
+
+    await browser.navigate(PAGE);
+
+    expect(contents.loadURL).toHaveBeenCalledWith(fileUrl(PAGE));
+  });
+
+  it.each([
+    ['fuera de la carpeta', OUTSIDE],
+    ['no es html', STYLE],
+    ['no existe', path.join(ROOT, 'nada.html')],
+  ])('navigate_fileNotAllowed_throwsWithoutLoading (%s)', async (_case, target) => {
+    const { browser, contents } = createBrowser();
+
+    await expect(browser.navigate(target)).rejects.toThrow(/carpeta de la conversación/);
+    expect(contents.loadURL).not.toHaveBeenCalled();
+  });
+
+  it('navigate_fileWithoutRoot_throwsWithoutLoading', async () => {
+    const { browser, contents } = createBrowser(null);
+
+    await expect(browser.navigate(PAGE)).rejects.toThrow(/no tiene carpeta de trabajo/);
     expect(contents.loadURL).not.toHaveBeenCalled();
   });
 

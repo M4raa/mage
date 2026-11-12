@@ -82,12 +82,12 @@ describe('BrowserRegistry open', () => {
     expect(deps.createBrowser).not.toHaveBeenCalled();
   });
 
-  it('open_usesNewIdAsInstanceId', () => {
+  it('open_usesNewIdAsInstanceIdAndPassesSession', () => {
     const { registry, deps } = setup();
 
     registry.open('s1');
 
-    expect(deps.createBrowser).toHaveBeenCalledWith('id1');
+    expect(deps.createBrowser).toHaveBeenCalledWith('id1', 's1');
   });
 });
 

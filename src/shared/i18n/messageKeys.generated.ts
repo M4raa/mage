@@ -469,6 +469,7 @@ export interface MessageValues {
   readonly "chat.fileActions.reveal": never;
   readonly "chat.fileActions.saveAs": never;
   readonly "chat.fileActions.saved": never;
+  readonly "chat.files.browser": never;
   readonly "chat.files.cancel": never;
   readonly "chat.files.cited": never;
   readonly "chat.files.contentOf": { readonly "name": string | number };
@@ -483,6 +484,7 @@ export interface MessageValues {
   readonly "chat.files.noFiles": never;
   readonly "chat.files.openAnyway": never;
   readonly "chat.files.openFolder": never;
+  readonly "chat.files.openInBrowser": never;
   readonly "chat.files.outsideCwd": never;
   readonly "chat.files.reload": never;
   readonly "chat.files.reloadFromDisk": never;

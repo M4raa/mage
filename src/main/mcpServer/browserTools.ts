@@ -19,7 +19,7 @@ export interface BrowserToolsPort {
 
 // Lo lee el modelo: castellano.
 export const BROWSER_TOOL_DESCRIPTIONS = {
-  navigate: 'Abre una URL (http, https o localhost) en el navegador de Mage de ESTA sesión, visible para el usuario en el panel «Navegador». Lo abre si no estaba abierto. Devuelve la URL final y el título.',
+  navigate: 'Abre una URL (http, https o localhost) o un fichero .html/.htm de la carpeta de trabajo de esta conversación (su ruta absoluta o file:///…, sin servidor) en el navegador de Mage de ESTA sesión, visible para el usuario en el panel «Navegador». Lo abre si no estaba abierto. Devuelve la URL final y el título.',
   screenshot: 'Captura la página del navegador de esta sesión (PNG de hasta 1568 px). Con annotate: true numera los elementos interactivos y devuelve su lista «id: rol "nombre" (x,y,ancho,alto)» en DIP; esos id valen para mage_browser_click y mage_browser_type hasta la siguiente lectura.',
   read_dom: 'Lista los elementos interactivos de la página (o los que casen con selector), hasta maxNodes (máximo 200), con id, rol, nombre y rectángulo en DIP. Cada lectura caduca los id anteriores; navegar y volver atrás también.',
   click: 'Hace clic en un elemento (elementId de la última lectura) o en unas coordenadas DIP (x e y). No desplaza la página.',
