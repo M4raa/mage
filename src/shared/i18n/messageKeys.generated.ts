@@ -1750,6 +1750,8 @@ export interface MessageValues {
   readonly "prompt.model.ariaLabel": never;
   readonly "prompt.model.tip": never;
   readonly "prompt.model.tipResolved": { readonly "model": string | number };
+  readonly "prompt.modelMenu.effort": never;
+  readonly "prompt.modelMenu.more": never;
   readonly "prompt.models.baseUrlInvalid": { readonly "detail": string | number };
   readonly "prompt.models.contextWindowInvalid": { readonly "min": string | number };
   readonly "prompt.models.modelsRequired": never;

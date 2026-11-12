@@ -30,7 +30,7 @@ import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costA
 import { notify } from '../notificationStore';
 import { displayTitle } from '../conversationTitle';
 import { Dropdown, type DropdownOption } from './Dropdown';
-import { StepSlider } from './StepSlider';
+import { ModelMenu } from './ModelMenu';
 import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortStepLabel, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
 import { usePaneTabId } from '../paneContext';
 import { renderLocalized, type LocalizedText } from '@shared/i18n/localizedText';
@@ -919,37 +919,6 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
               {t('prompt.codex.allowWrite')}
             </button>
           )}
-          {activeModel.length > 0 && (isClaude || isCodex || isAgy) && (
-            // Dropdown de modelo en caliente (M2.4, solo Claude): set_model aplica al siguiente turno.
-            <Dropdown
-              value={displayModelId(activeModel, modelOptions)}
-              onChange={changeModel}
-              options={modelOptions.map((option) => ({ value: option.id, label: option.label }))}
-              // El UNICO sitio del modelo (P-026, D18): lo que resolvio la sesion (el alias apunta a la
-              // ultima version de su familia) vive aqui, y no en una insignia aparte.
-              tip={resolvedModel === null ? t('prompt.model.tip') : t('prompt.model.tipResolved', { model: resolvedModel })}
-              ariaLabel={t('prompt.model.ariaLabel')}
-            />
-          )}
-          {activeModel.length > 0 && !isClaude && !isCodex && !isAgy && (
-            <span className="shrink-0 self-center rounded-full border border-mg-border-ctrl px-[8px] py-[2px] text-[10.5px] text-mg-sec">{activeModel}</span>
-          )}
-          {(isClaude || isCodex || (isAgy && !agyModelFixesEffort(activeModel))) && (
-            // Esfuerzo (--effort, M2.4 / B4; P-028 33: deslizador de seis pasos con Auto a la izquierda).
-            // Flag de ARRANQUE del CLI, no hay cambio en caliente: el aviso y la nota lo aclaran.
-            <StepSlider
-              steps={availableEffortSteps}
-              value={effort}
-              onChange={changeEffort}
-              ariaLabel={t('prompt.effort.ariaLabel')}
-              chipLabel={t('prompt.effort.label', { level: effortStepLabel(effort).toLowerCase() })}
-              chipSizers={availableEffortSteps.map((step) => t('prompt.effort.label', { level: step.label.toLowerCase() }))}
-              heading={t('prompt.effort.label', { level: effortStepLabel(effort) })}
-              endLabels={[t('prompt.effort.faster'), t('prompt.effort.smarter')]}
-              tip={isCodex ? t('prompt.effort.tipNextTurn') : isAgy ? t('prompt.effort.tipNextMessage') : t('prompt.effort.tipOnStart')}
-              note={isCodex ? t('prompt.effort.noteNextTurn') : isAgy ? t('prompt.effort.noteNextMessage') : t('prompt.effort.noteOnStart')}
-            />
-          )}
           {(isClaude || isRuntime || isAgy || (isCodex && modeSteps.length > 0)) && (
             // Modo de permiso: un selector (antes deslizador de pasos, P-028 32/33). Los modos son los que EXPONE el CLI
             // (respuesta 18): en Claude, su `--permission-mode`; en Codex, sus perfiles, que aplican al siguiente turno.
@@ -964,6 +933,30 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
               triggerClassName={permissionChipSkin(permissionMode)}
               triggerData={{ 'data-permission-mode': permissionMode }}
               leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
+            />
+          )}
+          {activeModel.length > 0 && (
+            // Modelo y esfuerzo en UN chip (B1): el menú trae los modelos más nuevos, «Esfuerzo» y «Más modelos».
+            // El esfuerzo es un flag de ARRANQUE del CLI (no hay cambio en caliente): su nota lo aclara. El runtime
+            // propio no cambia de modelo en caliente: el chip se pinta sin menú. El UNICO sitio del modelo (P-026,
+            // D18): lo que resolvio la sesion (el alias apunta a la ultima version de su familia) vive en su tip.
+            <ModelMenu
+              models={modelOptions}
+              value={displayModelId(activeModel, modelOptions)}
+              onModel={changeModel}
+              interactive={isClaude || isCodex || isAgy}
+              ariaLabel={t('prompt.model.ariaLabel')}
+              tip={resolvedModel === null ? t('prompt.model.tip') : t('prompt.model.tipResolved', { model: resolvedModel })}
+              effort={
+                isClaude || isCodex || (isAgy && !agyModelFixesEffort(activeModel))
+                  ? {
+                      steps: availableEffortSteps,
+                      value: effort,
+                      onChange: changeEffort,
+                      note: isCodex ? t('prompt.effort.noteNextTurn') : isAgy ? t('prompt.effort.noteNextMessage') : t('prompt.effort.noteOnStart'),
+                    }
+                  : null
+              }
             />
           )}
           </ChatInfoBar>

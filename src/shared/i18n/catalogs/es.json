@@ -1748,6 +1748,8 @@
   "prompt.model.ariaLabel": "Modelo (aplica al siguiente turno)",
   "prompt.model.tip": "Cambiar el modelo (aplica al siguiente turno)",
   "prompt.model.tipResolved": "La sesión resolvió {model} · cambiar el modelo (aplica al siguiente turno)",
+  "prompt.modelMenu.effort": "Esfuerzo",
+  "prompt.modelMenu.more": "Más modelos",
   "prompt.models.baseUrlInvalid": "{detail}. Ejemplo: http://localhost:11434/v1",
   "prompt.models.contextWindowInvalid": "La ventana de contexto tiene que ser un número entero de tokens mayor que {min} (o vacía).",
   "prompt.models.modelsRequired": "Indica al menos un modelo (ids separados por comas), p. ej. llama3, mistral.",
