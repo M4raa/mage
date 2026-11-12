@@ -383,6 +383,18 @@ describe('ClaudeAdapter', () => {
       expect(() => adapter.buildSpawnPlan({ ...launch, shared: { mcpServers: [server], settingsFragment: null, claudeAiConnectors: true } })).toThrow(/mcp-config/);
     });
 
+    it('buildSpawnPlan_ultracode_settingsConUltracode', () => {
+      const plan = adapter.buildSpawnPlan({ ...launch, ultracode: true });
+
+      expect(plan.args.slice(-2)).toEqual(['--settings', '{"ultracode":true}']);
+      expect(plan.args.filter((arg) => arg === '--settings')).toHaveLength(1);
+    });
+
+    it('buildSpawnPlan_sinUltracode_igualQueAntes', () => {
+      expect(adapter.buildSpawnPlan({ ...launch, ultracode: false }).args).toEqual(adapter.buildSpawnPlan(launch).args);
+      expect(adapter.buildSpawnPlan(launch).args).not.toContain('--settings');
+    });
+
     it('buildSpawnPlan_sinSharedConfigArgs_noAnadeNiMcpConfigNiSettings', () => {
       const plan = adapter.buildSpawnPlan(launch);
 

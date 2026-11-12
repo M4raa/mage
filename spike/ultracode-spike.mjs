@@ -3,6 +3,10 @@
 // «Responde solo: hola», espera el `result` y cierra stdin. Guarda el evento `system/init` (sin claves de
 // credenciales ni de identidad) y las diferencias entre A y B en --out (por defecto audit/informes/evidencias-057).
 // Gasta DOS turnos reales; no es codigo de produccion.
+//
+// La señal de que Ultracode está activo no está en el init: es la entrada `attachment` `ultra_effort_enter`
+// de la transcripción (medido el 12-11 con 2.1.319). Por eso, tras los dos turnos, el spike lee las dos
+// transcripciones (`<config dir>/projects/<cwd codificado>/<session_id>.jsonl`) y escribe si cada una la lleva.
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -64,7 +68,7 @@ function runOnce(label, extraArgs) {
     function onEvent(line) {
       let event;
       try { event = JSON.parse(line); } catch { state.others.push({ unparsable: line.slice(0, 200) }); return; }
-      if (event.type === 'system' && event.subtype === 'init') state.init = redact(event);
+      if (event.type === 'system' && event.subtype === 'init') { state.init = redact(event); state.sessionId = event.session_id; state.cwd = event.cwd; }
       else if (event.type === 'system') state.others.push(redact({ type: event.type, subtype: event.subtype, ...event }));
       else if (event.type === 'result') {
         state.result = { subtype: event.subtype, is_error: event.is_error, result: String(event.result ?? '').slice(0, 200) };
@@ -96,6 +100,22 @@ function diffInit(a, b) {
   return lines;
 }
 
+// Directorio de config del CLI (el de por defecto del usuario salvo CLAUDE_CONFIG_DIR).
+function claudeConfigDir() {
+  return process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
+}
+
+// ¿La transcripción de la sesión lleva la entrada `attachment` `ultra_effort_enter`?
+// Devuelve 'sí', 'no' o 'transcripción no encontrada: <ruta>' (nunca adivina).
+function hasUltraEffortEnter(run) {
+  if (!run.sessionId || !run.cwd) return 'transcripción no encontrada: sin session_id/cwd en el init';
+  const encodedCwd = run.cwd.replace(/[^a-zA-Z0-9]/g, '-');
+  const file = path.join(claudeConfigDir(), 'projects', encodedCwd, `${run.sessionId}.jsonl`);
+  if (!fs.existsSync(file)) return `transcripción no encontrada: ${file}`;
+  const found = fs.readFileSync(file, 'utf8').split('\n').some((line) => line.includes('"ultra_effort_enter"'));
+  return found ? 'sí' : 'no';
+}
+
 async function main() {
   fs.mkdirSync(outDir, { recursive: true });
   const a = await runOnce('A', []);
@@ -104,6 +124,9 @@ async function main() {
   fs.writeFileSync(path.join(outDir, 'b-init.json'), JSON.stringify(b.init, null, 2));
   const report = [
     ...diffInit(a.init, b.init),
+    '',
+    `ultra_effort_enter en la transcripción de A: ${hasUltraEffortEnter(a)}`,
+    `ultra_effort_enter en la transcripción de B: ${hasUltraEffortEnter(b)}`,
     '',
     `A: exit=${a.code} result=${JSON.stringify(a.result)} otros_system=${JSON.stringify(a.others)} stderr=${JSON.stringify(a.stderr.slice(0, 500))}`,
     `B: exit=${b.code} result=${JSON.stringify(b.result)} otros_system=${JSON.stringify(b.others)} stderr=${JSON.stringify(b.stderr.slice(0, 500))}`,

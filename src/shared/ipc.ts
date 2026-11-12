@@ -417,6 +417,8 @@ export interface CreateSessionParams {
   readonly cwd: string;
   readonly resumeSessionId?: string;
   readonly effort?: string;
+  // Ultracode (solo Claude): ajuste de arranque de la sesion; ausente/false -> apagado.
+  readonly ultracode?: boolean;
   readonly maxBudgetUsdCents?: number;
   // M2.6: modo de permiso inicial (--permission-mode). Ausente -> 'default'. Solo Claude.
   readonly permissionMode?: PermissionMode;

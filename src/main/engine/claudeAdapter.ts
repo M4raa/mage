@@ -136,7 +136,8 @@ export class ClaudeAdapter implements ProviderAdapter {
     const appended = [params.projectInstructions ?? '', params.shared?.systemNotice ?? ''].filter((text) => text.length > 0).join('\n\n');
     if (appended.length > 0) args.push('--append-system-prompt', appended);
     // Lo comun (MCP compartidos y extensiones, hooks y permisos) traducido a flags de Claude.
-    const shared = claudeSharedLaunch(params.shared, params.accountDir, this.writeMcpConfig);
+    // Ultracode (medido en 2.1.319: `--settings {"ultracode":true}` hace que el CLI inyecte `ultra_effort_enter`).
+    const shared = claudeSharedLaunch(params.shared, params.accountDir, this.writeMcpConfig, params.ultracode === true ? { ultracode: true } : {});
     args.push(...shared.args);
     // Env del hijo: se fija la cuenta y se SANEA (scrubAgentEnv), que borra toda credencial heredada. El
     // invariante de facturacion vive en un solo sitio: ver src/main/os/agentEnv.ts. Segunda excepcion
