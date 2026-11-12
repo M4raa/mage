@@ -1,5 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'motion/react';
+import { POPOVER_VARIANTS } from '../motionPresets';
 import { useLocalPopover } from '../localPopovers';
 import { isArrowNavKey, nextIndexForArrow } from '../a11y/keyboardNav';
 import { menuLabelOf, splitModelsByFamily } from '../modelMenu';
@@ -113,7 +115,8 @@ function ModelMenuPopover({ models, value, onModel, effort, ariaLabel, tip, chip
     const fitsRight = rightSide + MENU_WIDTH_PX <= window.innerWidth - VIEWPORT_MARGIN_PX;
     setPlacement({
       left: fitsRight ? rightSide : menuRect.left - SUBMENU_GAP_PX - MENU_WIDTH_PX,
-      top: Math.max(VIEWPORT_MARGIN_PX, rowRect.bottom - panel.getBoundingClientRect().height),
+      // offsetHeight, no getBoundingClientRect: el panel entra con una escala y el rect saldría un 3 % corto.
+      top: Math.max(VIEWPORT_MARGIN_PX, rowRect.bottom - panel.offsetHeight),
     });
     if (focusSubOnOpen.current) {
       focusSubOnOpen.current = false;
@@ -179,11 +182,13 @@ function ModelMenuPopover({ models, value, onModel, effort, ariaLabel, tip, chip
       >
         {chipText}
       </button>
-      {open &&
-        createPortal(
+      {createPortal(
+        // AnimatePresence VA DENTRO del portal (un createPortal no es un elemento válido para él; ver Dropdown).
+        <AnimatePresence>
+          {open && (
           <>
             <div className="fixed inset-0 z-[9998]" onClick={closeAll} />
-            <div ref={menuRef} role="menu" aria-label={ariaLabel} onKeyDown={(e) => onKeyDown(e, false)} style={menuStyle} className={PANEL_CLASS}>
+            <motion.div variants={POPOVER_VARIANTS} initial="initial" animate="animate" exit="exit" ref={menuRef} role="menu" aria-label={ariaLabel} onKeyDown={(e) => onKeyDown(e, false)} style={menuStyle} className={PANEL_CLASS}>
               {main.map((model) => (
                 <ModelRow key={model.id} model={model} checked={model.id === value} onPick={pickModel} onHover={() => setSub(null)} />
               ))}
@@ -199,9 +204,10 @@ function ModelMenuPopover({ models, value, onModel, effort, ariaLabel, tip, chip
                 />
               )}
               {more.length > 0 && <SubmenuRow name="more" label={t('prompt.modelMenu.more')} expanded={sub === 'more'} rowRefs={rowRefs} onOpen={openSub} />}
-            </div>
+            </motion.div>
+            <AnimatePresence>
             {sub !== null && (
-              <div ref={subRef} role="menu" aria-label={t(sub === 'effort' ? 'prompt.modelMenu.effort' : 'prompt.modelMenu.more')} data-model-submenu={sub} onKeyDown={(e) => onKeyDown(e, true)} style={submenuStyle} className={PANEL_CLASS}>
+              <motion.div variants={POPOVER_VARIANTS} initial="initial" animate="animate" exit="exit" ref={subRef} role="menu" aria-label={t(sub === 'effort' ? 'prompt.modelMenu.effort' : 'prompt.modelMenu.more')} data-model-submenu={sub} onKeyDown={(e) => onKeyDown(e, true)} style={submenuStyle} className={PANEL_CLASS}>
                 {sub === 'effort' && effort !== null && (
                   <>
                     <div className="p-[8px_11px] text-[11px] text-mg-muted">{effort.note}</div>
@@ -211,11 +217,14 @@ function ModelMenuPopover({ models, value, onModel, effort, ariaLabel, tip, chip
                   </>
                 )}
                 {sub === 'more' && more.map((model) => <ModelRow key={model.id} model={model} checked={model.id === value} onPick={pickModel} />)}
-              </div>
+              </motion.div>
             )}
-          </>,
-          document.body,
-        )}
+            </AnimatePresence>
+          </>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
     </>
   );
 }

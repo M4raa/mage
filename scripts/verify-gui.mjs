@@ -3150,6 +3150,7 @@ const CHECKS = [
         // «Más modelos»: se abre al pasar el ratón y no se sale de la ventana.
         await page.locator('[data-menu-more]').hover();
         await page.locator('[data-model-submenu="more"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await waitForStillBox(page, '[data-model-submenu="more"]'); // el submenú entra animado
         const masModelos = await dentroDeLaVentana('[data-model-submenu="more"]');
         const nMas = await page.locator('[data-model-submenu="more"] [role="menuitemradio"]').count();
         await page.screenshot({ path: path.join(CONFIG.outDir, 'b1-submenu-mas-modelos.png') });
@@ -3157,6 +3158,7 @@ const CHECKS = [
         await page.locator('[data-menu-effort]').hover();
         const sub = page.locator('[data-model-submenu="effort"]');
         await sub.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await waitForStillBox(page, '[data-model-submenu="effort"]'); // el submenú entra animado
         const esfuerzo = await dentroDeLaVentana('[data-model-submenu="effort"]');
         const marcas = await sub.locator('[aria-checked="true"]').count();
         const marcaConIcono = await sub.locator('[aria-checked="true"] svg').count();
