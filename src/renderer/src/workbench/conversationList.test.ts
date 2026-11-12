@@ -221,4 +221,16 @@ describe('tabFromConversation', () => {
     expect(tab.effort).toBe('high');
     expect(tab.permissionMode).toBe('plan');
   });
+
+  it('tabFromConversation_conUltracodeGuardado_arrancaConUltracode', () => {
+    const tab = tabFromConversation({ id: 't1', item, accountId: 'acc', accountAlias: 'a', prefs: { model: 'opus', ultracode: true } });
+
+    expect(tab.ultracode).toBe(true);
+  });
+
+  it('tabFromConversation_ultracodeEnOtroProveedor_noSeArrastra', () => {
+    const tab = tabFromConversation({ id: 't1', item: { ...item, providerId: 'codex' }, accountId: 'acc', accountAlias: 'a', prefs: { model: 'gpt', ultracode: true } });
+
+    expect(tab.ultracode).toBeUndefined();
+  });
 });

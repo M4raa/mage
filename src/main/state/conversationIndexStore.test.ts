@@ -88,6 +88,16 @@ describe('ConversationIndexStore — preferencias (2.1)', () => {
     expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus' });
   });
 
+  it('savePrefs_ultracode_seGuardaYFalseLoBorra', () => {
+    const store = memoryStore();
+
+    store.savePrefs(SESSION, { model: 'opus', ultracode: true });
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus', ultracode: true });
+    store.savePrefs(SESSION, { ultracode: false });
+
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus' });
+  });
+
   it('savePrefs_withAccountId_persistsIt', () => {
     const store = memoryStore();
 

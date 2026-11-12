@@ -54,11 +54,12 @@ const LEGACY_INDEX_VERSION = 1;
 // (comprueba la version), asi que volver atras pierde las preferencias si no hay copia.
 const LEGACY_BACKUP_SUFFIX = '.v1.bak';
 
-const PREF_KEYS = ['model', 'effort', 'permissionMode', 'provider', 'accountId', 'alwaysAllowTools', 'hostOwnerAccountId'] as const;
+const PREF_KEYS = ['model', 'effort', 'ultracode', 'permissionMode', 'provider', 'accountId', 'alwaysAllowTools', 'hostOwnerAccountId'] as const;
 
 const PREFS_SCHEMA = z.object({
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
+  ultracode: z.boolean().optional().catch(undefined),
   permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']).optional().catch(undefined),
   provider: z.string().min(1).optional().catch(undefined),
   // Última cuenta con la que se usó la conversación (lateral de todas las cuentas).
@@ -312,6 +313,11 @@ function mergePrefs(current: ConversationEntry | undefined, incoming: Conversati
     if (value === undefined) continue;
     if (value.length === 0) delete merged[key];
     else merged[key] = value;
+  }
+  // Ultracode es un booleano: `true` lo guarda y `false` BORRA la clave (no deja un `false` de ruido).
+  if (incoming.ultracode !== undefined) {
+    if (incoming.ultracode) merged.ultracode = true;
+    else delete merged.ultracode;
   }
   // Las reglas de permiso son una LISTA, no una cadena: se reemplaza entera cuando viene (el renderer
   // manda siempre el estado completo de la conversacion) y se BORRA la clave si llega vacia, para no

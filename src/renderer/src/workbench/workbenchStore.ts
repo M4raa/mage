@@ -2879,6 +2879,7 @@ export function createWorkbenchStore(mage: MageClient) {
           return on ? { ...rest, ultracode: true } : rest;
         }),
       }));
+      persistConversationPrefs(mage, get(), tabId);
       schedulePersist(mage, get);
     },
 

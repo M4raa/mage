@@ -109,6 +109,8 @@ export function tabFromConversation(context: ConversationTabContext): Tab {
     resolvedConfigDir: item.configDir,
     resumeSessionId: item.sessionId,
     ...(prefs.effort === undefined ? {} : { effort: prefs.effort }),
+    // Ultracode solo existe en Claude: si el historial la abre con otro CLI, no se arrastra.
+    ...(prefs.ultracode === true && (item.providerId ?? prefs.provider ?? 'claude') === 'claude' ? { ultracode: true } : {}),
     ...(prefs.permissionMode === undefined ? {} : { permissionMode: prefs.permissionMode }),
   };
 }
