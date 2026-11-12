@@ -3256,6 +3256,87 @@ const CHECKS = [
     },
   },
   {
+    // 0.1.6, grupo C: una creadora con dos subsesiones («Hola 1», «Hola 2»). El lateral las anida bajo ella (guía
+    // vertical + chevron que las pliega), el chat lleva una tarjeta por `mage_create_session` y las dos respuestas
+    // recibidas seguidas son UNA línea «Recibió 2 mensajes» que, desplegada, enseña las dos. Todo sembrado en el
+    // estado (historial y bloques): no spawnea ningún CLI ni manda ningún turno.
+    name: 'Subsesiones: nombre, anidadas en el lateral, tarjeta en el chat y respuestas agrupadas',
+    state: { tabs: 1 },
+    async run(page, { runDir }) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, blocksByChat: s.blocksByChat, allConversationHistory: s.allConversationHistory, loadConversationHistory: s.loadConversationHistory };
+      });
+      try {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const s = store.getState();
+          const creadora = 'vg58-madre';
+          const subsesiones = [['Hola 1', 'vg58-h1'], ['Hola 2', 'vg58-h2']];
+          const herramienta = ([title, conversationId], i) => ({
+            kind: 'tool', id: `vg58-t${i}`, toolUseId: `u-vg58-${i}`, tool: 'mcp__mage__mage_create_session', toolClass: 'command', command: '', meta: 'ok',
+            isError: false, output: [], filePath: null, diff: null, writtenContent: null, artifact: null, artifactDraft: null,
+            delegation: { title, conversationId }, delegationDraft: { title }, parentToolUseId: null,
+          });
+          const respuesta = ([title, conversationId], i) => ({
+            kind: 'user', id: `vg58-u${i}`, text: `<mage-session-result name="${title}" id="${conversationId}">\nhola desde ${title}\n</mage-session-result>`,
+            time: '12:00', attachments: [], nativeId: null,
+          });
+          const cwd = s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? '';
+          const hijas = subsesiones.map(([title, sessionId], i) => ({
+            accountId: s.activeAccountId,
+            item: { configDir: '', title, privacy: 'shared', sizeBytes: 1, isScheduled: false, sessionId, cwd, updatedAtMs: Date.now() - i * 1000, createdByConversationId: creadora },
+          }));
+          store.setState({
+            loadConversationHistory: async () => undefined,
+            allConversationHistory: hijas,
+            tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, resumeSessionId: creadora } : t)),
+            blocksByChat: { ...s.blocksByChat, [s.activeTabId]: [...subsesiones.map(herramienta), ...subsesiones.map(respuesta)] },
+          });
+        });
+        await page.locator('[data-delegation-card]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const medir = () => page.evaluate(() => {
+          const rama = [...document.querySelectorAll('[data-chat-sidebar] [data-row-branch]')].find((n) => n.querySelector(':scope > [data-sidebar-row] [data-row-fold]') !== null) ?? null;
+          const hijos = rama?.querySelector(':scope > [data-row-children]') ?? null;
+          return {
+            ramas: document.querySelectorAll('[data-chat-sidebar] [data-row-branch]').length,
+            guia: hijos === null ? null : getComputedStyle(hijos).borderLeftWidth,
+            hijas: hijos === null ? [] : [...hijos.querySelectorAll('[data-sidebar-row]')].map((n) => n.textContent?.trim()),
+            plegado: rama?.querySelector('[data-row-fold]')?.getAttribute('data-row-fold') ?? null,
+          };
+        });
+        const desplegado = await medir();
+        await page.screenshot({ path: path.join(runDir, 'subsesiones-lateral-y-tarjetas-grupo-plegado.png') });
+        const chevron = page.locator('[data-chat-sidebar] [data-row-fold]').first();
+        await chevron.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const plegado = await medir();
+        await chevron.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const vuelto = await medir();
+        const tarjetas = await page.evaluate(() => [...document.querySelectorAll('[data-delegation-card]')].map((n) => ({ id: n.getAttribute('data-delegation-card'), texto: n.textContent?.trim() })));
+        const grupo = page.locator('[data-session-results]');
+        const grupos = await grupo.count();
+        const resumen = ((await grupo.locator('summary').first().textContent()) ?? '').trim();
+        // `ui()` no formatea plurales: se pide el texto al traductor de la propia app.
+        const esperado = await page.evaluate(() => window.__mageDev.t('chat.sessionResult.received', { count: 2 }));
+        const abiertoAntes = await grupo.first().evaluate((n) => n.open);
+        await grupo.locator('summary').first().click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const respuestas = await grupo.first().locator('[data-session-result]').count();
+        await page.screenshot({ path: path.join(runDir, 'subsesiones-grupo-desplegado.png') });
+        const ok = desplegado.ramas === 1 && desplegado.guia === '1px' && desplegado.hijas.join('|') === 'Hola 1|Hola 2' && desplegado.plegado === 'open'
+          && plegado.hijas.length === 0 && plegado.plegado === 'closed' && vuelto.hijas.length === 2
+          && tarjetas.map((c) => c.texto).join('|') === 'Hola 1|Hola 2' && tarjetas.map((c) => c.id).join('|') === 'vg58-h1|vg58-h2'
+          && grupos === 1 && resumen === esperado && abiertoAntes === false && respuestas === 2;
+        return { ok, detail: JSON.stringify({ desplegado, plegado, vuelto, tarjetas, grupos, resumen, abiertoAntes, respuestas }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      }
+    },
+  },
+  {
     // La medida es el numero de colores DISTINTOS entre los <span> de token. Si el resaltado muriera
     // (gramatica que no carga, tema importado sin reglas, shiki que lanza), `useHighlightedCode`
     // devuelve null y el bloque cae a texto plano: 0 spans y un solo color heredado. Contar "spans > 0"
