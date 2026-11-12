@@ -74,6 +74,10 @@ const API_PROVIDER_ARGS: readonly string[] = [
 // se pasa cuando hay puente. Si molesta, leer su valor y sumarle CLAUDE.md.
 const PROJECT_FALLBACK_ARGS: readonly string[] = ['-c', 'project_doc_fallback_filenames=["CLAUDE.md"]'];
 
+// Longitud mínima de un valor de `mcp.env` para enmascararlo. Uno más corto («1», «a») no es una credencial y
+// enmascararlo rompe ids y textos: parte cada UUID que contenga ese carácter.
+const MIN_ENV_SECRET_LENGTH = 8;
+
 const CLIENT_INFO = { name: 'mage', title: 'Mage', version: '0.1.2' } as const;
 // `on-request`: el modelo pide aprobacion cuando sale del sandbox (medido: en una carpeta sin confianza
 // el sandbox queda en solo lectura, asi que escribir pide permiso).
@@ -129,7 +133,9 @@ export class CodexAdapter implements ProviderAdapter {
     this.apiKey = account?.apiKey ?? null;
     const mcp = toCodexOverrides(params.shared?.mcpServers ?? []);
     const caller = params.shared?.mageCaller;
-    this.secrets = [...new Set([this.apiKey ?? '', caller?.credential ?? '', ...Object.values(mcp.env)].filter((value) => value.length > 0))];
+    // La clave de API y la credencial se enmascaran siempre; de `mcp.env` solo los valores largos.
+    const envSecrets = Object.values(mcp.env).filter((value) => value.length >= MIN_ENV_SECRET_LENGTH);
+    this.secrets = [...new Set([this.apiKey ?? '', caller?.credential ?? '', ...envSecrets].filter((value) => value.length > 0))];
     const bridged = this.deps.resolveInstructions?.(params.cwd, account?.home ?? null) ?? [];
     const userFiles = bridged.filter((file) => file.scope === 'user');
     this.developerInstructions = [
