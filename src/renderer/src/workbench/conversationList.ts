@@ -61,12 +61,15 @@ function tabRow(tab: Tab, history: ConversationSummary | undefined): Conversatio
   return history === undefined ? { kind: 'tab', tab } : { kind: 'tab', tab, history };
 }
 
-// Instante (ms epoch) por el que se ordena una fila. Para una pestana: su ultimo mensaje enviado en
-// esta ejecucion, o el mtime de su transcripcion, o cuando se creo. 0 si no se sabe nada (pestanas
-// restauradas de un formato anterior sin marcas de tiempo) -> al final, pero nunca rompe el orden.
+// Instante (ms epoch) por el que se ordena una fila: la ultima INTERACCION. Para una pestana, el mayor
+// de su ultimo mensaje enviado y el mtime de su transcripcion (la respuesta del agente tambien escribe,
+// asi que cuenta; abrir un chat no escribe nada y no lo sube); si no hay ninguno, cuando se creo. 0 si
+// no se sabe nada (pestanas restauradas de un formato anterior sin marcas de tiempo) -> al final, pero
+// nunca rompe el orden.
 export function rowRecency(row: ConversationRow): number {
   if (row.kind === 'history') return row.item.updatedAtMs;
-  return row.tab.lastMessageAtMs ?? row.history?.updatedAtMs ?? row.tab.createdAtMs ?? 0;
+  const interaction = Math.max(row.tab.lastMessageAtMs ?? 0, row.history?.updatedAtMs ?? 0);
+  return interaction > 0 ? interaction : (row.tab.createdAtMs ?? 0);
 }
 
 // --- Formato de la segunda linea de una fila (antes dentro de ChatSidebar) -------------------------

@@ -6,6 +6,7 @@ import {
   planOpenConversation,
   tabFromConversation,
   relativeTime,
+  rowRecency,
   rowTitle,
   type ConversationRow,
 } from './conversationList';
@@ -253,6 +254,28 @@ describe('mergeConversationRows — resumen de la pestaña', () => {
     const fila = rows.find((r) => r.kind === 'tab');
 
     expect(fila !== undefined && fila.kind === 'tab' ? fila.history : 'no hay fila').toBeUndefined();
+  });
+});
+
+// U-A2: el orden es por la ultima interaccion (mensaje del usuario o respuesta del agente).
+describe('rowRecency — pestaña', () => {
+  const rowOf = (t: Partial<Tab>, h?: Partial<ConversationSummary>): ConversationRow =>
+    h === undefined ? { kind: 'tab', tab: tab(t) } : { kind: 'tab', tab: tab(t), history: hist(h) };
+
+  it('rowRecency_tabConRespuestaPosterior_usaElMtime', () => {
+    expect(rowRecency(rowOf({ lastMessageAtMs: 1000 }, { updatedAtMs: 5000 }))).toBe(5000);
+  });
+
+  it('rowRecency_tabConMensajePosterior_usaLastMessage', () => {
+    expect(rowRecency(rowOf({ lastMessageAtMs: 8000 }, { updatedAtMs: 5000 }))).toBe(8000);
+  });
+
+  it('rowRecency_tabSinNada_usaCreatedAt', () => {
+    expect(rowRecency(rowOf({ createdAtMs: 300 }))).toBe(300);
+  });
+
+  it('rowRecency_tabVacia_cero', () => {
+    expect(rowRecency(rowOf({}))).toBe(0);
   });
 });
 

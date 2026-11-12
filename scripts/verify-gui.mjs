@@ -4628,7 +4628,7 @@ const CHECKS = [
     // P-026, 1.7 (D19): la fila de una pestaña ABIERTA dice lo mismo que la de una cerrada —cuando y
     // cuanto pesa—, no `claude · opus[1m]`. Pestaña propia con un `resumeSessionId` falso y su fila de
     // historial inyectada; nada se spawnea.
-    name: 'Historial lateral: la fila de una pestaña abierta dice proveedor, cuenta y tiempo, sin peso ni modelo',
+    name: 'Historial lateral: la fila de un chat dice solo su nombre',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -4651,12 +4651,20 @@ const CHECKS = [
         const aguanta = await page.evaluate(() => window.__mageDev.store.getState().allConversationHistory.some((c) => c.item.sessionId === 'vg-fila'));
         if (aguanta) break;
       }
-      const linea = await page.evaluate(() => document.querySelector('button[aria-current="true"] [data-row-meta]')?.textContent?.trim() ?? null);
+      // U-A2: la fila activa es UNA línea con el título: sin segunda línea, sin monograma, sin cuenta ni tiempo.
+      const fila = await page.evaluate(() => {
+        const boton = document.querySelector('button[aria-current="true"]');
+        if (!boton) return null;
+        return {
+          meta: boton.querySelector('[data-row-meta]') !== null || boton.querySelector('[data-provider-monogram]') !== null,
+          texto: boton.textContent?.trim() ?? '',
+          alto: boton.getBoundingClientRect().height,
+        };
+      });
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
-      // Q02: la fila ya NO lleva el peso (va a la barra de estado): dice monograma del proveedor, cuenta y tiempo.
-      const ok = linea !== null && relativeTimeRegExp().test(linea) && !/\b(B|kB|MB)\b/.test(linea) && !/· (opus|sonnet|haiku)/.test(linea);
-      return { ok, detail: `segunda linea=${JSON.stringify(linea)}` };
+      const ok = fila !== null && !fila.meta && !relativeTimeRegExp().test(fila.texto) && !fila.texto.includes('·') && fila.alto <= 30;
+      return { ok, detail: `fila=${JSON.stringify(fila)}` };
     },
   },
   {
@@ -8845,8 +8853,9 @@ const CHECKS = [
             ],
           });
         });
-        // Los grupos del lateral nacen plegados: se despliega el de la carpeta de las filas.
-        await page.locator('[data-project-key$="/vg-cuenta"]').click();
+        // Los grupos del lateral nacen desplegados (U-A4); si no lo estuviera, se despliega el de la carpeta de las filas.
+        await page.locator('[data-project-key$="/vg-cuenta"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        if ((await page.locator('[data-history-session="vg-cuenta-desconocida"]').count()) === 0) await page.locator('[data-project-key$="/vg-cuenta"]').click();
         await page.locator('[data-history-session="vg-cuenta-desconocida"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const medido = await page.evaluate(() => {
           const s = window.__mageDev.store.getState();
@@ -8854,7 +8863,8 @@ const CHECKS = [
           const meta = (id) => document.querySelector(`[data-history-session="${id}"]`)?.textContent ?? null;
           return { alias, conocida: meta('vg-cuenta-conocida'), desconocida: meta('vg-cuenta-desconocida') };
         });
-        const ok = medido.alias.length > 0 && (medido.conocida ?? '').includes(medido.alias) && medido.desconocida !== null && !medido.desconocida.includes(medido.alias);
+        // U-A2: la fila ya no nombra ninguna cuenta; su texto es solo el título (ni la activa ni otra).
+        const ok = medido.alias.length > 0 && medido.conocida === 'VG conocida' && medido.desconocida === 'VG desconocida';
         return { ok, detail: JSON.stringify(medido) };
       } finally {
         await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
