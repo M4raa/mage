@@ -3128,8 +3128,18 @@ const CHECKS = [
           const r = document.querySelector(css).getBoundingClientRect();
           return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, dentro: r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight };
         }, selector);
+      let catalogoPrevio = null;
       try {
         await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        // El catálogo de reserva del perfil trae UN modelo por familia (sin «Más modelos»): se siembra el de una
+        // cuenta con varias versiones para medir el reparto; se repone en el `finally`.
+        catalogoPrevio = await page.evaluate((modelos) => {
+          const s = window.__mageDev.store.getState();
+          const tab = s.tabs.find((t) => t.id === s.activeTabId);
+          const key = tab.resolvedConfigDir ?? tab.accountId;
+          window.__mageDev.store.setState({ modelCatalogByAccount: { ...s.modelCatalogByAccount, [key]: modelos } });
+          return s.modelCatalogByAccount;
+        }, MODEL_MENU_CATALOG);
         const proveedor = await page.evaluate(() => {
           const s = window.__mageDev.store.getState();
           return s.tabs.find((t) => t.id === s.activeTabId)?.provider ?? null;
@@ -3175,8 +3185,8 @@ const CHECKS = [
           proveedor === 'claude' &&
           principal.dentro &&
           hueco >= 0 && hueco <= 8 &&
-          etiquetas.length > 0 && new Set(familias).size === etiquetas.length &&
-          nMas > 0 && masModelos.dentro &&
+          etiquetas.join(',') === MODEL_MENU_NEWEST.join(',') && new Set(familias).size === etiquetas.length &&
+          nMas === MODEL_MENU_CATALOG.length - MODEL_MENU_NEWEST.length && masModelos.dentro &&
           esfuerzo.dentro && marcas === 1 && marcaConIcono === 1 &&
           nivelNuevo === otroNivel && nivelNuevo !== nivelInicial && nivelRepuesto === nivelInicial;
         return {
@@ -3184,6 +3194,7 @@ const CHECKS = [
           detail: JSON.stringify({ proveedor, principal, hueco, etiquetas, masModelos: { ...masModelos, modelos: nMas }, esfuerzo, marcas, marcaConIcono, nivelInicial, otroNivel, nivelNuevo, nivelRepuesto }),
         };
       } finally {
+        if (catalogoPrevio !== null) await page.evaluate((catalogo) => window.__mageDev.store.setState({ modelCatalogByAccount: catalogo }), catalogoPrevio);
         if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       }
     },
@@ -13663,6 +13674,21 @@ function waitForNoExitingToasts(page) {
     { polling: 100, timeout: CONFIG.actionTimeoutMs },
   );
 }
+
+// Catálogo sembrado para medir el menú del modelo (B1): varias versiones por familia. Los ids de las cuatro
+// primeras coinciden con los del catálogo de reserva, para que el modelo de la pestaña siga siendo uno de ellos.
+const MODEL_MENU_CATALOG = [
+  { id: 'opus', label: 'Opus 5.5' },
+  { id: 'sonnet', label: 'Sonnet 5.5' },
+  { id: 'claude-fable-5-2', label: 'Fable 5.2' },
+  { id: 'haiku', label: 'Haiku 5.5' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-opus-4-8', label: 'Opus 4.8' },
+];
+const MODEL_MENU_NEWEST = ['Opus 5.5', 'Sonnet 5.5', 'Fable 5.2', 'Haiku 5.5'];
 
 // Espera a que TERMINEN las animaciones finitas del documento (WAAPI de motion y transiciones CSS; las
 // infinitas, como la constelacion, no). No vale un tiempo fijo: con la ventana tapada por otras (el usuario
