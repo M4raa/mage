@@ -2892,6 +2892,30 @@ const CHECKS = [
     },
   },
   {
+    // U-A6 (punto 13): Retroceso justo tras el marcador de una lista lo borra entero (el guion ya era atómico; el
+    // número no). Enter en una lista con contenido solo continúa la lista, no envía: ningún turno.
+    name: 'Input rico: Retroceso tras el número borra el marcador entero',
+    state: { tabs: 1 },
+    async run(page) {
+      const prompt = page.getByRole('textbox', { name: ui('prompt.editor.ariaLabel') });
+      await prompt.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await clearPrompt(page);
+      await typeInPrompt(page, '1. uno');
+      await prompt.press('Enter');
+      const continuada = await promptDocument(page);
+      await prompt.press('Backspace');
+      const trasRetroceso = await promptDocument(page);
+      await clearPrompt(page);
+      await typeInPrompt(page, '- x');
+      await prompt.press('ArrowLeft');
+      await prompt.press('Backspace');
+      const trasGuion = await promptDocument(page);
+      await clearPrompt(page);
+      const ok = continuada === '1. uno\n2. ' && trasRetroceso === '1. uno\n' && trasGuion === 'x';
+      return { ok, detail: `tras Enter=${JSON.stringify(continuada)} tras Retroceso=${JSON.stringify(trasRetroceso)} guion=${JSON.stringify(trasGuion)}` };
+    },
+  },
+  {
     // M2.6 + D5: con el input VACIO, Shift+Tab cicla el modo de permiso en vez de desindentar (el guard
     // `promptTextEmpty` del resolver). Se mide el CICLO COMPLETO y la vuelta al punto de partida: medir un
     // solo paso no distingue "cicla" de "se queda pegado en el segundo". Sin sesion viva no se manda

@@ -10,7 +10,7 @@ import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
 import { popoverAnchor } from '../popoverAnchor';
 import type { ProviderModel } from '@shared/providers';
-import { continueListOnNewline, indentLines, outdentLines, type TextState } from '../promptEditing';
+import { continueListOnNewline, indentLines, outdentLines, removeListMarker, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
 import { ALLOWED_IMAGE_TYPES, assertPastedImages, base64ByteLength, sourcePathOf, validateAttachmentSet, type ImageSource } from '@shared/attachments';
 import type { PromptEditorHandle } from './PromptEditor';
@@ -558,6 +558,15 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
       if (result === null) return false;
       applyEdit(result);
       return true;
+    }
+    // 2b. Retroceso justo tras el marcador de lista: lo borra entero. El guion ya es atomico por su widget;
+    // el numero («2.») no, y costaba tres pulsaciones. Si no aplica, sigue como cualquier otra tecla.
+    if (e.key === 'Backspace' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const result = removeListMarker(currentTextState());
+      if (result !== null) {
+        applyEdit(result);
+        return true;
+      }
     }
     // 3. Enter: la decision vive en `enterAction`, PURA y con 12 tests, porque equivocarse aqui cuesta
     // un turno real (enviar un mensaje a medias).
