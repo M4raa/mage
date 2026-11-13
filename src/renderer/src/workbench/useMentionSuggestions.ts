@@ -77,7 +77,7 @@ function useConversationPaths(tab: MentionTabContext | null, query: string | nul
 }
 
 // Clase y tamano de un fichero de la conversacion que el indice no trajo: busqueda por su ruta exacta.
-async function lookupCandidate(tab: MentionTabContext, relPath: string): Promise<MentionCandidate | null> {
+export async function lookupCandidate(tab: MentionTabContext, relPath: string): Promise<MentionCandidate | null> {
   const result = await window.mage.searchMentions({ cwd: tab.cwd, accountDir: tab.accountDir, query: relPath, limit: SEARCH_LIMIT });
   const wanted = relPath.toLowerCase();
   return result.candidates.find((candidate) => candidate.relPath.toLowerCase() === wanted) ?? null;
