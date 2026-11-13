@@ -18,6 +18,7 @@ function harness(overrides: Partial<HostControlDeps> = {}) {
     listProjects: vi.fn((): readonly ChatProject[] => []),
     defaultModels: vi.fn((): Readonly<Record<string, string>> => ({})),
     isTrusted: vi.fn(() => true),
+    canonicalPath: vi.fn((path: string) => path),
     launch: vi.fn(() => 's-1'),
     conversationIdOf: vi.fn(() => null),
     options: { setModel: vi.fn(), setEffort: vi.fn(), setPermissionMode: vi.fn() },
@@ -71,6 +72,22 @@ describe('HostControl.createSession', () => {
     const h = harness();
 
     expect(() => h.control.createSession(request({ accountId: '/h/.nada' }))).toThrow(UnknownAccountError);
+  });
+
+  it('createSession_rutaCortaDeLaCuenta_casaConLaLarga', () => {
+    const h = harness({ canonicalPath: vi.fn((path: string) => (path === 'C:/H/CLAUDE~1' ? '/h/.claude' : path)) });
+
+    h.control.createSession(request({ accountId: 'C:/H/CLAUDE~1' }));
+
+    expect(h.deps.launch).toHaveBeenCalledWith(expect.objectContaining({ accountDir: '/h/.claude' }));
+  });
+
+  it('resolveHostLaunchParams_canonizaTambienLaDeMage', () => {
+    const h = harness({ canonicalPath: vi.fn((path: string) => (path === '/h/.claude' || path === 'otra-forma' ? 'X' : path)) });
+
+    const params = resolveHostLaunchParams(h.deps, request({ accountId: 'otra-forma' }));
+
+    expect(params.accountDir).toBe('/h/.claude');
   });
 
   it('createSession_rutaRelativa_errorSinLanzar', () => {

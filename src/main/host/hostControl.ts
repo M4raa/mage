@@ -36,6 +36,8 @@ export interface HostControlDeps {
   readonly defaultModels: () => Readonly<Record<string, string>>;
   // La misma decisión que una pestaña (`isFolderTrusted` de index.ts).
   readonly isTrusted: (cwd: string, accountDir: string) => boolean;
+  // Ruta canónica (8.3 resuelto, enlaces seguidos; admite rutas que no existen): la de index.ts.
+  readonly canonicalPath: (path: string) => string;
   // El núcleo de `createSessionFromIpc` sin ventana: vuelve a pasar por `assertLaunchable`. Devuelve el sessionId.
   readonly launch: (params: CreateSessionParams) => string;
   readonly conversationIdOf: (sessionId: string) => ConversationId | null;
@@ -95,7 +97,8 @@ function guardHostOption(key: HostOptionKey, value: string): string {
 // La frontera de `session.create` (cuenta, modelo por defecto y confianza decidida por main), también para el MCP.
 export function resolveHostLaunchParams(deps: HostControlDeps, request: HostCreateRequest, options: { readonly cliDefaultModel?: boolean } = {}): CreateSessionParams {
   if (!isAbsolute(request.cwd)) throw new Error(`La carpeta tiene que ser una ruta absoluta: ${request.cwd}`);
-  const account = deps.listAccounts().find((a) => a.configDir === request.accountId && a.providerId === request.provider);
+  const wanted = deps.canonicalPath(request.accountId);
+  const account = deps.listAccounts().find((a) => a.providerId === request.provider && deps.canonicalPath(a.configDir) === wanted);
   if (account === undefined) throw new UnknownAccountError(request.accountId, request.provider);
   const defaults = deps.defaultModels();
   const requested = request.model ?? nonEmpty(defaults[request.provider]) ?? nonEmpty(account.defaultModel ?? undefined);

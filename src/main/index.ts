@@ -4539,6 +4539,7 @@ function hostControlDeps(): HostControlDeps {
     listProjects: () => getSettingsStore().load().chatProjects,
     defaultModels: () => getSettingsStore().load().defaultModelByProvider,
     isTrusted: isFolderTrusted,
+    canonicalPath,
     launch: (params) => launchHostSession(params, 'terminal'),
     conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
     // Lo que se cambia desde la terminal también queda en el índice (la ventana reabre con ello).

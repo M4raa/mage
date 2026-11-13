@@ -202,7 +202,7 @@ describe('HostSessionsPort.createSession', () => {
       (provider, base) => createSessionFor(provider, base, { buildAdapter: () => adapter, buildRuntime: () => { throw new Error('sin runtime'); }, createAgentSession: (agentDeps) => new AgentSession({ ...agentDeps, spawn: tap }) }),
       { homedir: tmpdir(), fileExists: () => false, listHome: () => [], resolveShared: () => ({ mcpServers: [], settingsFragment: null, claudeAiConnectors: false }) },
     );
-    const host = { listAccounts: () => [{ configDir: 'acc2', providerId: 'codex', defaultModel: null }], defaultModels: () => ({}), isTrusted: () => true } as unknown as HostControlDeps;
+    const host = { listAccounts: () => [{ configDir: 'acc2', providerId: 'codex', defaultModel: null }], defaultModels: () => ({}), isTrusted: () => true, canonicalPath: (path: string) => path } as unknown as HostControlDeps;
     const launch: HostSessionsPortDeps['launch'] = (request) => manager.create(resolveHostLaunchParams(host, { ...request, cwd: tmpdir() }, { cliDefaultModel: true }), () => undefined);
     const { port } = setup({ snapshot: snap('child-c'), catalog: [], launch });
     const threadStart = () => sent.map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> }).find((m) => m.method === 'thread/start');
