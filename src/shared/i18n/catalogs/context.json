@@ -361,6 +361,7 @@
   "capabilities.plugins.discover.libraryTitle": { "description": "Título sobre la biblioteca incrustada.", "usage": "src/renderer/src/workbench/components/settings/PluginsPage.tsx:258", "maxLength": 40 },
   "capabilities.plugins.discover.marketplaceMissing": { "description": "Marketplace sin manifiesto.", "usage": "src/renderer/src/workbench/components/settings/PluginsPage.tsx:246", "variables": {"name":"string"} },
   "capabilities.plugins.discover.note": { "description": "Nota de Descubrir.", "usage": "src/renderer/src/workbench/components/settings/PluginsPage.tsx:241" },
+  "capabilities.plugins.discover.sharedFolder": { "description": "Aviso bajo la nota de Descubrir: la carpeta plugins es común a todas las cuentas de Claude.", "usage": "src/renderer/src/workbench/components/settings/PluginsPage.tsx:242" },
   "capabilities.plugins.discoverAria": { "description": "Nombre accesible de la lista de Descubrir.", "usage": "src/renderer/src/workbench/components/settings/PluginsPage.tsx:252" },
   "capabilities.plugins.done": { "description": "Aviso de éxito.", "usage": "src/renderer/src/workbench/components/settings/PluginsPage.tsx:94" },
   "capabilities.plugins.empty": { "description": "Lista vacía.", "usage": "src/renderer/src/workbench/components/settings/PluginsPage.tsx:179" },

@@ -380,6 +380,7 @@
   "capabilities.plugins.discover.libraryTitle": "Biblioteca de Mage",
   "capabilities.plugins.discover.marketplaceMissing": "{name}: sin catálogo descargado",
   "capabilities.plugins.discover.note": "Se instala con «claude plugin install» en la cuenta elegida, solo desde marketplaces que ya conoce.",
+  "capabilities.plugins.discover.sharedFolder": "Los plugins se guardan en una carpeta que comparten todas tus cuentas de Claude: instalar o desinstalar uno aquí lo hace en todas. Activarlo o desactivarlo solo cambia esta cuenta.",
   "capabilities.plugins.discoverAria": "Plugins de los marketplaces",
   "capabilities.plugins.done": "Hecho. Se aplica en la siguiente conversación de la cuenta.",
   "capabilities.plugins.empty": "Esta cuenta no tiene plugins instalados.",

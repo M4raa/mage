@@ -239,6 +239,7 @@ function DiscoverList({ catalog, query, category, sort, action, accountDir }: Di
   return (
     <div className="flex flex-col gap-[8px]">
       <p className="text-[11px] text-mg-sec">{t('capabilities.plugins.discover.note')}</p>
+      <p data-plugins-shared-warning="true" className="text-[11px] text-mg-warn-text">{t('capabilities.plugins.discover.sharedFolder')}</p>
       {catalog.marketplaces
         .filter((m) => m.state !== 'ok')
         .map((m) => (

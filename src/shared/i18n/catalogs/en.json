@@ -380,6 +380,7 @@
   "capabilities.plugins.discover.libraryTitle": "Mage library",
   "capabilities.plugins.discover.marketplaceMissing": "{name}: no downloaded catalog",
   "capabilities.plugins.discover.note": "Installs with \"claude plugin install\" in the chosen account, only from marketplaces it already knows.",
+  "capabilities.plugins.discover.sharedFolder": "Plugins are stored in a folder shared by all your Claude accounts: installing or uninstalling one here does it for all of them. Enabling or disabling it only changes this account.",
   "capabilities.plugins.discoverAria": "Marketplace plugins",
   "capabilities.plugins.done": "Done. It applies to the account's next conversation.",
   "capabilities.plugins.empty": "This account has no installed plugins.",

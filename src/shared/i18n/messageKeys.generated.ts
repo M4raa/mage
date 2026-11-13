@@ -382,6 +382,7 @@ export interface MessageValues {
   readonly "capabilities.plugins.discover.libraryTitle": never;
   readonly "capabilities.plugins.discover.marketplaceMissing": { readonly "name": string | number };
   readonly "capabilities.plugins.discover.note": never;
+  readonly "capabilities.plugins.discover.sharedFolder": never;
   readonly "capabilities.plugins.discoverAria": never;
   readonly "capabilities.plugins.done": never;
   readonly "capabilities.plugins.empty": never;
