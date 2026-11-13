@@ -1791,6 +1791,7 @@ export interface MessageValues {
   readonly "prompt.actions.openInEditor": never;
   readonly "prompt.actions.openTerminal": never;
   readonly "prompt.attach.failed": { readonly "error": string | number };
+  readonly "prompt.attach.noDiskPath": { readonly "name": string | number };
   readonly "prompt.attach.remove": { readonly "n": string | number };
   readonly "prompt.attach.removeIcon": never;
   readonly "prompt.attach.thumbAlt": { readonly "n": string | number };

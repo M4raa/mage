@@ -12,7 +12,7 @@ import { popoverAnchor } from '../popoverAnchor';
 import type { ProviderModel } from '@shared/providers';
 import { continueListOnNewline, indentLines, outdentLines, removeListMarker, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
-import { ALLOWED_IMAGE_TYPES, assertPastedImages, base64ByteLength, sourcePathOf, validateAttachmentSet, type ImageSource } from '@shared/attachments';
+import { assertPastedImages, base64ByteLength, sourcePathOf, validateAttachmentSet, type ImageSource } from '@shared/attachments';
 import type { PromptEditorHandle } from './PromptEditor';
 import { Icon, type IconName } from './Icon';
 import { SendControls } from './SendControls';
@@ -38,7 +38,9 @@ import { t as translate, useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale } from '../../i18n/format';
 import type { PermissionMode } from '@shared/ipc';
 import { describeError } from '../describeError';
-import { addMention, applyResolution, failedMentions, insertMention, mentionQueryAt, reconcileMentions, removeMentionToken, type MentionFailure } from '../mentionDraft';
+import { fileMentionOf, insertAtCursor, isAttachableImage, pathNoteText, type FileMention } from '../fileAttach';
+import { lookupCandidate } from '../useMentionSuggestions';
+import { addMention, applyResolution, failedMentions, insertMention, mentionQueryAt, mentionToken, reconcileMentions, removeMentionToken, type MentionFailure } from '../mentionDraft';
 import { useMentionPreviews } from '../useMentionPreviews';
 import { MentionChips } from './MentionChips';
 import { useMentionSuggestions } from '../useMentionSuggestions';
@@ -55,9 +57,6 @@ const PromptEditor = lazy(() => import('./PromptEditor').then((m) => ({ default:
 // Referencia estable para "esta pestana no ha reportado comandos": devolver [] recien creado en cada
 // render haria que el selector de Zustand viera un valor nuevo siempre y re-renderizara sin parar.
 const EMPTY_COMMANDS: readonly SlashCommand[] = [];
-
-// Lo que ofrece el selector nativo de «Adjuntar imagen»: los mismos tipos que valida `addFiles`.
-const IMAGE_ACCEPT = [...ALLOWED_IMAGE_TYPES].join(',');
 
 // Los cinco llevan icono: uno sin el hacia que el chip encogiera 16 px al pasar por el y la fila, alineada
 // a la derecha, lo desplazaba.
@@ -639,7 +638,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
     }
   };
 
-  // Adjuntar imagenes (2.12.1), por pegado, con el botón «Adjuntar imagen» o soltándolas en el chat. La validacion es la del
+  // Adjuntar imagenes (2.12.1), por pegado, con «Adjuntar archivo» o soltándolas en el chat. La validacion es la del
   // modulo puro y su error se pinta en la linea `role="alert"` que ya existe: un adjunto que se cae en
   // silencio es peor que un error.
   //
@@ -676,15 +675,46 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
       });
   };
 
-  const onPickImages = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    addFiles(Array.from(e.currentTarget.files ?? []), 'disk');
+  // D1 (punto 15): las imágenes van por `addFiles`, como siempre; el resto entra como mención `@ruta` o como ruta.
+  const addAnyFiles = (files: readonly File[]): void => {
+    addFiles(files.filter(isAttachableImage), 'disk');
+    const others = files.filter((file) => !isAttachableImage(file));
+    if (others.length > 0) void attachOtherFiles(others);
+  };
+
+  const attachOtherFiles = async (files: readonly File[]): Promise<void> => {
+    const tabId = activeTabId;
+    const ctx = { cwd: tabCwd, lookup: (relPath: string) => (mentionTab === null ? Promise.resolve(null) : lookupCandidate(mentionTab, relPath)) };
+    try {
+      for (const file of files) applyFileMention(tabId, await fileMentionOf(file.name, window.mage.pathForFile(file), ctx));
+    } catch (err) {
+      setError(t('prompt.attach.failed', { error: describeError(err) }));
+    }
+  };
+
+  const applyFileMention = (tabId: string, outcome: FileMention): void => {
+    if (outcome.kind === 'noPath') {
+      setError(t('prompt.attach.failed', { error: t('prompt.attach.noDiskPath', { name: outcome.name }) }));
+      return;
+    }
+    const latest = draftOf(tabId);
+    const editor = editorRef.current;
+    const end = latest.text.length;
+    const next = insertAtCursor(editor?.getTextState() ?? { value: latest.text, selectionStart: end, selectionEnd: end }, outcome.kind === 'mention' ? `${mentionToken(outcome.candidate.relPath)} ` : pathNoteText(outcome.absPath));
+    const mentions = outcome.kind === 'mention' ? addMention(latest.mentions, outcome.candidate) : latest.mentions;
+    setDraft(tabId, { text: next.value, attachments: latest.attachments, mentions });
+    editor?.applyTextState(next);
+  };
+
+  const onPickFiles = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    addAnyFiles(Array.from(e.currentTarget.files ?? []));
     e.currentTarget.value = ''; // elegir otra vez el mismo fichero vuelve a disparar `change`
   };
 
   // Sin dependencias a propósito: la ref apunta siempre al `addFiles` del último render (lee la pestaña y el borrador de ese render).
   useEffect(() => {
     if (fileDropRef === undefined) return undefined;
-    fileDropRef.current = (files) => addFiles(files, 'disk');
+    fileDropRef.current = (files) => addAnyFiles(files);
     return () => {
       fileDropRef.current = null;
     };
@@ -809,11 +839,11 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
         )}
         {activeTab !== undefined && (
           <>
-            <input ref={imageInputRef} type="file" accept={IMAGE_ACCEPT} multiple hidden data-attach-input="image" onChange={onPickImages} />
+            <input ref={imageInputRef} type="file" multiple hidden data-attach-input="image" onChange={onPickFiles} />
             <ActionsMenu
               busy={busy}
               items={[
-                // Las imágenes entran también pegándolas o soltándolas en el chat.
+                // Las imágenes entran también pegándolas; cualquier fichero, soltándolo en el chat.
                 { icon: 'paperclip', label: t('i2.prompt.attachImage'), onClick: () => imageInputRef.current?.click(), disabled, title: t('i2.prompt.attachImageTip') },
                 { icon: 'sparkles', label: t('prompt.actions.improve'), onClick: () => void runImprove(), disabled: !canImprove, hidden: !isClaude },
                 {

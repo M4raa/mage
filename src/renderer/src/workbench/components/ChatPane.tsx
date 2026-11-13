@@ -104,7 +104,7 @@ export function ChatPane({
     setDropZone(zoneFromPoint(rect, e.clientX, e.clientY));
   };
   const onDrop = (e: React.DragEvent<HTMLDivElement>): void => {
-    // Imágenes soltadas en el chat: a la barra de ESTE panel, con las validaciones y el error del pegado.
+    // Ficheros soltados en el chat: a la barra de ESTE panel (las imágenes como imagen, el resto como mención).
     if (isFileDrag(e.dataTransfer.types)) {
       e.preventDefault();
       setDropZone(null);

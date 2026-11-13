@@ -1503,6 +1503,7 @@
   "prompt.actions.openInEditor": { "description": "Entrada deshabilitada del menú «⋯» cuando no se detecta ningún editor.", "usage": "src/renderer/src/workbench/components/PromptBar.tsx:707", "maxLength": 24 },
   "prompt.actions.openTerminal": { "description": "Entrada del menú «⋯» del input que abre una terminal en la carpeta de la conversación.", "usage": "src/renderer/src/workbench/components/PromptBar.tsx:694", "maxLength": 24 },
   "prompt.attach.failed": { "description": "Error sobre el input al pegar una imagen que no se puede adjuntar. {error} es el motivo.", "usage": "src/renderer/src/workbench/components/PromptBar.tsx:511", "variables": {"error":"string"} },
+  "prompt.attach.noDiskPath": { "description": "Motivo de error al adjuntar un fichero que no viene del disco. {name} es su nombre.", "usage": "src/renderer/src/workbench/components/PromptBar.tsx", "variables": {"name":"string"} },
   "prompt.attach.remove": { "description": "Nombre accesible del botón que quita una imagen adjunta. {n} es su número.", "usage": "src/renderer/src/workbench/components/PromptBar.tsx:602", "variables": {"n":"number"} },
   "prompt.attach.removeIcon": { "description": "Etiqueta del icono (una X) dentro del botón que quita una imagen adjunta.", "usage": "src/renderer/src/workbench/components/PromptBar.tsx:605" },
   "prompt.attach.thumbAlt": { "description": "Texto alternativo de la miniatura de una imagen adjunta. {n} es su número.", "usage": "src/renderer/src/workbench/components/PromptBar.tsx:587", "variables": {"n":"number"} },
