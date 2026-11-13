@@ -831,11 +831,9 @@ function runtimeEnv(): RuntimeEnv {
 const mcpLogins = new McpLoginRegistry({ openUrl: (url) => openOAuthUrl(url), newId: randomUUID });
 
 // La pagina de login de un servidor MCP remoto (OAuth del runtime propio) se abre en el navegador del
-// sistema cuando el usuario pulsa «Iniciar sesión». Solo http(s): una URL de otro esquema no la abre Mage.
+// sistema cuando el usuario pulsa «Iniciar sesión». Se abre por OpenWithService: https, o http a esta máquina (H7).
 async function openOAuthUrl(url: string): Promise<void> {
-  const protocol = new URL(url).protocol;
-  if (protocol !== 'https:' && protocol !== 'http:') throw new Error(`URL de autorización con esquema no permitido: ${protocol}`);
-  await shell.openExternal(url);
+  await openWithService.openAuthorizationUrl(url);
 }
 
 // Ventana y herramientas de los modelos del runtime propio, con cache compartida entre sesiones (R5).
@@ -3361,7 +3359,7 @@ function getAgyLogin(): AgyLoginService {
     spawnLogin: (profileDir) => spawn(resolveAgyBinary(), AGY_USAGE_ARGS, {
       cwd: profileDir, env: { ...scrubAgentEnv(process.env), USERPROFILE: profileDir, HOME: homedir(), ...AGY_FILE_TOKEN_ENV }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     }),
-    openUrl: (url) => shell.openExternal(url),
+    openUrl: (url) => openWithService.openExternal(url),
     killTree: (child) => killProcessTree(child, defaultKillTreeDeps()),
     sendCode: (child, code) => sendAgyLoginCode(child, code),
     tokenExists: (profileDir) => existsSync(join(profileDir, ...AGY_TOKEN_PARTS)),

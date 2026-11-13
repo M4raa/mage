@@ -57,6 +57,38 @@ describe('OpenWithService', () => {
     expect(d.openExternal).not.toHaveBeenCalled();
   });
 
+  it('openAuthorizationUrl_https_laAbre', async () => {
+    const d = deps();
+
+    await new OpenWithService(d).openAuthorizationUrl('https://auth.example.com/authorize');
+
+    expect(d.openExternal).toHaveBeenCalledWith('https://auth.example.com/authorize');
+  });
+
+  it('openAuthorizationUrl_httpLoopback_laAbre', async () => {
+    const d = deps();
+    const service = new OpenWithService(d);
+
+    await service.openAuthorizationUrl('http://127.0.0.1:8123/cb');
+    await service.openAuthorizationUrl('http://localhost:3000/auth');
+
+    expect(d.openExternal).toHaveBeenCalledTimes(2);
+  });
+
+  it('openAuthorizationUrl_httpRemoto_lanzaSinAbrir', async () => {
+    const d = deps();
+
+    await expect(new OpenWithService(d).openAuthorizationUrl('http://example.com/auth')).rejects.toThrow(expect.objectContaining({ localized: localized('errors.os.httpsOnly', { url: JSON.stringify('http://example.com/auth') }) }));
+    expect(d.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('openAuthorizationUrl_esquemaFile_lanzaSinAbrir', async () => {
+    const d = deps();
+
+    await expect(new OpenWithService(d).openAuthorizationUrl('file:///C:/x.exe')).rejects.toThrow(/file:/);
+    expect(d.openExternal).not.toHaveBeenCalled();
+  });
+
   it('reveal_existingFile_callsReveal', () => {
     const d = deps();
     new OpenWithService(d).reveal('/tmp/a.txt');
