@@ -18,7 +18,7 @@ import { usePanelLayoutStore } from '../panelLayoutStore';
 import { HooksPermissionsSection } from './settings/HooksPermissionsSection';
 import { KeepAliveSection } from './settings/KeepAliveSection';
 import { LibrarySection } from './settings/LibrarySection';
-import { McpSection } from './settings/McpSection';
+import { ConnectorsPage } from './settings/ConnectorsPage';
 import { OrganizationPage } from './settings/OrganizationPage';
 import { PluginsPage } from './settings/PluginsPage';
 import { SkillsPage } from './settings/SkillsPage';
@@ -232,7 +232,7 @@ function SettingsDialog(): React.JSX.Element {
             )}
             {section === 'providers' && <ProvidersSection />}
             {section === 'widget' && <WidgetSection enabled={widgetEnabled} onChange={setWidgetEnabled} />}
-            {section === 'mcp' && <McpSection />}
+            {section === 'mcp' && <ConnectorsPage />}
             {section === 'plugins' && <PluginsPage />}
             {section === 'library' && <LibrarySection />}
             {section === 'skills' && <SkillsPage />}
