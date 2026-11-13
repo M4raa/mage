@@ -11908,51 +11908,64 @@ const CHECKS = [
     },
   },
   {
-    // Carril R (R04): la sección «Tareas» del lateral. Solo mide el DOM: no pulsa Enter ni lanza ningún CLI.
-    name: 'R: el lateral tiene la sección Tareas con Nueva tarea',
+    // Carril R (R04): la entrada «Tareas programadas» del lateral (sustituye a la sección «Tareas»). Solo mide el DOM:
+    // no pulsa Enter ni lanza ningún CLI.
+    name: 'R: el lateral tiene la entrada Tareas programadas',
     async run(page) {
       const medido = await page.evaluate(() => {
         const sidebar = document.querySelector('[data-chat-sidebar]');
-        const section = sidebar?.querySelector('[data-tasks-section]') ?? null;
-        const boton = section?.querySelector('[data-new-task]') ?? null;
-        const others = [...(sidebar?.querySelector('[data-sidebar-list]')?.children ?? [])].filter((node) => node !== section);
+        const entrada = sidebar?.querySelector('[data-scheduled-tasks-entry]') ?? null;
+        const others = [...(sidebar?.querySelector('[data-sidebar-list]')?.children ?? [])].filter((node) => node !== entrada);
         return {
           lateral: document.querySelectorAll('[data-chat-sidebar]').length,
-          secciones: sidebar?.querySelectorAll('[data-tasks-section]').length ?? 0,
-          botones: sidebar?.querySelectorAll('[data-new-task]').length ?? 0,
-          botonDentro: boton !== null,
+          entradas: sidebar?.querySelectorAll('[data-scheduled-tasks-entry]').length ?? 0,
+          seccionesViejas: sidebar?.querySelectorAll('[data-tasks-section]').length ?? 0,
           // Antes que cualquier otro grupo del lateral (si no hay ninguno, basta con que exista).
           otrosGrupos: others.length,
-          antes: section !== null && others.every((node) => (section.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0),
+          antes: entrada !== null && others.every((node) => (entrada.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0),
         };
       });
-      const ok = medido.lateral === 1 && medido.secciones === 1 && medido.botones === 1 && medido.botonDentro && medido.antes;
+      const ok = medido.lateral === 1 && medido.entradas === 1 && medido.seccionesViejas === 0 && medido.antes;
       return { ok, detail: JSON.stringify(medido) };
     },
   },
   {
-    // Carril R (R04): «Nueva tarea» abre el diálogo modal; sin carpeta no deja empezar (el selector nativo no se puede
-    // pulsar desde CDP) y Escape lo cierra. Quien abre el diálogo lo cierra (error 5) y se espera a su desmontaje (error 6).
-    name: 'R: Nueva tarea abre el diálogo, no deja empezar sin carpeta y Escape lo cierra',
+    // Carril R (R04): la entrada del lateral abre la pantalla «Tareas programadas»; «Nueva tarea» abre el diálogo modal; sin
+    // carpeta no deja guardar (el selector nativo no se puede pulsar desde CDP) y Escape cierra SOLO el diálogo. Quien abre
+    // un diálogo lo cierra (error 5) y se espera a su desmontaje (error 6).
+    name: 'R: Tareas programadas: Nueva tarea no deja guardar sin carpeta y Escape solo cierra el diálogo',
     async run(page) {
-      const nueva = page.locator('[data-chat-sidebar] [data-new-task]');
-      if (await nueva.count() !== 1) return { ok: false, detail: `botones «Nueva tarea»: ${await nueva.count()} (se esperaba 1)` };
-      await nueva.click();
-      const dialogo = page.locator(MODAL).filter({ has: page.locator('[data-task-goal]') });
-      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const entrada = page.locator('[data-chat-sidebar] [data-scheduled-tasks-entry]');
+      if (await entrada.count() !== 1) return { ok: false, detail: `entradas «Tareas programadas»: ${await entrada.count()} (se esperaba 1)` };
+      await entrada.click();
+      const pantalla = page.locator('[data-scheduled-tasks]');
+      await pantalla.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       try {
+        await page.locator('[data-scheduled-new]').click();
+        const dialogo = page.locator(MODAL).filter({ has: page.locator('[data-task-goal]') });
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialogo.locator('[data-task-name]').fill('R verify: nombre de prueba');
         await dialogo.locator('[data-task-goal]').fill('R verify: objetivo de prueba');
         const empezar = dialogo.locator('[data-task-start]');
         const deshabilitado = await empezar.isDisabled();
         const botones = await empezar.count();
+        const textoBoton = (await empezar.textContent())?.trim() ?? '';
         await page.keyboard.press('Escape');
-        await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-        return { ok: deshabilitado && botones === 1, detail: JSON.stringify({ empezarDeshabilitadoSinCarpeta: deshabilitado, botonesEmpezar: botones, cerradoConEscape: true }) };
+        await page.locator('[data-task-goal]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const pantallaSigue = await pantalla.count();
+        await page.locator('[data-scheduled-close]').click();
+        await pantalla.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const ok = deshabilitado && botones === 1 && textoBoton === ui('tasks.dialog.save') && pantallaSigue === 1;
+        return { ok, detail: JSON.stringify({ empezarDeshabilitadoSinCarpeta: deshabilitado, botonesEmpezar: botones, textoBoton, pantallaSigueTrasEscape: pantallaSigue }) };
       } finally {
-        // Si algo falló antes de cerrar, no se deja el diálogo abierto a las siguientes.
+        // Si algo falló antes de cerrar, no se deja nada abierto a las siguientes.
         if (await page.locator('[data-task-goal]').count() > 0) {
           await page.keyboard.press('Escape');
           await page.locator('[data-task-goal]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        }
+        if (await pantalla.count() > 0) {
+          await page.evaluate(() => window.__mageDev.store.getState().closeScheduledTasks());
+          await pantalla.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         }
       }
     },
@@ -11979,7 +11992,8 @@ const CHECKS = [
         await page.waitForFunction(() => window.__mageDev !== undefined);
         await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
         await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('conversations'));
-        await page.locator('[data-tasks-section]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.evaluate(() => window.__mageDev.store.getState().openScheduledTasks());
+        await page.locator('[data-scheduled-tasks]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       };
       let taskId = null;
       try {
@@ -11992,20 +12006,149 @@ const CHECKS = [
         const estados = comprobada.deliverables.map((entry) => entry.status);
         const listada = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
         await reloadList();
-        const fila = page.locator(`[data-task-row="${taskId}"]`);
+        const fila = page.locator(`[data-scheduled-card="${taskId}"]`);
         await fila.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const fase = await fila.getAttribute('data-task-phase');
         await page.evaluate((id) => window.mage.removeTask(id), taskId);
         taskId = null;
         await reloadList();
-        const filasTrasQuitar = await page.locator(`[data-task-row="${creada.id}"]`).count();
+        const filasTrasQuitar = await page.locator(`[data-scheduled-card="${creada.id}"]`).count();
         const despues = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
         const ok = JSON.stringify(estados) === '["ok","missing","outsideScope"]' && listada.length === antes.length + 1 && listada.includes(creada.id)
           && fase === 'needsReview' && filasTrasQuitar === 0 && JSON.stringify(despues) === JSON.stringify(antes);
         return { ok, detail: JSON.stringify({ estados, fase, tareasAntes: antes.length, tareasConLaSembrada: listada.length, filasTrasQuitar, tareasDespues: despues.length }) };
       } finally {
         if (taskId !== null) await page.evaluate((id) => window.mage.removeTask(id), taskId);
+        await page.evaluate(() => window.__mageDev.store.getState().closeScheduledTasks());
         fs.rmSync(raiz, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      }
+    },
+  },
+  {
+    // Carril R (R04): la pantalla «Tareas programadas» entera, con tareas sembradas por IPC. No pulsa «Ejecutar ahora», no
+    // pulsa Enter y no lanza ningún CLI. El menú ⋯ se cierra pulsando fuera (Escape cerraría también la pantalla, que es
+    // un diálogo modal con su propio atajo). Escribe un SKILL.md en el HOME de PRUEBA: nunca contra el HOME real.
+    name: 'Tareas programadas: pantalla, programar, activar, buscar, duplicar, eliminar, Mantener activo y De Claude Desktop',
+    async run(page, { userDataDir, runDir }) {
+      const cuenta = await page.evaluate(() => {
+        const state = window.__mageDev.store.getState();
+        const active = state.accounts.find((account) => account.id === state.activeAccountId);
+        return active === undefined ? null : { id: active.id, providerId: active.providerId };
+      });
+      if (cuenta === null || cuenta.providerId !== 'claude') return { ok: false, notRunnable: true, detail: 'sin cuenta de Claude' };
+      if (HARNESS_HOME === os.homedir()) return { ok: false, notRunnable: true, detail: 'HOME real: no se escribe en él' };
+      const raiz = path.join(runDir, 'vg-programadas');
+      const trabajo = path.join(raiz, 'trabajo');
+      const carpetaDesktop = path.join(HARNESS_HOME, '.claude', 'scheduled-tasks', 'vg-desktop');
+      fs.mkdirSync(trabajo, { recursive: true });
+      fs.mkdirSync(carpetaDesktop, { recursive: true });
+      fs.writeFileSync(path.join(carpetaDesktop, 'SKILL.md'), '---\nname: vg-desktop\ndescription: Tarea de prueba de Desktop\n---\n\nDi hola.\n');
+      const idsAntes = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
+      const medido = {};
+      const tarjeta = (id) => page.locator(`[data-scheduled-card="${id}"]`);
+      const abrirMenu = async (id) => {
+        await tarjeta(id).locator('[data-scheduled-menu]').click();
+        await page.locator('[role="menu"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      };
+      const conPantalla = (n) => page.waitForFunction((esperadas) => document.querySelectorAll('[data-scheduled-card]').length === esperadas, n, { timeout: CONFIG.actionTimeoutMs });
+      try {
+        // Paso 1 — crear y ver la tarjeta.
+        const creada = await page.evaluate((draft) => window.mage.createTask(draft), {
+          name: 'VG programada', goal: 'VG', language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
+          schedule: await page.evaluate(() => ({ kind: 'weekly', weekday: (new Date().getDay() + 3) % 7, time: { hour: 10, minute: 0 }, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })),
+        });
+        await page.evaluate(() => window.__mageDev.taskStore.getState().load());
+        await page.locator('[data-chat-sidebar] [data-scheduled-tasks-entry]').click();
+        await page.locator('[data-scheduled-tasks]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await tarjeta(creada.id).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.nextRun = await tarjeta(creada.id).getAttribute('data-next-run');
+        medido.resumen = await tarjeta(creada.id).locator('[data-scheduled-summary]').textContent();
+        const nextRunOk = medido.nextRun === String(creada.nextRunAtMs) && creada.nextRunAtMs > Date.now() && (medido.resumen ?? '').includes('10:00');
+        await page.screenshot({ path: path.join(runDir, 'tareas-programadas.png') });
+        // Paso 2 — activar y desactivar.
+        await tarjeta(creada.id).locator('[data-scheduled-toggle]').click();
+        await page.locator(`[data-scheduled-card="${creada.id}"][data-enabled="false"]`).waitFor({ state: 'attached', timeout: CONFIG.actionTimeoutMs });
+        const apagada = (await page.evaluate(() => window.mage.listTasks())).find((task) => task.id === creada.id);
+        await page.screenshot({ path: path.join(runDir, 'tareas-programadas-desactivada.png') });
+        await tarjeta(creada.id).locator('[data-scheduled-toggle]').click();
+        await page.locator(`[data-scheduled-card="${creada.id}"][data-enabled="true"]`).waitFor({ state: 'attached', timeout: CONFIG.actionTimeoutMs });
+        const encendida = (await page.evaluate(() => window.mage.listTasks())).find((task) => task.id === creada.id);
+        const toggleOk = apagada.enabled === false && apagada.nextRunAtMs === null && encendida.enabled === true && encendida.nextRunAtMs !== null;
+        // Paso 3 — buscar.
+        await page.locator('[data-scheduled-search]').fill('zzz-vg-sin-coincidencias');
+        await page.locator('[data-scheduled-empty]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.tarjetasSinCoincidencia = await page.locator('[data-scheduled-card]').count();
+        await page.locator('[data-scheduled-search]').fill('');
+        await tarjeta(creada.id).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        // Paso 4 — duplicar (y comprobar que «Ejecutar ahora» está, sin pulsarlo).
+        await abrirMenu(creada.id);
+        medido.ejecutarAhora = await page.getByRole('menuitem', { name: ui('scheduledTasks.menu.runNow'), exact: true }).count();
+        await page.mouse.click(4, 4);
+        await page.locator('[role="menu"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await abrirMenu(creada.id);
+        await page.getByRole('menuitem', { name: ui('scheduledTasks.menu.duplicate'), exact: true }).click();
+        await conPantalla(idsAntes.length + 2);
+        const copia = (await page.evaluate(() => window.mage.listTasks())).find((task) => !idsAntes.includes(task.id) && task.id !== creada.id);
+        medido.nombreCopia = copia?.name ?? null;
+        const copiaOk = copia !== undefined && copia.name === ui('scheduledTasks.copyName', { name: 'VG programada' });
+        // Paso 5 — Mantener activo.
+        const ajustes = path.join(userDataDir, 'app-settings.json');
+        await page.locator('[data-keep-awake]').click();
+        const encendido = await waitForFile(ajustes, (texto) => JSON.parse(texto).scheduledTasksKeepAwake === true);
+        await page.locator('[data-keep-awake]').click();
+        const apagado = await waitForFile(ajustes, (texto) => JSON.parse(texto).scheduledTasksKeepAwake === false);
+        const keepOk = encendido !== null && JSON.parse(encendido).scheduledTasksKeepAwake === true && apagado !== null && JSON.parse(apagado).scheduledTasksKeepAwake === false;
+        // Paso 6 — De Claude Desktop.
+        const sembrarHistorial = () => page.evaluate((cwd) => window.__mageDev.store.setState((s) => ({
+          allConversationHistory: [...s.allConversationHistory, { accountId: s.activeAccountId, item: { sessionId: 'vg-sched-desktop-run', configDir: '.claude', cwd, title: 'vg-desktop', updatedAtMs: Date.now(), sizeBytes: 100, isScheduled: true } }],
+        })), trabajo);
+        await sembrarHistorial();
+        await page.locator('[data-scheduled-tab="desktop"]').click();
+        const desktop = page.locator('[data-desktop-task="vg-desktop"]');
+        await desktop.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const corrida = desktop.locator('[data-desktop-run="vg-sched-desktop-run"]');
+        // El refresco del historial (cada 30 s) puede haber pisado la siembra: se vuelve a sembrar UNA vez.
+        const aparecio = await corrida.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false);
+        if (!aparecio) {
+          await sembrarHistorial();
+          await corrida.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).catch(() => { medido.historialNoSembrado = true; });
+        }
+        const textoDesktop = (await desktop.textContent()) ?? '';
+        medido.desktop = {
+          descripcion: textoDesktop.includes('Tarea de prueba de Desktop'), prompt: textoDesktop.includes('Di hola.'),
+          gestionada: await desktop.locator('[data-desktop-managed]').count(), corridas: await desktop.locator('[data-desktop-run="vg-sched-desktop-run"]').count(),
+          interruptores: await page.locator('[data-scheduled-toggle]').count(), avisos: await page.locator('[data-scheduled-banner]').count(),
+        };
+        await page.screenshot({ path: path.join(runDir, 'tareas-programadas-desktop.png') });
+        // Paso 7 — eliminar las dos por el menú.
+        await page.locator('[data-scheduled-tab="mine"]').click();
+        for (const id of [copia?.id, creada.id].filter((id) => id !== undefined)) {
+          await abrirMenu(id);
+          await page.getByRole('menuitem', { name: ui('scheduledTasks.menu.delete'), exact: true }).click();
+          await tarjeta(id).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        }
+        const idsDespues = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
+        const eliminarOk = JSON.stringify(idsDespues) === JSON.stringify(idsAntes);
+        // Paso 8 — cerrar.
+        await page.locator('[data-scheduled-close]').click();
+        await page.locator('[data-scheduled-tasks]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const desktopOk = medido.desktop.descripcion && medido.desktop.prompt && medido.desktop.gestionada === 1 && medido.desktop.interruptores === 0 && medido.desktop.avisos === 0;
+        // La siembra del historial es informativa si no se sostiene ni con el reintento (no cuenta para `ok`).
+        const corridaOk = medido.desktop.corridas === 1 || medido.historialNoSembrado === true;
+        const ok = nextRunOk && toggleOk && medido.tarjetasSinCoincidencia === 0 && medido.ejecutarAhora === 1 && copiaOk && keepOk && desktopOk && corridaOk && eliminarOk;
+        return { ok, detail: JSON.stringify({ ...medido, nextRunOk, toggleOk, copiaOk, keepOk, desktopOk, corridaOk, eliminarOk }) };
+      } finally {
+        for (const task of await page.evaluate(() => window.mage.listTasks())) {
+          if (!idsAntes.includes(task.id)) await page.evaluate((id) => window.mage.removeTask(id), task.id);
+        }
+        fs.rmSync(carpetaDesktop, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+        fs.rmSync(raiz, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+        await page.evaluate(() => {
+          const state = window.__mageDev.store.getState();
+          state.setScheduledTasksKeepAwake(false);
+          state.closeScheduledTasks();
+        });
+        await page.evaluate(() => window.__mageDev.taskStore.getState().load());
       }
     },
   },
@@ -12427,7 +12570,12 @@ const CHECKS = [
           await page.waitForFunction(() => window.__mageDev !== undefined);
           await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
           await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('conversations'));
-          await page.locator(`[data-task-row="${taskId}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          // La tarea ya no vive en el lateral: se mide en la pantalla «Tareas programadas», que se abre y se cierra aquí.
+          await page.evaluate(() => window.__mageDev.store.getState().openScheduledTasks());
+          await page.locator(`[data-scheduled-card="${taskId}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          const tareas = await textFitProblems(page, '[data-scheduled-tasks]');
+          await page.evaluate(() => window.__mageDev.store.getState().closeScheduledTasks());
+          await page.locator('[data-scheduled-tasks]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
           projectCreated = true;
           await page.evaluate(async ({ id, name, title, cwd }) => {
             const dev = window.__mageDev;
@@ -12452,7 +12600,7 @@ const CHECKS = [
           await page.locator('[data-task-strip]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
           return textFitOutcome({
             lateral: await textFitProblems(page, '[data-chat-sidebar]'),
-            tareas: await textFitProblems(page, '[data-tasks-section]'),
+            tareas,
             franja: await textFitProblems(page, '[data-task-strip]'),
           });
         });

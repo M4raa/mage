@@ -184,7 +184,7 @@ export async function closeCheckOverlays(page) {
   });
   await page.evaluate(() => window.__mageDev.store.setState({
     settingsOpen: false, newTabOpen: false, addAccountOpen: false, handoffOpen: false,
-    accountSwitchPrompt: null, trustRequests: [], updatePromptVersion: null,
+    accountSwitchPrompt: null, trustRequests: [], updatePromptVersion: null, scheduledTasksOpen: false,
   }));
   await page.waitForFunction(() => document.querySelectorAll('[role="dialog"][aria-modal="true"]').length === 0,
     undefined, { polling: STATE_POLL_MS, timeout: STATE_TIMEOUT_MS });
