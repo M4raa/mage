@@ -3337,6 +3337,86 @@ const CHECKS = [
     },
   },
   {
+    // Decisión 13-11 (devolución 92): una subsesión del MCP no abre pestaña. Se siembra la entrada de segundo plano
+    // con su sesión del host (como la deja `adoptLiveSession`) y se mide que cuelga de su creadora con su aviso, que
+    // sube a la creadora plegada y a la carpeta, y que pulsarla (fila o tarjeta) pide abrirla con
+    // `openDelegatedSession`, sustituida por un registro. No spawnea ningún CLI, no pulsa Enter y no llama a
+    // `attachSession`.
+    name: 'Subsesiones sin pestaña: fila anidada con su aviso, sube a la creadora plegada y a la carpeta, y se abre al pulsarla',
+    state: { tabs: 1 },
+    async run(page, { runDir }) {
+      const carpeta = path.join(runDir, 'vg92-proyecto');
+      fs.mkdirSync(carpeta, { recursive: true });
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return {
+          tabs: s.tabs, activeTabId: s.activeTabId, blocksByChat: s.blocksByChat, allConversationHistory: s.allConversationHistory,
+          loadConversationHistory: s.loadConversationHistory, backgroundSessions: s.backgroundSessions, openDelegatedSession: s.openDelegatedSession, settings: s.settings, trustRequests: s.trustRequests,
+        };
+      });
+      try {
+        await page.evaluate((cwd) => {
+          const store = window.__mageDev.store;
+          const s = store.getState();
+          const herramienta = {
+            kind: 'tool', id: 'vg92-t0', toolUseId: 'u-vg92-0', tool: 'mcp__mage__mage_create_session', toolClass: 'command', command: '', meta: 'ok',
+            isError: false, output: [], filePath: null, diff: null, writtenContent: null, artifact: null, artifactDraft: null,
+            delegation: { title: 'VG hija', conversationId: 'vg92-hija' }, delegationDraft: { title: 'VG hija' }, parentToolUseId: null,
+          };
+          const hostSession = {
+            sessionId: 'vg92-hija', conversationId: 'vg92-hija', nativeId: null, provider: 'claude', accountId: s.activeAccountId, configDir: s.activeAccountId,
+            cwd, model: 'haiku', title: 'VG hija', origin: 'mcp', createdBy: { conversationId: 'vg92-madre', sessionId: 'vg92-madre-viva' },
+          };
+          store.setState({
+            loadConversationHistory: async () => undefined,
+            allConversationHistory: [],
+            openDelegatedSession: async (id) => { window.__vg92Abiertas = [...(window.__vg92Abiertas ?? []), id]; },
+            tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, resumeSessionId: 'vg92-madre', cwd } : t)),
+            blocksByChat: { ...s.blocksByChat, [s.activeTabId]: [herramienta] },
+            backgroundSessions: {
+              ...s.backgroundSessions,
+              'vg92-hija': { sessionId: 'vg92-hija', conversationId: 'vg92-hija', title: 'VG hija', accountId: s.activeAccountId, state: 'needs_action', sinceMs: Date.now(), hostSession },
+            },
+          });
+        }, carpeta);
+        const medido = {};
+        // Cambiar el `cwd` de la pestaña hace que git pregunte por la confianza de la carpeta (una vez por carpeta; la
+        // decide main, no los ajustes del renderer). Se espera a esa petición y se descarta del estado SIN contestarla:
+        // contestar escribiría en los ajustes de main. Sin descartarla, su diálogo modal tapa el lateral.
+        await page.waitForFunction((cwd) => window.__mageDev.store.getState().trustRequests.includes(cwd), carpeta, { timeout: 10_000 }).catch(() => undefined);
+        await page.evaluate((cwd) => window.__mageDev.store.setState((s) => ({ trustRequests: s.trustRequests.filter((f) => f !== cwd) })), carpeta);
+        const hija = page.locator('[data-chat-sidebar] [data-row-children] [data-history-session="vg92-hija"]');
+        await hija.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const filaHija = page.locator('[data-sidebar-row]', { has: page.locator('[data-history-session="vg92-hija"]') });
+        medido.hijaAtencion = await filaHija.locator('[data-row-indicator="attention"]').count();
+        medido.pestanas = await page.evaluate(() => window.__mageDev.store.getState().tabs.length);
+        const proyecto = page.locator('[data-sidebar-group="project"]', { has: page.locator('[data-project-key$="/vg92-proyecto"]') });
+        medido.atencionCarpeta = await proyecto.locator('[data-project-attention]').first().getAttribute('data-project-attention');
+        medido.filasCarpeta = await proyecto.locator('[data-project-count]').first().getAttribute('data-project-count');
+        await page.screenshot({ path: path.join(runDir, 'subsesion-sin-pestana.png') });
+        const chevron = proyecto.locator('[data-row-fold]').first();
+        await chevron.click();
+        await page.locator('[data-history-session="vg92-hija"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        medido.madrePlegada = await proyecto.locator('[data-row-branch] > [data-sidebar-row]').first().locator('[data-row-indicator="attention"]').count();
+        await page.screenshot({ path: path.join(runDir, 'subsesion-creadora-plegada.png') });
+        await chevron.click();
+        await hija.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await hija.click();
+        await page.waitForFunction(() => window.__vg92Abiertas?.length === 1, undefined, { timeout: CONFIG.actionTimeoutMs });
+        await page.locator('[data-delegation-card="vg92-hija"]').click();
+        await page.waitForFunction(() => window.__vg92Abiertas?.length === 2, undefined, { timeout: CONFIG.actionTimeoutMs });
+        medido.abiertas = await page.evaluate(() => window.__vg92Abiertas);
+        const ok = medido.hijaAtencion === 1 && medido.pestanas === previo.tabs.length && medido.atencionCarpeta === '1' && medido.filasCarpeta === '2'
+          && medido.madrePlegada === 1 && JSON.stringify(medido.abiertas) === JSON.stringify(['vg92-hija', 'vg92-hija']);
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.evaluate(() => { delete window.__vg92Abiertas; });
+        fs.rmSync(carpeta, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      }
+    },
+  },
+  {
     // La medida es el numero de colores DISTINTOS entre los <span> de token. Si el resaltado muriera
     // (gramatica que no carga, tema importado sin reglas, shiki que lanza), `useHighlightedCode`
     // devuelve null y el bloque cae a texto plano: 0 spans y un solo color heredado. Contar "spans > 0"
@@ -9231,6 +9311,11 @@ const CHECKS = [
           const alto0 = (await cabecera.boundingBox()).height;
           const menu = dialogo.locator(`[data-account-menu="${cssAttr(otra)}"]`);
           await menu.click();
+          await dialogo.locator('[role="menu"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await page.keyboard.press('Escape');
+          await dialogo.locator('[role="menu"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+          medido.pantallaTrasEscape = await page.locator('[data-accounts-usage]').count();
+          await menu.click();
           await page.getByRole('menuitem', { name: ui('accountsUsage.rename') }).click();
           const campo = dialogo.locator(`[data-account-rename="${cssAttr(otra)}"] input`);
           await campo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -9256,7 +9341,7 @@ const CHECKS = [
         const kpisBase = ['cost', 'tokens', 'turns', 'limits'];
         const ok = medido.barras30 === 30 && medido.barras7 === 7 && medido.filas === previo.cuentas.length + 1 && medido.anadir === 1
           && medido.adminAntes === 0 && medido.version === 'admin'
-          && (otra === null || (kpisBase.every((k) => medido.kpis.includes(k)) && medido.altoConRenombrar === 0 && medido.altoConColor === 0
+          && (otra === null || (kpisBase.every((k) => medido.kpis.includes(k)) && medido.pantallaTrasEscape === 1 && medido.altoConRenombrar === 0 && medido.altoConColor === 0
             && medido.renombrada === 'VG renombrada' && (medido.precio === undefined || medido.precio === 19_990_000) && medido.oculta === true));
         return { ok, detail: JSON.stringify(medido) };
       } finally {
@@ -12026,8 +12111,8 @@ const CHECKS = [
   },
   {
     // Carril R (R04): la pantalla «Tareas programadas» entera, con tareas sembradas por IPC. No pulsa «Ejecutar ahora», no
-    // pulsa Enter y no lanza ningún CLI. El menú ⋯ se cierra pulsando fuera (Escape cerraría también la pantalla, que es
-    // un diálogo modal con su propio atajo). Escribe un SKILL.md en el HOME de PRUEBA: nunca contra el HOME real.
+    // pulsa Enter y no lanza ningún CLI. El menú ⋯ se cierra con Escape y la pantalla sigue abierta (decisión 13-11: el
+    // Escape es del menú mientras esté abierto, `useDialogA11y`). Escribe un SKILL.md en el HOME de PRUEBA: nunca contra el HOME real.
     name: 'Tareas programadas: pantalla, programar, activar, buscar, duplicar, eliminar, Mantener activo y De Claude Desktop',
     async run(page, { userDataDir, runDir }) {
       const cuenta = await page.evaluate(() => {
@@ -12083,8 +12168,9 @@ const CHECKS = [
         // Paso 4 — duplicar (y comprobar que «Ejecutar ahora» está, sin pulsarlo).
         await abrirMenu(creada.id);
         medido.ejecutarAhora = await page.getByRole('menuitem', { name: ui('scheduledTasks.menu.runNow'), exact: true }).count();
-        await page.mouse.click(4, 4);
+        await page.keyboard.press('Escape');
         await page.locator('[role="menu"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        medido.pantallaTrasEscape = await page.locator('[data-scheduled-tasks]').count();
         await abrirMenu(creada.id);
         await page.getByRole('menuitem', { name: ui('scheduledTasks.menu.duplicate'), exact: true }).click();
         await conPantalla(idsAntes.length + 2);
@@ -12135,7 +12221,7 @@ const CHECKS = [
         const desktopOk = medido.desktop.descripcion && medido.desktop.prompt && medido.desktop.gestionada === 1 && medido.desktop.interruptores === 0 && medido.desktop.avisos === 0;
         // La siembra del historial es informativa si no se sostiene ni con el reintento (no cuenta para `ok`).
         const corridaOk = medido.desktop.corridas === 1 || medido.historialNoSembrado === true;
-        const ok = nextRunOk && toggleOk && medido.tarjetasSinCoincidencia === 0 && medido.ejecutarAhora === 1 && copiaOk && keepOk && desktopOk && corridaOk && eliminarOk;
+        const ok = nextRunOk && toggleOk && medido.tarjetasSinCoincidencia === 0 && medido.ejecutarAhora === 1 && medido.pantallaTrasEscape === 1 && copiaOk && keepOk && desktopOk && corridaOk && eliminarOk;
         return { ok, detail: JSON.stringify({ ...medido, nextRunOk, toggleOk, copiaOk, keepOk, desktopOk, corridaOk, eliminarOk }) };
       } finally {
         for (const task of await page.evaluate(() => window.mage.listTasks())) {
