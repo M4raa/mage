@@ -4973,7 +4973,7 @@ const CHECKS = [
   {
     // P-038: el «+» de abajo a la izquierda de la caja agrupa «Adjuntar imagen» (antes un clip suelto) y las acciones
     // del antiguo «⋯». «Abrir carpeta» sigue fuera: la carpeta se abre desde su insignia. Se abre y se cierra con Escape.
-    name: 'Menú «+» del prompt: con «Adjuntar imagen» y «Abrir terminal», sin «Abrir carpeta»',
+    name: 'Menú «+» del prompt: con «Adjuntar archivo» y «Abrir terminal», sin «Abrir carpeta»',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -11458,6 +11458,41 @@ const CHECKS = [
     },
   },
   {
+    // Punto 15 de P-043 (D1): «Adjuntar archivo» con ficheros REALES (`DOM.setFileInputFiles`, así tienen ruta). Dentro de la
+    // carpeta entra como mención `@ruta` con su ficha; fuera, como su ruta entre comillas invertidas. No envía nada.
+    name: 'Punto 15: adjuntar un fichero que no es imagen lo menciona; fuera de la carpeta deja su ruta',
+    async run(page, { userDataDir }) {
+      const fuera = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-adjunto-'));
+      const ajeno = path.join(fuera, 'ajeno.txt');
+      fs.writeFileSync(ajeno, 'fuera de la carpeta');
+      const cdp = await page.context().newCDPSession(page);
+      try {
+        return await withMentionTab(page, userDataDir, async ({ tabId, cwd }) => {
+          await clearPrompt(page);
+          const elegir = async (fichero) => {
+            const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+            const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: `[data-pane-tab-id="${tabId}"] input[data-attach-input="image"]` });
+            await cdp.send('DOM.setFileInputFiles', { nodeId, files: [fichero] });
+          };
+          await elegir(path.join(cwd, 'notas.md'));
+          await page.locator('[data-mention-chip="notas.md"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await elegir(ajeno);
+          await page.waitForFunction((id) => (window.__mageDev.store.getState().draftByChat[id]?.text ?? '').includes('ajeno.txt'), tabId, { timeout: CONFIG.actionTimeoutMs });
+          const borrador = await page.evaluate((id) => {
+            const d = window.__mageDev.store.getState().draftByChat[id];
+            return { texto: d?.text ?? '', menciones: (d?.mentions ?? []).map((m) => m.relPath), imagenes: d?.attachments.length ?? 0 };
+          }, tabId);
+          await clearPrompt(page);
+          const ok = borrador.texto.includes('@notas.md ') && borrador.texto.includes(`\`${ajeno}\``) && borrador.menciones.length === 1 && borrador.menciones[0] === 'notas.md' && borrador.imagenes === 0;
+          return { ok, detail: JSON.stringify({ borrador, ajeno }) };
+        });
+      } finally {
+        await cdp.detach();
+        fs.rmSync(fuera, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     // F2.6: el renderer corre en el sandbox de Chromium (`sandbox: true`, preload CommonJS de un solo fichero). Se
     // mide en el propio renderer: el preload lee `process.sandboxed` y el mundo de la página no ve `require` ni
     // `process`. Todo el resto de esta tanda corre con el sandbox puesto: si algo lo necesitara, fallaría.
@@ -12683,7 +12718,8 @@ const CHECKS = [
   {
     // El botón «Adjuntar imagen» y soltar ficheros en el chat reutilizan `addFiles` del pegado: mismas
     // validaciones y mismo error. Sin abrir el diálogo nativo (`setInputFiles`) y sin pulsar Enter.
-    name: 'I2: el botón y soltar adjuntan una imagen; un .exe y una de más de 5 MiB dan error',
+    // Un .exe sintético no tiene ruta en el disco: da error por eso (punto 15).
+    name: 'I2: el botón y soltar adjuntan una imagen; un fichero sin ruta y una de más de 5 MiB dan error',
     async run(page) {
       const previo = await page.evaluate(() => {
         const st = window.__mageDev.store.getState();
