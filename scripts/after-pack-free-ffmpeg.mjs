@@ -27,6 +27,10 @@ const FFMPEG_TARGETS = {
   darwin: { file: 'libffmpeg.dylib', relativeDir: 'Electron Framework.framework/Versions/A/Libraries' },
 };
 
+// Por ruta: en el PATH `powershell` puede ser PowerShell 7, cuyo Expand-Archive (7.7, módulo Archive) falla al
+// extraer (medido el 13-11). El 5.1 viene con todo Windows.
+const WINDOWS_POWERSHELL = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+
 export default async function replaceWithFreeFfmpeg(context) {
   const platform = context.electronPlatformName;
   const target = FFMPEG_TARGETS[platform];
@@ -67,7 +71,7 @@ function unzip(zipPath, destDir) {
   // Comillas simples de PowerShell: se escapan duplicandolas, que es lo unico que hay que escapar ahi.
   const quote = (value) => `'${value.replace(/'/g, "''")}'`;
   execFileSync(
-    'powershell',
+    WINDOWS_POWERSHELL,
     ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${quote(zipPath)} -DestinationPath ${quote(destDir)} -Force`],
     { stdio: 'inherit' },
   );
