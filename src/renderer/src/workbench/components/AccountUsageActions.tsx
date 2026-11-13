@@ -1,9 +1,7 @@
 import { useState } from 'react';
-import { formatMicroUsd, type UsageInfo } from '@shared/usage';
 import { ACCOUNT_ALIAS_MAX } from '@shared/settings';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useLocalPopover } from '../localPopovers';
-import { formatResetAbsolute } from '../usageView';
 import { formatPlanPriceUsd, parsePlanPriceUsd } from '../planPrice';
 import { reportActionError } from '../notificationStore';
 import type { Account } from '../types';
@@ -14,9 +12,8 @@ import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 import { loginLabel } from './accountBadge';
 import { apiBilledLabel } from '../accountView';
 import { useT } from '../../i18n/uiLanguage';
-import { activeFormatLocale } from '../../i18n/format';
 
-// Cabecera del detalle de una cuenta en «Cuentas y consumo» (P-039 F6): quién es, sus ventanas ahora, iniciar o
+// Cabecera del detalle de una cuenta en «Cuentas y consumo» (P-039 F6): quién es, iniciar o
 // refrescar la sesión, el precio de su plan y el menú ⋯ (renombrar, color, ocultar, eliminar). Renombrar y color abren
 // un popover: antes se desplegaban dentro de la card y la agrandaban.
 
@@ -24,7 +21,6 @@ const BUTTON = 'rounded-[6px] border border-mg-border-ctrl px-[9px] py-[3px] tex
 
 export function AccountDetailHeader({ account }: { readonly account: Account }): React.JSX.Element {
   const t = useT();
-  const info = useWorkbenchStore((s) => s.usageByAccount[account.id] ?? null);
   const hidden = useWorkbenchStore((s) => s.settings.hiddenAccounts.includes(account.id));
   return (
     <section data-account-card={account.id} className="flex flex-col gap-[10px] rounded-[10px] border border-mg-border-subtle p-[12px_14px]">
@@ -42,10 +38,7 @@ export function AccountDetailHeader({ account }: { readonly account: Account }):
         {!account.apiBilled && <Chip warn={account.loginStatus !== 'logged_in'}>{loginLabel(account)}</Chip>}
         {hidden && <Chip>{t('accountsUsage.hiddenChip')}</Chip>}
       </div>
-      <div className="grid grid-cols-[1fr_auto] items-end gap-[16px]">
-        <Windows account={account} info={info} />
-        {!account.apiBilled && <PlanPriceField account={account} />}
-      </div>
+      <div className="flex justify-end"><PlanPriceField account={account} /></div>
     </section>
   );
 }
@@ -54,40 +47,8 @@ function Chip({ children, warn = false }: { readonly children: React.ReactNode; 
   return <span className={`rounded-[4px] border px-[5px] leading-[15px] ${warn ? 'border-mg-warn-border text-mg-warn-text' : 'border-mg-border-subtle text-mg-sec'}`}>{children}</span>;
 }
 
-// Ventanas de la suscripción (5 h / 7 d) con su reset, o el coste acumulado si factura la API.
-function Windows({ account, info }: { readonly account: Account; readonly info: UsageInfo | null }): React.JSX.Element {
-  const t = useT();
-  const now = Date.now();
-  if (account.apiBilled) {
-    const cost = info?.apiUsage?.totals.costMicroUsd;
-    return <p className="text-[10.5px] text-mg-sec">{cost === undefined ? t('accountsUsage.apiNoData') : t('accountsUsage.apiCost', { cost: formatMicroUsd(cost, activeFormatLocale()) })}</p>;
-  }
-  if (info === null) return <p className="text-[10.5px] text-mg-muted">{t('accountsUsage.windowsNoData')}</p>;
-  return (
-    <div className="flex max-w-[460px] flex-col gap-[5px]">
-      <WindowBar label={t('accountsUsage.fiveHour')} pct={info.fiveHour.utilization} reset={formatResetAbsolute(info.fiveHour.resetsAt, now, false)} />
-      <WindowBar label={t('accountsUsage.sevenDay')} pct={info.sevenDay.utilization} reset={formatResetAbsolute(info.sevenDay.resetsAt, now, true)} />
-    </div>
-  );
-}
-
-function WindowBar({ label, pct, reset }: { readonly label: string; readonly pct: number; readonly reset: string }): React.JSX.Element {
-  const t = useT();
-  const clamped = Math.min(100, Math.max(0, Math.round(pct)));
-  return (
-    <div className="flex flex-col gap-[2px] text-[10.5px]">
-      <div className="flex justify-between gap-[10px] text-mg-sec">
-        <span>{label} · <span className="font-semibold tabular-nums text-mg-body">{clamped} %</span></span>
-        <span>{t('accountsUsage.resets', { when: reset })}</span>
-      </div>
-      <div className="h-[4px] overflow-hidden rounded-[2px] bg-mg-hover">
-        <div className="h-full rounded-[2px] bg-mg-fill" style={{ width: `${clamped}%` }} />
-      </div>
-    </div>
-  );
-}
-
-// Precio mensual del plan (P-039 D6): se guarda al salir del campo o con Enter; vacío lo quita.
+// Precio mensual del plan (P-039 D6): se guarda al salir del campo o con Enter; vacío lo quita. En una cuenta de API es
+// su presupuesto mensual (DEVOLUCION-095, D-6): mismo ajuste.
 function PlanPriceField({ account }: { readonly account: Account }): React.JSX.Element {
   const t = useT();
   const saved = useWorkbenchStore((s) => s.settings.planPriceMicroUsdByAccount[account.id]);
@@ -102,7 +63,7 @@ function PlanPriceField({ account }: { readonly account: Account }): React.JSX.E
   };
   return (
     <label className="flex flex-col gap-[3px] text-[10.5px] text-mg-sec">
-      <span>{t('accountsUsage.planPrice')}</span>
+      <span>{account.apiBilled ? t('accountsUsage.budgetPrice') : t('accountsUsage.planPrice')}</span>
       <input
         data-plan-price={account.id}
         value={text}
@@ -111,7 +72,7 @@ function PlanPriceField({ account }: { readonly account: Account }): React.JSX.E
         onChange={(e) => setText(e.target.value)}
         onBlur={save}
         onKeyDown={(e) => e.key === 'Enter' && save()}
-        aria-label={t('accountsUsage.planPriceAria', { alias: account.alias })}
+        aria-label={account.apiBilled ? t('accountsUsage.budgetPriceAria', { alias: account.alias }) : t('accountsUsage.planPriceAria', { alias: account.alias })}
         aria-invalid={invalid}
         className={`w-[110px] rounded-[6px] border bg-transparent px-[7px] py-[3px] text-[11.5px] tabular-nums text-mg-body ${invalid ? 'border-mg-danger-border' : 'border-mg-border-ctrl'}`}
       />

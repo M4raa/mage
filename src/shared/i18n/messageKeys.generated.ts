@@ -125,7 +125,6 @@ export interface MessageValues {
   readonly "accounts.vendor.local": never;
   readonly "accountsUsage.accountsAria": never;
   readonly "accountsUsage.addAccount": never;
-  readonly "accountsUsage.admin.activity": never;
   readonly "accountsUsage.admin.activityStats": { readonly "active": string | number; readonly "current": string | number; readonly "days": string | number; readonly "longest": string | number };
   readonly "accountsUsage.admin.heatmapAria": never;
   readonly "accountsUsage.admin.heatmapCell": { readonly "day": string | number; readonly "hour": string | number; readonly "turns": string | number };
@@ -138,16 +137,12 @@ export interface MessageValues {
   readonly "accountsUsage.admin.windowsLegend": never;
   readonly "accountsUsage.admin.windowsTip": { readonly "day": string | number; readonly "fiveHour": string | number; readonly "hits": string | number; readonly "weekly": string | number };
   readonly "accountsUsage.allAccounts": never;
-  readonly "accountsUsage.apiCost": { readonly "cost": string | number };
-  readonly "accountsUsage.apiNoData": never;
   readonly "accountsUsage.budget.label": { readonly "days": string | number };
   readonly "accountsUsage.budget.none": { readonly "spent": string | number };
   readonly "accountsUsage.budget.value": { readonly "budget": string | number; readonly "spent": string | number };
   readonly "accountsUsage.budgetPrice": never;
   readonly "accountsUsage.budgetPriceAria": { readonly "alias": string | number };
   readonly "accountsUsage.chartAria": never;
-  readonly "accountsUsage.chartMax": { readonly "tokens": string | number };
-  readonly "accountsUsage.chartTip": { readonly "cost": string | number; readonly "day": string | number; readonly "tokens": string | number };
   readonly "accountsUsage.close": never;
   readonly "accountsUsage.color": never;
   readonly "accountsUsage.delete": never;
@@ -175,12 +170,8 @@ export interface MessageValues {
   readonly "accountsUsage.loading": never;
   readonly "accountsUsage.login": never;
   readonly "accountsUsage.menuAria": { readonly "alias": string | number };
-  readonly "accountsUsage.models.cost": never;
-  readonly "accountsUsage.models.model": never;
   readonly "accountsUsage.models.noPrice": never;
   readonly "accountsUsage.models.title": never;
-  readonly "accountsUsage.models.tokens": never;
-  readonly "accountsUsage.models.turns": never;
   readonly "accountsUsage.openAria": never;
   readonly "accountsUsage.period": { readonly "days": string | number };
   readonly "accountsUsage.periodAria": never;
