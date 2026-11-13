@@ -9,6 +9,7 @@ import { useCodexAppsStore } from './codexAppsStore';
 import { useTaskStore } from './tasks/taskStore';
 import { toPersistedWorkspace } from './workspaceView';
 import { t } from '../i18n/uiLanguage';
+import { usageHistorySource } from './usageHistorySource';
 
 // Asidero SOLO de desarrollo para `pnpm verify:gui`: deja medir el DOM del chat sin gastar un turno
 // real ni spawnear el CLI. Sin el, el harness no puede hidratar una conversacion (el store de Zustand
@@ -47,6 +48,8 @@ export interface MageDevBridge {
   readonly taskStore: typeof useTaskStore;
   // verify:gui: textos en el idioma activo desde las funciones que corren en el renderer (Z06).
   readonly t: typeof t;
+  // DEVOLUCION-095: el harness siembra el historial de «Cuentas y consumo» sustituyendo `load` (y lo devuelve al acabar).
+  readonly usageHistorySource: typeof usageHistorySource;
 }
 
 (window as unknown as { __mageDev?: MageDevBridge }).__mageDev = {
@@ -67,4 +70,5 @@ export interface MageDevBridge {
   notifications: useNotificationStore,
   taskStore: useTaskStore,
   t,
+  usageHistorySource,
 };

@@ -6,6 +6,7 @@ import { useDialogA11y } from '../a11y/useDialogA11y';
 import { lastDays, localDay, PERIODS, type PeriodDays } from '../accountsUsageView';
 import { combineDetail, computeAccountMetrics, type AccountMetrics } from '../accountMetrics';
 import { describeError } from '../describeError';
+import { usageHistorySource } from '../usageHistorySource';
 import type { Account } from '../types';
 import { Icon } from './Icon';
 import { AccountDetailHeader } from './AccountUsageActions';
@@ -31,8 +32,8 @@ function useUsageHistory(): { readonly load: Load; readonly reload: () => void }
   useEffect(() => {
     let alive = true;
     setLoad((current) => (current.kind === 'ready' ? current : { kind: 'loading' }));
-    window.mage
-      .getUsageHistory()
+    usageHistorySource
+      .load()
       .then((history) => alive && setLoad({ kind: 'ready', history }))
       .catch((err: unknown) => alive && setLoad({ kind: 'error', message: describeError(err) }));
     return () => {
