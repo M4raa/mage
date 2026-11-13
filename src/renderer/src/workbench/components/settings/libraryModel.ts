@@ -100,3 +100,14 @@ export function keyedFieldsFor(preview: Pick<LibraryPreviewView, 'route' | 'bloc
 export function canInstallKeyed(fields: readonly string[], values: Readonly<Record<string, string>>): boolean {
   return fields.every((field) => (values[field] ?? '').trim().length > 0);
 }
+
+// Sin `kinds`, la MISMA lista; con ellos, solo las fichas de esos tipos.
+export function entriesOfKinds(entries: readonly LibraryEntryView[], kinds: readonly LibraryKind[] | undefined): readonly LibraryEntryView[] {
+  return kinds === undefined ? entries : entries.filter((entry) => kinds.includes(entry.kind));
+}
+
+// Biblioteca incrustada en Capacidades: la cuenta la elige la cabecera y, si la biblioteca no la tiene, ninguna (nunca cae a otra).
+export function embeddedAccount(view: LibraryView, fixed: string | undefined, picked: string | null): LibraryAccountView | null {
+  if (fixed === undefined) return selectedAccount(view, picked);
+  return view.accounts.find((account) => account.accountDir === fixed) ?? null;
+}
