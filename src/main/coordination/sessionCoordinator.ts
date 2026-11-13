@@ -16,6 +16,7 @@ import type { KeepAliveSample } from '../conversations/rewindStateStore';
 import { decideKeepAlive, KEEP_ALIVE_PROMPT, type KeepAliveDecision } from './keepAlivePolicy';
 import { keepAliveStep, type KeepAliveRun, type KeepAliveStep } from './keepAliveRun';
 import { ENGINE_REQUEST_TIMEOUT_MS } from './rewindCoordinator';
+import { turnCostMicroUsd } from '../usage/apiUsage';
 
 // Coordinacion de sesiones, primer paso (F2.1, §3.5 del plan): un unico propietario en main que da a cada
 // evento su conversacion de Mage y una secuencia monotona, y mantiene una instantanea consultable de cada
@@ -168,6 +169,8 @@ interface Tracked {
   lastRealRequestStartMs: number | null;
   cacheTtlMs: number | null;
   contextTokens: number | null;
+  // Último coste ACUMULADO (el CLI suma desde que arrancó el proceso) que dio un `result`. Con él sale lo que costó un keep-alive (U49).
+  lastCumulativeCostMicroUsd: number | null;
 }
 
 // Lo que necesita el rewind de una sesion viva (`rewindContext`).
@@ -195,7 +198,7 @@ export class SessionCoordinator {
       sessionId: '', provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, conversationId: null, nativeRef: null, lastSeq: 0, state: 'starting',
       queue: [], receipts: new Map(), pending: new Map(), prGuard: false, steering: new Map(), notSteerable: null, cancelExpiry: null, ownerId: ownerId ?? null,
       listeners: new Set([{ sink, onClosed: () => undefined }]), historyMode: null, engineWaiters: new Map(), idleWaiters: new Set(), emit: () => undefined,
-      keepAlive: null, keepAliveDisabled: false, cancelKeepAlive: null, lastRequestStartMs: null, lastRealRequestStartMs: null, cacheTtlMs: null, contextTokens: null,
+      keepAlive: null, keepAliveDisabled: false, cancelKeepAlive: null, lastRequestStartMs: null, lastRealRequestStartMs: null, cacheTtlMs: null, contextTokens: null, lastCumulativeCostMicroUsd: null,
     };
     tracked.emit = (event) => this.relay(tracked, { sessionId: tracked.sessionId, event });
     const sessionId = this.deps.sessions.create(params, (payload) => this.relay(tracked, payload), ownerId);
@@ -488,6 +491,8 @@ export class SessionCoordinator {
       tracked.cacheTtlMs = ttlSeconds === null ? null : ttlSeconds * MS_PER_SECOND;
     }
     if (event.kind === 'context_usage') tracked.contextTokens = event.usage.totalTokens;
+    if (event.kind === 'result' && event.result.costMicroUsd !== undefined) tracked.lastCumulativeCostMicroUsd = event.result.costMicroUsd;
+    if (event.kind === 'session_restarting') tracked.lastCumulativeCostMicroUsd = null;
   }
 
   // Un evento del keep-alive en vuelo. true = consumido (no sigue el camino normal); false = el keep-alive murio y el
@@ -543,7 +548,10 @@ export class SessionCoordinator {
     tracked.keepAlive = null;
     tracked.state = 'idle';
     if (!rewound) this.disableKeepAlive(tracked);
-    const sample: KeepAliveSample = { cacheReadTokens: usage?.cacheReadTokens ?? null, cacheCreationTokens: usage?.cacheCreationTokens ?? null, costMicroUsd };
+    // U49: el `result` trae el acumulado; el keep-alive cuesta la diferencia con el último.
+    const turnCost = costMicroUsd === null ? null : turnCostMicroUsd(tracked.lastCumulativeCostMicroUsd ?? undefined, costMicroUsd);
+    if (costMicroUsd !== null) tracked.lastCumulativeCostMicroUsd = costMicroUsd;
+    const sample: KeepAliveSample = { cacheReadTokens: usage?.cacheReadTokens ?? null, cacheCreationTokens: usage?.cacheCreationTokens ?? null, costMicroUsd: turnCost };
     this.notifyKeepAliveDone(tracked, sample, rewound, run.uuid);
     this.drain(tracked);
     this.scheduleKeepAlive(tracked);

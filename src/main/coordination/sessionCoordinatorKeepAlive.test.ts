@@ -180,6 +180,33 @@ describe('SessionCoordinator: keep-alive de la cache (F4.6)', () => {
     expect(h.received).toHaveLength(count);
   });
 
+  // Turno grande con coste acumulado `previous`, y un keep-alive cuyo `result` trae el acumulado `cumulative`.
+  async function recordedKeepAliveCost(previous: number, cumulative: number): Promise<number | null | undefined> {
+    type Sample = { readonly costMicroUsd: number | null };
+    const h = harness();
+    h.emit({ kind: 'request_started' });
+    h.emit(contextEvent(BIG_CONTEXT));
+    h.emit(resultEvent(usage({ cacheTtlSeconds: TTL_1H_SECONDS }), previous));
+    fireKeepAlive(h);
+    h.emit({ kind: 'request_started' });
+    h.emit(resultEvent(usage({ cacheReadTokens: 150_000, cacheCreationTokens: 10 }), cumulative));
+    answerRewind(h, { rewound: true });
+    await flush();
+    return (vi.mocked(h.onKeepAliveDone).mock.calls.at(-1)?.[1] as Sample | undefined)?.costMicroUsd;
+  }
+
+  it('keepAlive_turnoPrevioCon5000YKeepAliveCon5900_registra900', async () => {
+    const cost = await recordedKeepAliveCost(5000, 5900);
+
+    expect(cost).toBe(900);
+  });
+
+  it('keepAlive_acumuladoQueBaja_registraElAcumulado', async () => {
+    const cost = await recordedKeepAliveCost(9000, 300);
+
+    expect(cost).toBe(300);
+  });
+
   it('keepAlive_rewindFails_disablesSessionAndNotices', async () => {
     const h = harness();
     primeBigTurn(h);
