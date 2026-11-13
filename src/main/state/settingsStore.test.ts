@@ -15,6 +15,7 @@ const VALID: AppSettings = {
   separatorContrast: 'normal',
   dockDefaultsVersion: 0,
   widgetEnabled: true,
+  scheduledTasksKeepAwake: false,
   mageMcpEnabled: true,
   backgroundOpacity: 80,
   importedThemes: [{ id: 'ovsx:acme.dark', label: 'Acme Dark', type: 'dark', tokens: { '--color-mg-window': '#101010' } }],
@@ -293,6 +294,12 @@ describe('SettingsStore.load', () => {
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ version: 1, notificationRules: [], theme: 'dark' }) }));
 
     expect(store.load().widgetEnabled).toBe(false);
+  });
+
+  it('load_sinScheduledTasksKeepAwake_false', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ version: 1, notificationRules: [], theme: 'dark' }) }));
+
+    expect(store.load().scheduledTasksKeepAwake).toBe(false);
   });
 
   it('load_sinMageMcpEnabled_caeAFalse', () => {

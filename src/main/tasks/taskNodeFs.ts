@@ -1,7 +1,8 @@
 // Enchufes con `node:fs` real del modo de tareas, para que `index.ts` solo cablee.
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from 'node:fs';
 import type { DeliverableFs } from './deliverableChecker';
+import type { DesktopTaskFs } from './desktopScheduledTasks';
 import type { TaskStoreFs } from './taskStore';
 
 // Solo «no existe» (o un tramo que no es carpeta) es null; cualquier otro error de E/S se relanza.
@@ -40,6 +41,11 @@ export function nodeIsDirectory(path: string): boolean {
 export function nodeIsFile(path: string): boolean {
   return statOrNull(path)?.isFile() ?? false;
 }
+
+export const nodeDesktopTaskFs: DesktopTaskFs = {
+  listDirs: (path) => (nodeIsDirectory(path) ? readdirSync(path, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name) : []),
+  readText: (path) => (nodeIsFile(path) ? readFileSync(path, 'utf8') : null),
+};
 
 export const nodeDeliverableFs: DeliverableFs = {
   stat: (path) => {

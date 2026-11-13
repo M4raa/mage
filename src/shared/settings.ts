@@ -124,6 +124,8 @@ export interface AppSettings {
   readonly dockDefaultsVersion: number;
   // Widget flotante always-on-top (M3): si esta activo, se abre al arrancar. Default false (opt-in).
   readonly widgetEnabled: boolean;
+  // Tareas programadas: impide la suspensión del equipo mientras haya alguna activa. Default false.
+  readonly scheduledTasksKeepAwake: boolean;
   // MCP de Mage (P-038 V7): activado, TODA conversación de Claude o Codex nueva o reabierta lo recibe al lanzarse
   // (también las privadas). Default false (opt-in).
   readonly mageMcpEnabled: boolean;
@@ -310,6 +312,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   separatorContrast: 'normal',
   dockDefaultsVersion: 0,
   widgetEnabled: false,
+  scheduledTasksKeepAwake: false,
   mageMcpEnabled: false,
   backgroundOpacity: 100,
   importedThemes: [],

@@ -11,7 +11,7 @@ import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
 import type { PrCatalogEntry, PrCatalogLinkParams, PrCatalogUnlinkParams, PrDetail, PrListParams, PrListResult, PrMigrateParams, PrReadParams, PrWriteParams, PrWriteResult } from './pr';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
-import type { TaskDraft, TaskRecord } from './tasks';
+import type { DesktopScheduledTaskFile, TaskDraft, TaskRecord } from './tasks';
 import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
@@ -354,6 +354,12 @@ export const IpcChannel = {
   TasksPickFolders: 'tasks:pickFolders',
   TasksPickDocuments: 'tasks:pickDocuments',
   TasksSaveCopy: 'tasks:saveCopy',
+  TasksEdit: 'tasks:edit',
+  TasksSetEnabled: 'tasks:setEnabled',
+  TasksRunNow: 'tasks:runNow',
+  TasksTakeDue: 'tasks:takeDue',
+  TasksRunFailed: 'tasks:runFailed',
+  TasksDesktopList: 'tasks:desktopList',
   // Registro del servidor MCP de Mage en las cuentas de Claude y Codex (H4).
   McpRegistrationStatus: 'mcp:registrationStatus',
   McpRegister: 'mcp:register',
@@ -760,6 +766,9 @@ export const WIDGET_ENABLED_CHANGED_CHANNEL = 'widget:enabledChanged';
 // 10). Main resuelve la conversacion en disco antes de mandarla, asi que el renderer recibe el mismo
 // `ConversationSummary` que ya consume desde el historial — no tiene que fiarse de un argv.
 export const JUMP_LIST_OPEN_CHANNEL = 'jumpList:open';
+
+// main -> ventana principal: hay tareas programadas pendientes; el renderer las pide con takeDueTaskRuns.
+export const TASKS_DUE_CHANNEL = 'tasks:due';
 
 // Datos de la pantalla «Acerca de». `notices` es el texto COMPLETO de `THIRD-PARTY-NOTICES.txt` (lo
 // que conserva los avisos de copyright que el bundle borra) y `chromiumLicensesPath` es la ruta al
@@ -1407,6 +1416,13 @@ export interface MageApi {
   pickTaskFolders(): Promise<readonly string[]>;
   pickTaskDocuments(): Promise<readonly string[]>;
   saveTaskDeliverableCopy(params: { taskId: string; path: string }): Promise<boolean>;
+  editTask(params: { taskId: string; draft: TaskDraft }): Promise<TaskRecord>;
+  setTaskEnabled(params: { taskId: string; enabled: boolean }): Promise<TaskRecord>;
+  runTaskNow(taskId: string): Promise<TaskRecord>;
+  takeDueTaskRuns(): Promise<readonly TaskRecord[]>;
+  reportTaskRunFailed(params: { taskId: string; error: string }): Promise<void>;
+  listDesktopScheduledTasks(): Promise<readonly DesktopScheduledTaskFile[]>;
+  onTasksDue(listener: () => void): () => void;
 }
 
 // --- Biblioteca de capacidades (F6) ----------------------------------------------------------------

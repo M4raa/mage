@@ -135,6 +135,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   // widgetEnabled opcional en disco: ficheros antiguos (sin la clave) o valores invalidos caen a
   // false via .catch (widget apagado por defecto, opt-in).
   widgetEnabled: z.boolean().catch(false),
+  // Sin la clave (ficheros anteriores a las tareas programadas) o con basura, apagado.
+  scheduledTasksKeepAwake: z.boolean().catch(false),
   // Igual que el widget: sin la clave (ficheros anteriores a la 0.1.5) o con basura, apagado.
   mageMcpEnabled: z.boolean().catch(false),
   // Igual de tolerante: un fichero de una version anterior no la trae, y un valor fuera de rango (o

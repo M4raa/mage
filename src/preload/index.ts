@@ -7,6 +7,7 @@ import {
   SESSION_ADOPTABLE_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
+  TASKS_DUE_CHANNEL,
   TRANSCRIPT_BATCH_CHANNEL,
   WIDGET_ENABLED_CHANGED_CHANNEL,
   WIDGET_FOCUS_TAB_CHANNEL,
@@ -403,6 +404,17 @@ const api: MageApi = {
   pickTaskFolders: () => ipcRenderer.invoke(IpcChannel.TasksPickFolders),
   pickTaskDocuments: () => ipcRenderer.invoke(IpcChannel.TasksPickDocuments),
   saveTaskDeliverableCopy: (params) => ipcRenderer.invoke(IpcChannel.TasksSaveCopy, params),
+  editTask: (params) => ipcRenderer.invoke(IpcChannel.TasksEdit, params),
+  setTaskEnabled: (params) => ipcRenderer.invoke(IpcChannel.TasksSetEnabled, params),
+  runTaskNow: (taskId) => ipcRenderer.invoke(IpcChannel.TasksRunNow, taskId),
+  takeDueTaskRuns: () => ipcRenderer.invoke(IpcChannel.TasksTakeDue),
+  reportTaskRunFailed: (params) => ipcRenderer.invoke(IpcChannel.TasksRunFailed, params),
+  listDesktopScheduledTasks: () => ipcRenderer.invoke(IpcChannel.TasksDesktopList),
+  onTasksDue: (listener: () => void) => {
+    const handler = (): void => listener();
+    ipcRenderer.on(TASKS_DUE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(TASKS_DUE_CHANNEL, handler);
+  },
 };
 
 contextBridge.exposeInMainWorld('mage', api);

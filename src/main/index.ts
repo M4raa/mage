@@ -58,6 +58,7 @@ import {
   nativeTheme,
   safeStorage,
   screen,
+  powerSaveBlocker,
 } from 'electron';
 import {
   CLOSE_PROMPT_CHANNEL,
@@ -65,6 +66,7 @@ import {
   SESSION_ADOPTABLE_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
+  TASKS_DUE_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
   GH_PR_UPDATE_CHANNEL,
   NOTIFICATION_CLICKED_CHANNEL,
@@ -147,7 +149,9 @@ import { LibraryService, type LibraryAccount } from './capabilities/library/libr
 import { decideTestLibraryClaudeDir, testLibraryAccounts } from './capabilities/library/testLibraryAccount';
 import { registerTaskIpc } from './tasks/taskIpc';
 import { buildTaskInstructions } from './tasks/taskInstructions';
-import { nodeDeliverableFs, nodeIsDirectory, nodeIsFile, nodeTaskStoreFs } from './tasks/taskNodeFs';
+import { nodeDeliverableFs, nodeDesktopTaskFs, nodeIsDirectory, nodeIsFile, nodeTaskStoreFs } from './tasks/taskNodeFs';
+import { listDesktopScheduledTasks } from './tasks/desktopScheduledTasks';
+import { KeepAwake } from './tasks/keepAwake';
 import { TaskService } from './tasks/taskService';
 import { loadTasks, saveTasks } from './tasks/taskStore';
 import { withTaskDirectories } from './tasks/taskLaunch';
@@ -3884,6 +3888,7 @@ function registerSettingsIpc1(deps: IpcDependencies): void {
     const trustedFolders = settings.trustedFolders.filter(folder => folder.trim().length > 0).map(folder => canonicalPath(folder));
     const distrustedFolders = (settings.distrustedFolders ?? []).map(folder => canonicalPath(folder)).filter(folder => !trustedFolders.some(own => (process.platform === 'win32' ? own.toLowerCase() === folder.toLowerCase() : own === folder)));
     settingsStore.save({ ...settings, trustedFolders, distrustedFolders });
+    syncScheduledKeepAwake();
     windowManager.broadcast(SETTINGS_CHANGED_CHANNEL, settings, event.sender.id);
     getUiLanguageService().refresh();
   });
@@ -4096,7 +4101,37 @@ function wireTaskIpc(): void {
     pickPaths: pickTaskPaths,
     showSaveDialog: pickTaskSavePath,
     copyFile: (from, to) => copyFileSync(from, to),
+    isMainWindowSender: (event) => senderWindowId(event as Electron.IpcMainInvokeEvent) === MAIN_WINDOW_ID,
+    listDesktopTasks: () => listDesktopScheduledTasks(listAllAccounts().filter((a) => a.providerId === 'claude').map((a) => a.configDir), nodeDesktopTaskFs),
   });
+}
+
+// Planificador de tareas programadas: solo corre con Mage abierto. Cada vuelta avisa a la ventana principal si hay
+// pendientes (el renderer las recoge con takeDueTaskRuns) y sincroniza «Mantener activo».
+const TASK_SCHEDULER_TICK_MS = 30_000;
+let scheduledKeepAwake: KeepAwake | null = null;
+
+function syncScheduledKeepAwake(): void {
+  scheduledKeepAwake?.sync(getSettingsStore().load().scheduledTasksKeepAwake && getTaskService().hasActiveSchedule());
+}
+
+function tickTaskScheduler(): void {
+  syncScheduledKeepAwake();
+  if (getTaskService().hasDue()) liveMainWindow()?.webContents.send(TASKS_DUE_CHANNEL);
+}
+
+function startTaskScheduler(): void {
+  scheduledKeepAwake = new KeepAwake({ start: () => powerSaveBlocker.start('prevent-app-suspension'), stop: (id) => powerSaveBlocker.stop(id) });
+  // Registra y sigue: una vuelta rota no debe tumbar main.
+  const tick = (): void => {
+    try {
+      tickTaskScheduler();
+    } catch (err) {
+      mainLog('error', 'El planificador de tareas falló en esta vuelta', { error: err instanceof Error ? err.message : String(err) });
+    }
+  };
+  tick();
+  setInterval(tick, TASK_SCHEDULER_TICK_MS).unref();
 }
 
 function getLibraryService(): LibraryService {
@@ -4657,6 +4692,7 @@ app.whenReady().then(async () => {
 
   const mainWindow = windowManager.ensureMain();
   tray = createTray();
+  startTaskScheduler();
   // Catalogo de modelos real de cada cuenta con sesion (P-026 2.4, D7), con la ventana ya abierta.
   // `pnpm verify:gui` lo apaga: su contrato es no lanzar nunca el CLI.
   if (process.env.MAGE_SKIP_MODEL_PROBE !== '1') setTimeout(probeLoggedInAccounts, MODEL_PROBE_START_DELAY_MS).unref();
