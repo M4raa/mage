@@ -213,7 +213,7 @@ import { ConversationsService, withCreator, withHostOwner, withLastAccount, type
 import { migratePrivateConversations } from './conversations/privateConversationsMigration';
 import { CodexHistoryService } from './conversations/codexHistory';
 import { deleteCodexConversation } from './conversations/codexDeletion';
-import { forgetDeletedConversation } from './conversations/deletedConversation';
+import { forgetDeletedConversation, forgetMigratedSource } from './conversations/deletedConversation';
 import { updateLegacyCodexThread } from './conversations/codexLegacyUpdate';
 import { ConversationMigrationService } from './conversations/conversationMigration';
 import { createMigrationEndpoints } from './conversations/migrationEndpoints';
@@ -3808,12 +3808,14 @@ function registerCodexLegacyIpc(requireSafeConversation: (accountDir: string, se
 // Migración de una conversación a una cuenta de otro proveedor (formato nativo del destino). La frontera valida la
 // forma y que cada cuenta sea REALMENTE del proveedor que dice el renderer; el servicio lo demás.
 function registerConversationMigrationIpc(): void {
-  ipcMain.handle(IpcChannel.ConversationsMigrate, (_e, input: unknown): Promise<MigrateConversationResult> => {
+  ipcMain.handle(IpcChannel.ConversationsMigrate, async (_e, input: unknown): Promise<MigrateConversationResult> => {
     const params = MIGRATE_CONVERSATION_SCHEMA.parse(input);
     for (const [dir, provider] of [[params.sourceAccountDir, params.sourceProvider], [params.destAccountDir, params.destProvider]] as const) {
       if (accountProviderOf(dir) !== provider) throw new Error(`La cuenta ${dir} no es de ${provider}`);
     }
-    return conversationMigration().migrate(params);
+    const result = await conversationMigration().migrate(params);
+    forgetMigratedSource({ index: getConversationIndexStore(), prCatalog: getPrCatalogStore(), thinking: getThinkingStore(), rewindState: getRewindState() }, params.sessionId, result.sessionId);
+    return result;
   });
 }
 

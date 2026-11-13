@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { forgetDeletedConversation } from './deletedConversation';
+import { forgetDeletedConversation, forgetMigratedSource } from './deletedConversation';
 import { RewindStateStore, type RewindStateStoreDeps } from './rewindStateStore';
 
 const PATH = '/data/rewind-state.json';
@@ -67,5 +67,38 @@ describe('forgetDeletedConversation', () => {
     forgetDeletedConversation({ index: { forgetConversation: vi.fn() }, prCatalog: { forgetConversation: vi.fn() }, thinking: { forget: vi.fn() }, rewindState: new RewindStateStore(deps) }, SESSION);
 
     expect(writeFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('forgetMigratedSource', () => {
+  function doubles() {
+    return {
+      index: { forgetConversation: vi.fn() },
+      prCatalog: { forgetConversation: vi.fn() },
+      thinking: { forget: vi.fn() },
+      rewindState: { forgetThread: vi.fn() },
+    };
+  }
+
+  it('forgetMigratedSource_idDistinto_olvidaElOrigen', () => {
+    const d = doubles();
+
+    forgetMigratedSource(d, SESSION, TARGET);
+
+    expect(d.index.forgetConversation).toHaveBeenCalledExactlyOnceWith(SESSION);
+    expect(d.prCatalog.forgetConversation).toHaveBeenCalledExactlyOnceWith(SESSION);
+    expect(d.thinking.forget).toHaveBeenCalledExactlyOnceWith(SESSION);
+    expect(d.rewindState.forgetThread).toHaveBeenCalledExactlyOnceWith(SESSION);
+  });
+
+  it('forgetMigratedSource_mismoId_noOlvidaNada', () => {
+    const d = doubles();
+
+    forgetMigratedSource(d, SESSION, SESSION);
+
+    expect(d.index.forgetConversation).not.toHaveBeenCalled();
+    expect(d.prCatalog.forgetConversation).not.toHaveBeenCalled();
+    expect(d.thinking.forget).not.toHaveBeenCalled();
+    expect(d.rewindState.forgetThread).not.toHaveBeenCalled();
   });
 });
