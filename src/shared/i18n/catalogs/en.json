@@ -2142,6 +2142,8 @@
   "settings.hooks.rulesHeading": "Permission rules ({count})",
   "settings.hooks.storedIn.end": "and applies to all accounts. Changes show up above the next time the conversation is read.",
   "settings.hooks.storedIn.start": "It is saved in",
+  "settings.idleClose.hint": "Closes the agent process of a conversation that has had no turns for this long and is not on screen. The tab stays, and writing resumes it. Never while keep-alive is running, background work is going or a permission is pending. 0 = never.",
+  "settings.idleClose.label": "Release idle processes (minutes)",
   "settings.keepAlive.apiKey": "On API key accounts",
   "settings.keepAlive.apiKeyHint": "Off by default: each keep-alive is billed as a turn.",
   "settings.keepAlive.label": "KEEP CLAUDE'S CACHE WARM",

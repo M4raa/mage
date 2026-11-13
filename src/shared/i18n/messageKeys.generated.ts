@@ -2144,6 +2144,8 @@ export interface MessageValues {
   readonly "settings.hooks.rulesHeading": { readonly "count": string | number };
   readonly "settings.hooks.storedIn.end": never;
   readonly "settings.hooks.storedIn.start": never;
+  readonly "settings.idleClose.hint": never;
+  readonly "settings.idleClose.label": never;
   readonly "settings.keepAlive.apiKey": never;
   readonly "settings.keepAlive.apiKeyHint": never;
   readonly "settings.keepAlive.label": never;

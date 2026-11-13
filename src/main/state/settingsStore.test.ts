@@ -51,6 +51,7 @@ const VALID: AppSettings = {
   runtimeShell: 'powershell',
   runtimeToolAccess: { 'custom:lm': [{ model: '*', allow: null, deny: ['Bash'] }] },
   keepAlive: { subscriptionEnabled: false, apiKeyEnabled: true, minContextTokens: 50_000, maxPauseHours: 4 },
+  idleCloseMinutes: 45,
   delegation: DEFAULT_DELEGATION,
 };
 
@@ -119,6 +120,18 @@ describe('SettingsStore.load', () => {
     const { accentByAccount: _ausente, ...previo } = VALID;
 
     expect(new SettingsStore(deps({ readFile: () => JSON.stringify(previo) })).load().accentByAccount).toEqual({});
+  });
+
+  it('load_idleCloseMinutesBasura_treinta', () => {
+    const basura = { ...VALID, idleCloseMinutes: 'nunca' };
+
+    expect(new SettingsStore(deps({ readFile: () => JSON.stringify(basura) })).load().idleCloseMinutes).toBe(30);
+  });
+
+  it('load_idleCloseMinutesAusente_treinta', () => {
+    const { idleCloseMinutes: _omitted, ...legacy } = VALID;
+
+    expect(new SettingsStore(deps({ readFile: () => JSON.stringify(legacy) })).load().idleCloseMinutes).toBe(30);
   });
 
   it('settingsStore_legacyFileWithoutKeepAlive_loadsDefaults', () => {

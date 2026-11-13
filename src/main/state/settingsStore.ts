@@ -9,6 +9,7 @@ import {
   DELEGATION_DEPTH_MAX,
   DELEGATION_DEPTH_MIN,
   DEFAULT_PERMISSION_MODES,
+  IDLE_CLOSE_LIMITS,
   IMPORTED_CONTEXT_LIMITS,
   KEEP_ALIVE_MAX_PAUSE_MAX,
   KEEP_ALIVE_MAX_PAUSE_MIN,
@@ -219,6 +220,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   // Idioma (F3). Ausente o basura -> ausente: «sin preferencia», que hereda la inicial o sigue al sistema.
   uiLanguage: z.enum(UI_LANGUAGE_PREFERENCES).optional().catch(undefined),
   keepAlive: KEEP_ALIVE_SCHEMA,
+  // Ausente o basura -> 30 (el valor por defecto).
+  idleCloseMinutes: z.number().int().min(IDLE_CLOSE_LIMITS.min).max(IDLE_CLOSE_LIMITS.max).catch(IDLE_CLOSE_LIMITS.default),
   delegation: DELEGATION_SCHEMA,
 });
 

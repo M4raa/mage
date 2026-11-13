@@ -17,6 +17,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { usePanelLayoutStore } from '../panelLayoutStore';
 import { HooksPermissionsSection } from './settings/HooksPermissionsSection';
 import { KeepAliveSection } from './settings/KeepAliveSection';
+import { IdleCloseSection } from './settings/IdleCloseSection';
 import { LibrarySection } from './settings/LibrarySection';
 import { ConnectorsPage } from './settings/ConnectorsPage';
 import { OrganizationPage } from './settings/OrganizationPage';
@@ -631,6 +632,7 @@ function StorageSection({
       <GhNoticeControl />
       <ArtifactControl />
       <KeepAliveSection />
+      <IdleCloseSection />
     </div>
   );
 }

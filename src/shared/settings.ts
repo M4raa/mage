@@ -102,6 +102,9 @@ export type NewConversationFolder = (typeof NEW_CONVERSATION_FOLDERS)[number];
 // contexto del modelo). `max` es también el tope que main aplica a lo que le llega por IPC.
 export const IMPORTED_CONTEXT_LIMITS = { default: 24_000, min: 4_000, max: 120_000 } as const;
 
+// Punto 23 (D2): minutos sin turno tras los que se suelta el proceso de una pestaña fuera de la vista; 0 = nunca.
+export const IDLE_CLOSE_LIMITS = { default: 30, min: 0, max: 1440 } as const;
+
 export interface AppSettings {
   readonly version: number;
   readonly notificationRules: readonly NotificationRule[];
@@ -239,6 +242,8 @@ export interface AppSettings {
   // Keep-alive de la caché de Claude (F4.6, D-K4): un mensaje oculto que la mantiene caliente mientras la pestaña
   // sigue abierta. Default: activado en suscripción, apagado en cuentas por clave de API.
   readonly keepAlive: KeepAliveSettings;
+  // Punto 23 (D2): minutos de inactividad para soltar el proceso de una pestaña fuera de la vista; 0 = nunca.
+  readonly idleCloseMinutes: number;
   // Delegacion entre conversaciones (U10): profundidad maxima de la cadena de creadoras.
   readonly delegation: DelegationSettings;
   // D3 (INFORME-051 H1, b): `mage chat` puede contestar permisos. Default false.
@@ -347,6 +352,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   runtimeShell: 'auto',
   runtimeToolAccess: {},
   keepAlive: DEFAULT_KEEP_ALIVE,
+  idleCloseMinutes: IDLE_CLOSE_LIMITS.default,
   delegation: DEFAULT_DELEGATION,
   hostPermissionAnswers: false,
 };

@@ -2142,6 +2142,8 @@
   "settings.hooks.rulesHeading": "Reglas de permisos ({count})",
   "settings.hooks.storedIn.end": "y se aplica a todas las cuentas. Los cambios se ven arriba la próxima vez que se lea la conversación.",
   "settings.hooks.storedIn.start": "Se guarda en",
+  "settings.idleClose.hint": "Cierra el proceso del agente de una conversación que lleva este tiempo sin turnos y no está a la vista. La pestaña se queda, y al escribir se reanuda. Nunca con el keep-alive en marcha, trabajo en segundo plano o un permiso pendiente. 0 = nunca.",
+  "settings.idleClose.label": "Soltar procesos inactivos (minutos)",
   "settings.keepAlive.apiKey": "En cuentas por clave de API",
   "settings.keepAlive.apiKeyHint": "Apagado por defecto: cada mantenimiento se factura como un turno.",
   "settings.keepAlive.label": "MANTENER LA CACHÉ DE CLAUDE",
