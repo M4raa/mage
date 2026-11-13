@@ -428,6 +428,7 @@
   "chat.activity.decision.cancelled": "cancelled",
   "chat.activity.decision.denied": "denied",
   "chat.activity.decision.pending": "pending",
+  "chat.activity.discardedBranch": "Discarded branch · {count, plural, one {# step} other {# steps}}",
   "chat.activity.empty": "No activity yet.",
   "chat.activity.factAnswer": "Answer",
   "chat.activity.factAsked": "Asked",

@@ -409,6 +409,7 @@
   "chat.activity.decision.cancelled": { "description": "Panel de Actividad: un permiso o pregunta que el agente retiró.", "usage": "src/renderer/src/workbench/chatVisibility.ts:138", "maxLength": 16 },
   "chat.activity.decision.denied": { "description": "Panel de Actividad: cómo se resolvió un permiso.", "usage": "src/renderer/src/workbench/chatVisibility.ts:137", "maxLength": 16 },
   "chat.activity.decision.pending": { "description": "Panel de Actividad: un permiso o pregunta que espera respuesta.", "usage": "src/renderer/src/workbench/chatVisibility.ts:140", "maxLength": 16 },
+  "chat.activity.discardedBranch": { "description": "Cabecera de la rama descartada tras rebobinar, en el panel Actividad (se pinta en mayúsculas por CSS). {count} es el número de pasos.", "usage": "src/renderer/src/workbench/components/ActivityPanel.tsx", "maxLength": 32, "variables": {"count":"number"} },
   "chat.activity.empty": { "description": "Estado vacío del panel Actividad.", "usage": "src/renderer/src/workbench/components/ActivityPanel.tsx:96" },
   "chat.activity.factAnswer": { "description": "Etiqueta de la respuesta dada en el detalle de un paso de permiso, en el panel Actividad.", "usage": "src/renderer/src/workbench/components/ActivityPanel.tsx:253", "maxLength": 16 },
   "chat.activity.factAsked": { "description": "Etiqueta del dato «lo que pidió» en el detalle de un paso de permiso, en el panel Actividad.", "usage": "src/renderer/src/workbench/components/ActivityPanel.tsx:251", "maxLength": 16 },

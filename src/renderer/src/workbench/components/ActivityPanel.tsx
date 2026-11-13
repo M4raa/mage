@@ -36,6 +36,7 @@ export function ActivityPanel(): React.JSX.Element {
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
   const blocks = useWorkbenchStore((s) => s.blocksByChat[tabId] ?? EMPTY);
   const filter = useWorkbenchStore((s) => s.activitySubagentByChat[tabId] ?? null);
+  const discarded = useWorkbenchStore((s) => s.discardedBranchByChat[tabId] ?? EMPTY);
   const status = useWorkbenchStore((s) => s.statusByChat[tabId] ?? 'idle');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const turnLive = status === 'streaming' || status === 'needs_permission';
@@ -49,6 +50,7 @@ export function ActivityPanel(): React.JSX.Element {
 
   const subagent = useMemo(() => findSubagent(blocks, filter), [blocks, filter]);
   const turns = useMemo(() => activityTurns(filter === null ? blocks : blocksOfSubagent(blocks, filter)), [blocks, filter]);
+  const discardedTurns = useMemo(() => (filter === null ? activityTurns(discarded) : []), [discarded, filter]);
   const activeTurn = turns.length > 0 ? turns[turns.length - 1] : undefined;
   const activeRunningId = activeTurn === undefined ? null : runningStepId(activeTurn, turnLive);
   const stepCount = turns.reduce((n, t) => n + t.steps.length, 0);
@@ -58,7 +60,7 @@ export function ActivityPanel(): React.JSX.Element {
   useEffect(() => setSelectedId(null), [tabId, filter]);
 
   if (tab === undefined) return <Hint text={t('chat.activity.noConversation')} />;
-  const selected = selectedId === null ? undefined : blocks.find((b) => b.id === selectedId);
+  const selected = selectedId === null ? undefined : (blocks.find((b) => b.id === selectedId) ?? discarded.find((b) => b.id === selectedId));
   return (
     <div data-panel="activity" className="relative flex h-full min-h-0 flex-col">
       <ActivityHeader tabId={tabId} title={displayTitle(tab.title, t)} subagent={subagent} />
@@ -75,6 +77,7 @@ export function ActivityPanel(): React.JSX.Element {
             accent={accent}
           />
         ))}
+        {discardedTurns.length > 0 && <DiscardedBranch turns={discardedTurns} selectedId={selectedId} onSelect={(id) => setSelectedId((cur) => (cur === id ? null : id))} accent={accent} />}
       </div>
       {selected !== undefined && <StepDetail block={selected} onClose={() => setSelectedId(null)} />}
       {subagent !== null && <SubagentOverlay tabId={tabId} subagent={subagent} />}
@@ -162,6 +165,22 @@ function TurnSection({
       </div>
       {turn.steps.map((step) => (
         <StepRow key={step.id} block={step} selected={step.id === selectedId} onSelect={onSelect} running={step.id === runningId} accent={accent} />
+      ))}
+    </div>
+  );
+}
+
+// Punto 14 de P-043: lo que vino después del punto rebobinado. No se borra: va atenuado y bajo su etiqueta.
+function DiscardedBranch({ turns, selectedId, onSelect, accent }: { readonly turns: readonly ActivityTurn[]; readonly selectedId: string | null; readonly onSelect: (id: string) => void; readonly accent: string }): React.JSX.Element {
+  const t = useT();
+  const count = turns.reduce((n, turn) => n + turn.steps.length, 0);
+  return (
+    <div data-activity-discarded="true" className="opacity-50">
+      <div data-activity-discarded-label className="truncate border-t border-mg-border-subtle px-[10px] py-[3px] text-[9.5px] font-semibold uppercase tracking-[0.04em] text-mg-ter">
+        {t('chat.activity.discardedBranch', { count })}
+      </div>
+      {turns.map((turn) => (
+        <TurnSection key={`discarded-${turn.turnIndex}`} turn={turn} selectedId={selectedId} onSelect={onSelect} live={false} runningId={null} accent={accent} />
       ))}
     </div>
   );

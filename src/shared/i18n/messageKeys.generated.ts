@@ -430,6 +430,7 @@ export interface MessageValues {
   readonly "chat.activity.decision.cancelled": never;
   readonly "chat.activity.decision.denied": never;
   readonly "chat.activity.decision.pending": never;
+  readonly "chat.activity.discardedBranch": { readonly "count": number };
   readonly "chat.activity.empty": never;
   readonly "chat.activity.factAnswer": never;
   readonly "chat.activity.factAsked": never;

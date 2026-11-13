@@ -428,6 +428,7 @@
   "chat.activity.decision.cancelled": "cancelado",
   "chat.activity.decision.denied": "denegado",
   "chat.activity.decision.pending": "pendiente",
+  "chat.activity.discardedBranch": "Rama descartada · {count, plural, one {# paso} other {# pasos}}",
   "chat.activity.empty": "Sin actividad todavía.",
   "chat.activity.factAnswer": "Respuesta",
   "chat.activity.factAsked": "Pidió",
