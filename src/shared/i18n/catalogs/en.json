@@ -2324,6 +2324,7 @@
   "sidebar.history.backgroundTip": "{title} · {state} (it is cut off and resumed when opened)",
   "sidebar.history.badgeAction": "ACTION",
   "sidebar.history.badgeReview": "REVIEW",
+  "sidebar.history.delegatedTip": "{title} · {state} (subsession: opens without interrupting it)",
   "sidebar.history.scheduled": "scheduled",
   "sidebar.history.sizeOnDisk": "{bytes} bytes on disk",
   "sidebar.newConversation": "New conversation",

@@ -2326,6 +2326,7 @@ export interface MessageValues {
   readonly "sidebar.history.backgroundTip": { readonly "state": string | number; readonly "title": string | number };
   readonly "sidebar.history.badgeAction": never;
   readonly "sidebar.history.badgeReview": never;
+  readonly "sidebar.history.delegatedTip": { readonly "state": string | number; readonly "title": string | number };
   readonly "sidebar.history.scheduled": never;
   readonly "sidebar.history.sizeOnDisk": { readonly "bytes": string | number };
   readonly "sidebar.newConversation": never;

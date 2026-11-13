@@ -165,7 +165,7 @@ function HistoryRow(props: SidebarRowItemProps & { readonly row: Extract<Sidebar
           if (e.dataTransfer.dropEffect === 'none') onDragOutside(row);
         }}
         data-history-highlighted={highlighted.on ? 'true' : undefined}
-        data-tip={background === undefined ? title : t('sidebar.history.backgroundTip', { title, state: backgroundLabel(background.state) })}
+        data-tip={background === undefined ? title : t(background.hostSession === undefined ? 'sidebar.history.backgroundTip' : 'sidebar.history.delegatedTip', { title, state: backgroundLabel(background.state) })}
         aria-label={background === undefined ? title : `${title}, ${backgroundLabel(background.state)}`}
         className="flex min-w-0 flex-1 items-center p-[5px_8px] text-left"
       >

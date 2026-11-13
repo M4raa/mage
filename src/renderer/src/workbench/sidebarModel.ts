@@ -4,7 +4,8 @@
 import type { ConversationSummary } from '@shared/conversations';
 import type { ChatProject } from '@shared/settings';
 import type { Tab, ChatStatus } from './types';
-import type { BackgroundState } from './backgroundWork';
+import type { AdoptableSession } from '@shared/ipc';
+import type { BackgroundSession, BackgroundState } from './backgroundWork';
 import { rowRecency, rowTitle } from './conversationList';
 import { conversationIdOfTab } from './conversationId';
 import { projectForRow } from './chatProjects';
@@ -101,6 +102,36 @@ export function buildSidebarRows(
     .filter((entry) => !openIds.has(entry.item.sessionId))
     .map((entry): SidebarRow => ({ kind: 'history', item: entry.item, accountId: entry.accountId, accountKnown: entry.accountKnown }));
   return [...tabRows, ...historyRows].sort((a, b) => rowRecency(b) - rowRecency(a));
+}
+
+// Decisión 13-11: subsesiones del MCP sin pestaña cuya transcripción aún no está en el historial. Una fila
+// provisional con lo que dio main, para que cuelguen de su creadora desde el primer momento. Sin ninguna,
+// devuelve la MISMA lista.
+export function withPendingDelegates(
+  history: readonly AccountConversation[],
+  background: Readonly<Record<string, BackgroundSession>>,
+): readonly AccountConversation[] {
+  const known = new Set(history.map((entry) => entry.item.sessionId));
+  const pending: AccountConversation[] = [];
+  for (const entry of Object.values(background)) {
+    if (entry.hostSession === undefined || entry.conversationId === undefined || known.has(entry.conversationId)) continue;
+    pending.push({ accountId: entry.accountId, item: pendingDelegateItem(entry.conversationId, entry, entry.hostSession) });
+  }
+  return pending.length === 0 ? history : [...history, ...pending];
+}
+
+function pendingDelegateItem(conversationId: string, entry: BackgroundSession, host: AdoptableSession): ConversationSummary {
+  return {
+    sessionId: conversationId,
+    configDir: host.configDir,
+    cwd: host.cwd,
+    title: entry.title,
+    updatedAtMs: entry.sinceMs,
+    sizeBytes: 0,
+    isScheduled: false,
+    ...(host.provider === 'codex' ? { providerId: 'codex' as const } : {}),
+    ...(host.createdBy === null ? {} : { createdByConversationId: host.createdBy.conversationId }),
+  };
 }
 
 export type ProviderMonogram = 'C' | 'X' | 'A' | 'R';
@@ -358,6 +389,40 @@ export function projectSummary(indicators: readonly (RowIndicator | null)[]): { 
     attention: indicators.filter((indicator) => indicator === 'attention').length,
     working: indicators.includes('working'),
   };
+}
+
+const PROPAGATED_RANK: Readonly<Record<RowIndicator, number>> = { attention: 3, error: 2, working: 1, readOnly: 0 };
+
+// Filas que cuelgan de `row` a cualquier profundidad (sin ella). Termina aunque hubiera un ciclo.
+export function descendantRows(
+  row: SidebarRow,
+  childrenOf: ReadonlyMap<string, readonly SidebarRow[]>,
+  sessionIdByChat: Readonly<Record<string, string>>,
+): readonly SidebarRow[] {
+  const found: SidebarRow[] = [];
+  const seen = new Set<string>();
+  const visit = (parent: SidebarRow): void => {
+    const id = sidebarRowId(parent, sessionIdByChat);
+    if (id === undefined || seen.has(id)) return;
+    seen.add(id);
+    for (const child of childrenOf.get(id) ?? []) {
+      found.push(child);
+      visit(child);
+    }
+  };
+  visit(row);
+  return found;
+}
+
+// Indicador de una creadora PLEGADA (D-7): el más fuerte entre el suyo y los de sus descendientes; el candado de
+// una hija no sube.
+export function foldedIndicator(own: RowIndicator | null, descendants: readonly (RowIndicator | null)[]): RowIndicator | null {
+  let best = own;
+  for (const indicator of descendants) {
+    if (indicator === null || indicator === 'readOnly') continue;
+    if (best === null || PROPAGATED_RANK[indicator] > PROPAGATED_RANK[best]) best = indicator;
+  }
+  return best;
 }
 
 // Con qué cuenta se abre una fila: una conversación compartida de Claude se abre con la cuenta activa si es de

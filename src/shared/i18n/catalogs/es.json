@@ -2324,6 +2324,7 @@
   "sidebar.history.backgroundTip": "{title} · {state} (se corta y se reanuda al abrirla)",
   "sidebar.history.badgeAction": "ACCIÓN",
   "sidebar.history.badgeReview": "REVISAR",
+  "sidebar.history.delegatedTip": "{title} · {state} (subsesión: se abre sin cortarla)",
   "sidebar.history.scheduled": "programada",
   "sidebar.history.sizeOnDisk": "{bytes} bytes en disco",
   "sidebar.newConversation": "Nueva conversación",

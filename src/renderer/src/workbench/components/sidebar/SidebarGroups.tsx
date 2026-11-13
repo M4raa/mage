@@ -72,6 +72,7 @@ export interface ProjectGroupViewProps {
   readonly group: ProjectGroup;
   readonly renderRow: (row: SidebarRow) => React.ReactNode;
   readonly indicatorOf: (row: SidebarRow) => RowIndicator | null;
+  readonly descendantIndicatorsOf: (row: SidebarRow) => readonly (RowIndicator | null)[];
   readonly unlimited: boolean;
   // Con un filtro activo se enseñan todos desplegados.
   readonly forceOpen: boolean;
@@ -130,10 +131,11 @@ export function ProjectEndDropZone({ onMove }: { readonly onMove: ProjectGroupVi
 // y nº de conversaciones; «＋» y «⋯» solo con el ratón encima o el foco dentro. Desplegado por defecto; el
 // plegado que elige el usuario vive aquí y no se persiste.
 export function ProjectGroupView(props: ProjectGroupViewProps): React.JSX.Element {
-  const { group, renderRow, indicatorOf, unlimited, forceOpen, emptyHint } = props;
+  const { group, renderRow, indicatorOf, descendantIndicatorsOf, unlimited, forceOpen, emptyHint } = props;
   const [override, setOverride] = useState<boolean | null>(null);
   const open = forceOpen || (override ?? true);
-  const summary = projectSummary(group.rows.map(indicatorOf));
+  const indicators = group.rows.flatMap((row) => [indicatorOf(row), ...descendantIndicatorsOf(row)]);
+  const summary = projectSummary(indicators);
   const t = useT();
   // Destino de un arrastre: línea de 2 px arriba (no mueve el contenido). Con el filtro activo no se arrastra.
   const [dropTarget, setDropTarget] = useState(false);
@@ -183,7 +185,7 @@ export function ProjectGroupView(props: ProjectGroupViewProps): React.JSX.Elemen
             <span data-project-attention={summary.attention} className="rounded-full border border-mg-warn-border bg-mg-warn-bg px-[6px] text-[10px] font-bold text-mg-warn-text">{summary.attention}</span>
           )}
           {summary.working && <span data-project-working="true" aria-hidden="true" className="mg-pulse h-[9px] w-[9px] rounded-full border-[1.5px] border-mg-sec" />}
-          <span>{group.rows.length}</span>
+          <span data-project-count={indicators.length}>{indicators.length}</span>
         </span>
         <ProjectActions group={group} onCreate={props.onCreate} onEdit={props.onEdit} onRemove={props.onRemove} />
       </div>

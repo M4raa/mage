@@ -12,7 +12,7 @@ import { accountRecovery } from '../accountRecovery';
 import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 import { t as translate, useT } from '../../i18n/uiLanguage';
 import { displayTitle } from '../conversationTitle';
-import { accountToOpenWith, sidebarRowId, type SidebarRow } from '../sidebarModel';
+import { accountToOpenWith, foldedIndicator, sidebarRowId, type SidebarRow } from '../sidebarModel';
 import { SidebarHeader } from './sidebar/SidebarHeader';
 import { RowBranch } from './sidebar/RowBranch';
 import { SidebarRowItem, type RowFold } from './sidebar/SidebarRowItem';
@@ -104,7 +104,7 @@ export function ChatSidebar(): React.JSX.Element {
       account={view.accountOf(row)}
       missingOwner={view.missingOwnerOf(row)}
       status={view.statusOf(row)}
-      indicator={view.indicatorOf(row)}
+      indicator={fold?.open === false ? foldedIndicator(view.indicatorOf(row), view.descendantIndicatorsOf(row)) : view.indicatorOf(row)}
       background={view.backgroundOf(row)}
       onSelectTab={actions.setActiveTab}
       onOpenHistory={(historyRow) => {
@@ -164,6 +164,7 @@ export function ChatSidebar(): React.JSX.Element {
                   neighbors={{ prev: shownProjects[at - 1]?.key ?? null, next: shownProjects[at + 1]?.key ?? null, afterNext: shownProjects[at + 2]?.key ?? null }}
                   renderRow={renderRow}
                   indicatorOf={view.indicatorOf}
+                  descendantIndicatorsOf={view.descendantIndicatorsOf}
                   unlimited={view.filterActive}
                   forceOpen={view.filterActive}
                   emptyHint={t('sidebar.projects.empty')}

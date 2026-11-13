@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { ConversationSummary } from '@shared/conversations';
 import type { ChatProject } from '@shared/settings';
+import type { AdoptableSession } from '@shared/ipc';
+import type { BackgroundSession } from './backgroundWork';
 import type { Tab } from './types';
 import {
   accountToOpenWith,
+  descendantRows,
+  foldedIndicator,
+  withPendingDelegates,
   applySidebarFilter,
   buildSidebarRows,
   conversationSizeById,
@@ -530,5 +535,76 @@ describe('missingOwnerOf', () => {
 
   it('missingOwnerOf_pestanaNoFijada_undefined', () => {
     expect(missingOwnerOf(tabRow({}), known)).toBeUndefined();
+  });
+});
+
+// Decisión 13-11: subsesiones del MCP sin pestaña.
+describe('withPendingDelegates', () => {
+  const host = (over: Partial<AdoptableSession> = {}): AdoptableSession => ({
+    sessionId: 'viva', conversationId: 'hija', nativeId: null, provider: 'claude', accountId: 'acc-a', configDir: 'acc-a', cwd: 'C:\vg\proyecto-a',
+    model: 'haiku', origin: 'mcp', createdBy: { conversationId: 'madre', sessionId: 'madre-viva' }, ...over,
+  });
+  const entry = (over: Partial<BackgroundSession> = {}): BackgroundSession => ({
+    sessionId: 'viva', conversationId: 'hija', title: 'VG hija', accountId: 'acc-a', state: 'working', sinceMs: 5, hostSession: host(), ...over,
+  });
+
+  it('withPendingDelegates_subsesionSinFila_anadeProvisionalConSuCreadora', () => {
+    const merged = withPendingDelegates([], { viva: entry() });
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.item).toMatchObject({ sessionId: 'hija', title: 'VG hija', cwd: 'C:\vg\proyecto-a', createdByConversationId: 'madre' });
+    expect(merged[0]?.accountId).toBe('acc-a');
+  });
+
+  it('withPendingDelegates_yaEnElHistorial_mismaLista', () => {
+    const history: AccountConversation[] = [{ accountId: 'acc-a', item: summary({ sessionId: 'hija' }) }];
+
+    expect(withPendingDelegates(history, { viva: entry() })).toBe(history);
+  });
+
+  it('withPendingDelegates_cerradaTrabajando_noAnade', () => {
+    const history: AccountConversation[] = [];
+
+    expect(withPendingDelegates(history, { viva: entry({ hostSession: undefined }) })).toBe(history);
+  });
+
+  it('withPendingDelegates_codexSinHilo_noAnade', () => {
+    const history: AccountConversation[] = [];
+
+    expect(withPendingDelegates(history, { viva: entry({ conversationId: undefined }) })).toBe(history);
+  });
+});
+
+describe('descendantRows', () => {
+  const NO_LIVE: Readonly<Record<string, string>> = {};
+  const row = (sessionId: string): SidebarRow => historyRow({ sessionId });
+  const idsOf = (rows: readonly SidebarRow[]): readonly (string | undefined)[] => rows.map((r) => sidebarRowId(r, NO_LIVE));
+
+  it('descendantRows_nietas_todasLasDeAbajo', () => {
+    const childrenOf = new Map<string, readonly SidebarRow[]>([['abuela', [row('madre')]], ['madre', [row('nieta')]]]);
+
+    expect(idsOf(descendantRows(row('abuela'), childrenOf, NO_LIVE))).toEqual(['madre', 'nieta']);
+  });
+
+  it('descendantRows_sinHijas_vacio', () => {
+    expect(descendantRows(row('sola'), new Map(), NO_LIVE)).toEqual([]);
+  });
+});
+
+describe('foldedIndicator', () => {
+  it('foldedIndicator_hijaPidePermiso_atencion', () => {
+    expect(foldedIndicator(null, [null, 'attention'])).toBe('attention');
+  });
+
+  it('foldedIndicator_propiaTrabajandoHijaConError_error', () => {
+    expect(foldedIndicator('working', ['error'])).toBe('error');
+  });
+
+  it('foldedIndicator_hijaSoloLectura_noSube', () => {
+    expect(foldedIndicator(null, ['readOnly'])).toBeNull();
+  });
+
+  it('foldedIndicator_sinNada_null', () => {
+    expect(foldedIndicator(null, [])).toBeNull();
   });
 });
