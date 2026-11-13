@@ -9,6 +9,7 @@
 // El marketplace NO se quita al desinstalar un plugin porque puede servir a otros plugins.
 import type { CapabilityEngine, NativeInstall } from './capabilityPackage';
 import { CODEX_MCP_LIST_ARGS } from '../config/codexMcp';
+import type { PluginAction } from '@shared/capabilities';
 
 // Un comando de un CLI concreto. Los argumentos son EXACTAMENTE los medidos (ver la cabecera).
 export interface NativeCommand {
@@ -97,6 +98,15 @@ export function nativeListCommand(engine: CapabilityEngine, type: NativeInstall[
   if (type === 'plugin') return { engine, args: ['plugin', 'list', '--json'] };
   if (engine === 'codex') return { engine, args: CODEX_MCP_LIST_ARGS };
   return { engine, args: ['mcp', 'list'] };
+}
+
+// D-4 de la 094: `claude plugin install|uninstall|enable|disable <nombre>@<marketplace> --scope user` (del `--help` de
+// 2.1.319, sin medir de punta a punta). Sin `-y`: un plugin que se instala ejecutando un comando declarado por su
+// marketplace FALLA y el error se enseña (Mage no acepta comandos ajenos en nombre del usuario).
+const PLUGIN_VERBS = { install: 'install', uninstall: 'uninstall', enable: 'enable', disable: 'disable' } as const satisfies Record<PluginAction, string>;
+
+export function pluginActionCommand(action: PluginAction, selector: string): NativeCommand {
+  return { engine: 'claude', args: ['plugin', PLUGIN_VERBS[action], selector, ...USER_SCOPE] };
 }
 
 // En Windows `npx` es un `npx.cmd`, y ni Claude ni Codex lanzan un .cmd por su nombre a secas: el servidor se

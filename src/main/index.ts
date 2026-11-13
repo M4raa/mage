@@ -137,7 +137,8 @@ import type { CapabilityEngine } from './capabilities/capabilityPackage';
 import { bundledContents, loadBundledCatalog } from './capabilities/catalog/libraryCatalog';
 import { registerLibraryIpc } from './capabilities/library/libraryIpc';
 import { registerCapabilitiesIpc } from './capabilities/overview/capabilitiesIpc';
-import { managedSettingsDir, readCapabilitiesOverview } from './capabilities/overview/capabilitiesOverview';
+import { managedSettingsDir, readCapabilitiesOverview, readPluginCatalog } from './capabilities/overview/capabilitiesOverview';
+import { runNativeCommand } from './capabilities/nativeRunner';
 import { BROWSER_STATE_CHANNEL } from '@shared/browser';
 import { registerBrowserIpc } from './browser/browserIpc';
 import { BROWSER_SWEEP_INTERVAL_MS, BrowserRegistry } from './browser/browserRegistry';
@@ -4200,6 +4201,11 @@ function registerCapabilitiesIpcFromMain(): void {
     handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
     overview: (accountDir) => readCapabilitiesOverview({ fs: nodeCapabilityFs(), managedDir }, accountDir),
     claudeAccountDirs: () => listAllAccounts().filter((account) => account.providerId === 'claude').map((account) => account.configDir),
+    pluginCatalog: (accountDir) => readPluginCatalog({ fs: nodeCapabilityFs(), managedDir }, accountDir),
+    // D-4 de la 094: el CLI de la cuenta con el entorno saneado (buildNativeEnv); ninguna clave llega al hijo.
+    runPluginCommand: async (accountDir, command) => {
+      await runNativeCommand({ engine: 'claude', binary: resolveClaudeBinary(), configDir: accountDir, runner: execFileRunner, baseEnv: process.env }, command);
+    },
   });
 }
 
