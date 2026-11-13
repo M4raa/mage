@@ -248,6 +248,7 @@ para usarla.
 | [`CLAUDE.md`](CLAUDE.md) | **Empieza aquí.** Invariantes que no se rompen y estándares de código |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Cómo levantar el proyecto y qué se espera de un PR |
 | [`SECURITY.md`](SECURITY.md) | Qué toca Mage de tu máquina, y cómo avisar de un fallo en privado |
+| [`docs/guia.md`](docs/guia.md) | Instalar, cuentas, suscripción o API, el comando `mage` y dónde quedan tus datos |
 | [`.claude/skills/`](.claude/skills/) | Tres trampas que este proyecto ya pagó: el protocolo real del CLI, qué hace falta al tocar `main`, y cómo se verifica la interfaz |
 
 ---
@@ -274,6 +275,10 @@ cuentas. «Claude» y «Claude Code» son marcas de Anthropic; «Codex» y «Ope
 
 **Mage ejecuta comandos en tu máquina**, porque eso es lo que hace un agente de código. Por eso los
 permisos van delante y no detrás. Lee [`SECURITY.md`](SECURITY.md) para saber qué toca exactamente.
+
+**Mage hace algunas peticiones por su cuenta**: el uso de tus cuentas de Claude (presentándose como Claude
+Code, que es lo que exige ese endpoint), la renovación de su sesión, el estado del servicio, los temas y las
+actualizaciones. Están todas, con lo que envía cada una, en [`SECURITY.md`](SECURITY.md#conexiones-que-hace-mage-por-su-cuenta).
 
 ---
 
