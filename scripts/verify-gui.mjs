@@ -11458,6 +11458,48 @@ const CHECKS = [
     },
   },
   {
+    // Punto 23 de P-043 (D2): una pestaña con proceso vivo, sin actividad y fuera de la vista suelta el proceso; la pestaña se
+    // queda con su conversación y vuelve a tener sesión al pedirla. Con 0 minutos no se suelta. Reloj adelantado por el puente.
+    name: 'Punto 23: una pestaña inactiva fuera de la vista suelta su proceso y se reanuda; con 0 no',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      let temporal = null;
+      const minutosPrevios = await page.evaluate(() => window.__mageDev.store.getState().settings.idleCloseMinutes);
+      try {
+        ({ tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: IDLE_PROVIDER, model: 'fake:eco' }));
+        const viva = await page.evaluate((id) => window.__mageDev.store.getState().ensureSession(id), tabId);
+        await openTemporaryConversation(page);
+        temporal = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+        const medido = await page.evaluate(async (id) => {
+          const dev = window.__mageDev;
+          const st = () => dev.store.getState();
+          const ahora = Date.now();
+          const tarde = ahora + 31 * 60_000;
+          await dev.sweepIdleSessions(ahora, [id]);
+          st().setIdleCloseMinutes(0);
+          const conCero = await dev.sweepIdleSessions(tarde, [id]);
+          st().setIdleCloseMinutes(30);
+          const conTreinta = await dev.sweepIdleSessions(tarde, [id]);
+          const tab = st().tabs.find((t) => t.id === id);
+          const trasSoltar = { pestana: tab !== undefined, viva: st().sessionIdByChat[id] ?? null, reanuda: tab?.resumeSessionId ?? null };
+          const nueva = await st().ensureSession(id);
+          return { conCero, conTreinta, trasSoltar, reanudada: typeof nueva === 'string' && nueva.length > 0 };
+        }, tabId);
+        const ok = medido.conCero.length === 0 && medido.conTreinta.length === 1 && medido.trasSoltar.pestana && medido.trasSoltar.viva === null && medido.trasSoltar.reanuda === viva && medido.reanudada;
+        return { ok, detail: JSON.stringify({ viva, ...medido }) };
+      } finally {
+        await page.evaluate(async ({ ids, minutos }) => {
+          const st = window.__mageDev.store.getState();
+          st.setIdleCloseMinutes(minutos);
+          for (const id of ids) if (id !== null) await window.__mageDev.store.getState().closeTab(id);
+        }, { ids: [temporal, tabId], minutos: minutosPrevios });
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), IDLE_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
     // Punto 15 de P-043 (D1): «Adjuntar archivo» con ficheros REALES (`DOM.setFileInputFiles`, así tienen ruta). Dentro de la
     // carpeta entra como mención `@ruta` con su ficha; fuera, como su ruta entre comillas invertidas. No envía nada.
     name: 'Punto 15: adjuntar un fichero que no es imagen lo menciona; fuera de la carpeta deja su ruta',
@@ -15543,6 +15585,7 @@ async function measureBrowserClose(page, sessionId) {
 // --- Q06: menciones @ con el runtime propio contra el servidor falso --------------------------------------------
 
 const MENTION_PROVIDER = { id: 'custom:vg-menciones', label: 'VG menciones' };
+const IDLE_PROVIDER = { id: 'custom:vg-inactividad', label: 'VG inactividad' };
 const MENTION_MODEL = 'fake:eco';
 // PNG de 1×1 píxel.
 const MENTION_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
