@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { LibraryAccountView, LibraryActionResult, LibraryEngine, LibraryEntryView, LibraryInstallView, LibraryView } from '@shared/ipc';
+import type { LibraryAccountView, LibraryActionResult, LibraryEngine, LibraryEntryView, LibraryInstallView, LibraryKind, LibraryView } from '@shared/ipc';
 import type { Translate } from '@shared/i18n/translator';
 import { useT } from '../../../i18n/uiLanguage';
 import { describeError } from '../../describeError';
@@ -7,6 +7,8 @@ import { LibraryPreviewDialog } from './LibraryPreviewDialog';
 import {
   blockKey,
   cardActions,
+  embeddedAccount,
+  entriesOfKinds,
   filterEntries,
   indexInstalls,
   installKey,
@@ -14,7 +16,6 @@ import {
   kindKey,
   platformKey,
   resultKey,
-  selectedAccount,
   shortCommit,
   type CardAction,
   type LibraryFilter,
@@ -37,7 +38,8 @@ const ACTION_KEYS = {
 
 type Notice = { readonly kind: 'result'; readonly result: LibraryActionResult } | { readonly kind: 'error'; readonly text: string };
 
-export function LibrarySection(): React.JSX.Element {
+// Incrustada (DEVOLUCION-093): con `kinds` solo esos tipos, sin introducción ni filtro; con `accountDir` la cuenta la fija la página, sin selector.
+export function LibrarySection({ kinds, accountDir: fixedAccountDir }: { readonly kinds?: readonly LibraryKind[]; readonly accountDir?: string } = {}): React.JSX.Element {
   const t = useT();
   const [view, setView] = useState<LibraryView | null>(null);
   const [accountDir, setAccountDir] = useState<string | null>(null);
@@ -45,7 +47,8 @@ export function LibrarySection(): React.JSX.Element {
   const [previewOf, setPreviewOf] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const account = view === null ? null : selectedAccount(view, accountDir);
+  const account = view === null ? null : embeddedAccount(view, fixedAccountDir, accountDir);
+  const entries = view === null ? [] : entriesOfKinds(view.entries, kinds);
   const installs = useMemo(() => indexInstalls(view?.installs ?? []), [view]);
   useEffect(() => {
     window.mage
@@ -70,15 +73,15 @@ export function LibrarySection(): React.JSX.Element {
   const previewEntry = view?.entries.find((entry) => entry.id === previewOf) ?? null;
   return (
     <div className="flex flex-col gap-[10px]" data-library-section="true">
-      <p className="text-[11px] text-mg-sec">{t('settings.library.intro')}</p>
+      {kinds === undefined && <p className="text-[11px] text-mg-sec">{t('settings.library.intro')}</p>}
       {notice !== null && <NoticeBand notice={notice} />}
       {view === null && notice === null && <p className="text-[11px] text-mg-muted">{t('mcp.common.loading')}</p>}
       {view !== null && account === null && <p className="text-[11px] text-mg-muted">{t('library.account.none')}</p>}
       {view !== null && account !== null && (
         <>
-          <AccountPicker accounts={view.accounts} value={account.accountDir} onChange={setAccountDir} />
-          <FilterBar entries={view.entries} filter={filter} onChange={setFilter} />
-          {filterEntries(view.entries, filter).map((entry) => (
+          {fixedAccountDir === undefined && <AccountPicker accounts={view.accounts} value={account.accountDir} onChange={setAccountDir} />}
+          {kinds === undefined && <FilterBar entries={entries} filter={filter} onChange={setFilter} />}
+          {filterEntries(entries, filter).map((entry) => (
             <LibraryCard
               key={entry.id}
               entry={entry}
