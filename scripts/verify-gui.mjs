@@ -1030,8 +1030,9 @@ const CHECKS = [
     },
   },
   {
-    // P-038 V12: las tres pestañas con la MISMA fila (punto de estado, etiquetas del mismo tamaño, acciones en «⋯»), sin
-    // tablas, la explicación plegada tras «ⓘ» y el MCP de Mage arriba como tarjeta con su interruptor.
+    // P-038 V12 y DEVOLUCION-094: Servidores y Extensiones con la MISMA fila (punto de estado, etiquetas del mismo tamaño,
+    // acciones en «⋯»), Conectores en TABLA como Claude Desktop, la explicación plegada tras «ⓘ» y el MCP de Mage arriba
+    // como tarjeta con su interruptor.
     name: 'P-038 V12: MCP y conectores homogéneo, con el MCP de Mage arriba',
     state: { settingsSection: ui('mcp.section.tabsAria') },
     async run(page) {
@@ -1065,7 +1066,7 @@ const CHECKS = [
       const textoPlegado = (await page.locator('[data-mcp-section] [role="tabpanel"]').textContent())?.includes(ui('mcp.servers.intro.commons')) ?? true;
       const ok =
         arriba.tarjetaAntesDePestañas && arriba.interruptor && !textoPlegado &&
-        Object.values(porPestaña).every((p) => p.tablas === 0 && p.tamañosDeEtiqueta.length <= 1) &&
+        Object.entries(porPestaña).every(([tab, p]) => (tab === 'connectors' ? p.tablas >= 1 : p.tablas === 0) && p.tamañosDeEtiqueta.length <= 1) &&
         porPestaña.servers.filas > 0 && porPestaña.connectors.filas > 0;
       return { ok, detail: JSON.stringify({ arriba, textoPlegado, porPestaña }) };
     },
@@ -11939,6 +11940,27 @@ const CHECKS = [
     },
   },
   {
+    // DEVOLUCION-094: Plugins (los instalados y Descubrir de un marketplace FALSO del HOME de prueba, ordenado por instalaciones)
+    // y «MCP y conectores» con la tabla de Conectores y su Descubrir. NO pulsa Instalar: lanzaría el CLI. Sin Enter. Abre
+    // Configuración y la cierra (error 5); autosuficiente con --only=Capacidades: Plugins (error 8). Siembra y deshace lo suyo.
+    name: 'Capacidades: Plugins (tuyos y descubrir) y MCP y conectores en tabla, sin instalar nada',
+    async run(page, { runDir }) {
+      if (HARNESS_HOME === os.homedir()) return { ok: false, notRunnable: true, detail: 'HOME real: no se escribe en él' };
+      const cuenta = path.join(HARNESS_HOME, '.claude');
+      const sembrados = seedPluginsFixture(cuenta);
+      await openSettingsDialog(page);
+      try {
+        const plugins = await measurePluginsPage(page, { cuenta, runDir });
+        const conectores = await measureConnectorsPage(page, { runDir });
+        return { ok: plugins.ok && conectores.ok, detail: JSON.stringify({ plugins, conectores }) };
+      } finally {
+        await page.keyboard.press('Escape');
+        await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        restorePluginsFixture(sembrados);
+      }
+    },
+  },
+  {
     // F11b (carril S, S05): el panel «Navegador» con una sesión del RUNTIME PROPIO (servidor falso, sin CLI, sin cuota y sin
     // pulsar Enter en el prompt). Una página de prueba local (`spike/__fixtures__/browser-test-page.html`) se abre por la barra
     // de direcciones; la pluma dibuja una caja y adjunta la captura al borrador (una sola por turno); la barra de control se
@@ -13971,6 +13993,103 @@ function restoreCapabilitiesFixture({ files, dirs, catalogPath, catalogBefore })
   for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   if (catalogBefore === null) fs.rmSync(catalogPath, { force: true });
   else fs.writeFileSync(catalogPath, catalogBefore, 'utf-8');
+}
+
+// DEVOLUCION-094: un marketplace FALSO con tres plugins, uno instalado y activado, otro sin manifiesto y la caché de instalaciones. Devuelve lo que hay que deshacer.
+function seedPluginsFixture(cuenta) {
+  const market = path.join(HARNESS_HOME, 'vg-market');
+  const plugins = path.join(cuenta, 'plugins');
+  const dirs = [plugins, market].filter((dir) => !fs.existsSync(dir));
+  const settingsPath = path.join(cuenta, 'settings.json');
+  const settingsBefore = readIfExists(settingsPath);
+  const lastUpdated = '2026-01-01T00:00:00.000Z';
+  const files = {
+    [path.join(plugins, 'known_marketplaces.json')]: {
+      'vg-market': { source: { source: 'directory', path: market }, installLocation: market, lastUpdated },
+      'vg-missing': { source: { source: 'github', repo: 'vg/missing' }, installLocation: path.join(HARNESS_HOME, 'vg-no-existe'), lastUpdated },
+    },
+    [path.join(market, '.claude-plugin', 'marketplace.json')]: {
+      name: 'vg-market',
+      owner: { name: 'vg' },
+      plugins: [
+        { name: 'vgplug', description: 'Plugin instalado de prueba', category: 'development', source: './vgplug' },
+        { name: 'vg-popular', description: 'Plugin popular de prueba', category: 'productivity', author: { name: 'VG' }, homepage: 'https://vg.invalid', source: './vg-popular' },
+        { name: 'vg-raro', description: 'Plugin poco usado de prueba', category: 'development', source: './vg-raro' },
+      ],
+    },
+    [path.join(plugins, 'plugin-catalog-cache.json')]: {
+      version: 1,
+      fetchedAt: lastUpdated,
+      catalog: { plugins: { 'vg-popular@vg-market': { unique_installs: 900, components: { skills: [{ name: 'a' }, { name: 'b' }] } }, 'vg-raro@vg-market': { unique_installs: 3, components: { skills: [] } } } },
+    },
+    [path.join(plugins, 'installed_plugins.json')]: {
+      version: 2,
+      plugins: { 'vgplug@vg-market': [{ scope: 'user', installPath: path.join(plugins, 'cache', 'vgplug'), version: '1.0.0', installedAt: lastUpdated, lastUpdated }] },
+    },
+  };
+  for (const [file, json] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(json), 'utf-8');
+  }
+  const settings = { ...(settingsBefore === null ? {} : JSON.parse(settingsBefore)), enabledPlugins: { 'vgplug@vg-market': true } };
+  fs.writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8');
+  return { files: Object.keys(files), dirs, settingsPath, settingsBefore };
+}
+
+function restorePluginsFixture({ files, dirs, settingsPath, settingsBefore }) {
+  for (const file of files) fs.rmSync(file, { force: true });
+  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  if (settingsBefore === null) fs.rmSync(settingsPath, { force: true });
+  else fs.writeFileSync(settingsPath, settingsBefore, 'utf-8');
+}
+
+// Plugins: «Tuyos» y «Descubrir» del marketplace falso. NUNCA pulsa [data-plugin-install]: lanzaría el CLI de verdad.
+async function measurePluginsPage(page, { cuenta, runDir }) {
+  await page.locator(MODAL).first().getByRole('tab', { name: uiRegExp('settings.sections.plugins.nav') }).click();
+  if (!(await selectCapabilityAccount(page, cuenta))) return { ok: false, motivo: 'sin la cuenta de prueba' };
+  const fila = page.locator('[data-capability-row="vgplug@vg-market"]');
+  await fila.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const activado = await fila.getAttribute('data-plugin-enabled');
+  await page.screenshot({ path: path.join(runDir, 'capacidades-plugins.png') });
+  await page.locator('[data-capability-tab="discover"]').click();
+  await page.locator('[data-discover-plugin="vg-popular@vg-market"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const lista = () => page.locator('[data-discover-plugin]').evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-discover-plugin')));
+  const orden = await lista();
+  const instalado = await page.locator('[data-discover-plugin="vgplug@vg-market"]').getAttribute('data-discover-installed');
+  const botonEnInstalado = await page.locator('[data-discover-plugin="vgplug@vg-market"] [data-plugin-install]').count();
+  const botonEnRaro = await page.locator('[data-discover-plugin="vg-raro@vg-market"] [data-plugin-install]').count();
+  const sinCatalogo = await page.locator('[data-marketplace-missing="vg-missing"]').count();
+  const biblioteca = await page.locator('[data-library-section]').count();
+  await page.locator('[data-capability-choice="category"]').selectOption('productivity');
+  const trasCategoria = await lista();
+  await page.locator('[data-capability-choice="category"]').selectOption('');
+  await page.screenshot({ path: path.join(runDir, 'capacidades-plugins-descubrir.png') });
+  await page.locator('[data-capability-tab="mine"]').click();
+  const ok =
+    activado === 'true' &&
+    JSON.stringify(orden) === JSON.stringify(['vg-popular@vg-market', 'vg-raro@vg-market', 'vgplug@vg-market']) &&
+    instalado === 'true' && botonEnInstalado === 0 && botonEnRaro === 1 && sinCatalogo === 1 && biblioteca === 1 &&
+    JSON.stringify(trasCategoria) === JSON.stringify(['vg-popular@vg-market']);
+  return { ok, activado, orden, instalado, botonEnInstalado, botonEnRaro, sinCatalogo, biblioteca, trasCategoria };
+}
+
+// MCP y conectores: la tabla de Conectores (cuatro columnas, «Claude in Chrome» incluido) y el Descubrir con el directorio.
+async function measureConnectorsPage(page, { runDir }) {
+  await page.locator(MODAL).first().getByRole('tab', { name: uiRegExp('mcp.section.tabsAria') }).click();
+  await page.locator('[data-mcp-tab="connectors"]').click();
+  const tabla = page.locator('[data-mcp-connector-group] table').first();
+  await tabla.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const columnas = await tabla.locator('th').count();
+  const chrome = await page.locator('[data-mcp-connector-group]').first().locator('[data-mcp-connector="Claude in Chrome"]').innerText();
+  await page.screenshot({ path: path.join(runDir, 'capacidades-conectores.png') });
+  await page.locator('[data-mcp-tab="servers"]').click();
+  await page.locator('[data-capability-tab="discover"]').click();
+  await page.locator('[data-connectors-directory]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const biblioteca = await page.locator('[data-library-section]').count();
+  await page.locator('[data-capability-tab="mine"]').click();
+  await page.locator('[data-mcp-section]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const ok = columnas === 4 && chrome.includes(ui('capabilities.connectors.chip.included')) && chrome.includes(ui('mcp.connectors.desktopOnly')) && biblioteca === 1;
+  return { ok, columnas, chrome, biblioteca };
 }
 
 // Elige en el selector de cuenta de la cabecera la que se llama como `cuenta` (sin distinguir mayúsculas).
