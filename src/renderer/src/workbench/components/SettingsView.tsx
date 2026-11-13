@@ -20,6 +20,7 @@ import { KeepAliveSection } from './settings/KeepAliveSection';
 import { LibrarySection } from './settings/LibrarySection';
 import { McpSection } from './settings/McpSection';
 import { OrganizationPage } from './settings/OrganizationPage';
+import { PluginsPage } from './settings/PluginsPage';
 import { SkillsPage } from './settings/SkillsPage';
 import { ProvidersSection } from './settings/ProvidersSection';
 import { ThemeMarketSection } from './settings/ThemeMarketSection';
@@ -50,6 +51,7 @@ type SectionKey =
   | 'mcp'
   | 'library'
   | 'skills'
+  | 'plugins'
   | 'organization'
   | 'hooksPermissions'
   | 'trustedFolders'
@@ -79,6 +81,7 @@ const SECTIONS = [
   { key: 'providers', group: 'settings.groups.agents', icon: 'plug', nav: 'settings.sections.providers.nav', title: 'settings.sections.providers.title' },
   { key: 'skills', group: 'settings.groups.capabilities', icon: 'brain', nav: 'settings.sections.skills.nav', title: 'settings.sections.skills.title' },
   { key: 'mcp', group: 'settings.groups.capabilities', icon: 'puzzle', nav: 'settings.sections.mcp.nav', title: 'settings.sections.mcp.title' },
+  { key: 'plugins', group: 'settings.groups.capabilities', icon: 'diamond', nav: 'settings.sections.plugins.nav', title: 'settings.sections.plugins.title' },
   { key: 'organization', group: 'settings.groups.capabilities', icon: 'handshake', nav: 'settings.sections.organization.nav', title: 'settings.sections.organization.title' },
   { key: 'library', group: 'settings.groups.capabilities', icon: 'import', nav: 'settings.sections.library.nav', title: 'settings.sections.library.title' },
   { key: 'hooksPermissions', group: 'settings.groups.security', icon: 'hook', nav: 'settings.sections.hooksPermissions.nav', title: 'settings.sections.hooksPermissions.title' },
@@ -230,6 +233,7 @@ function SettingsDialog(): React.JSX.Element {
             {section === 'providers' && <ProvidersSection />}
             {section === 'widget' && <WidgetSection enabled={widgetEnabled} onChange={setWidgetEnabled} />}
             {section === 'mcp' && <McpSection />}
+            {section === 'plugins' && <PluginsPage />}
             {section === 'library' && <LibrarySection />}
             {section === 'skills' && <SkillsPage />}
             {section === 'organization' && <OrganizationPage />}
