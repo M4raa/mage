@@ -18,7 +18,7 @@ import { RowBranch } from './sidebar/RowBranch';
 import { SidebarRowItem, type RowFold } from './sidebar/SidebarRowItem';
 import { FlatGroup, PROJECTS_COLLAPSED_LIMIT, ProjectEndDropZone, ProjectGroupView, RowList, SectionLabel } from './sidebar/SidebarGroups';
 import { useSidebarModel } from './sidebar/useSidebarModel';
-import { TasksSection } from '../tasks/TasksSection';
+import { ScheduledTasksEntry } from '../tasks/ScheduledTasksEntry';
 
 // Estado del menu contextual abierto (posicion + conversacion objetivo).
 interface MenuState {
@@ -143,7 +143,7 @@ export function ChatSidebar(): React.JSX.Element {
       <OrphanBanner key={account.id} account={account} onDelete={actions.deleteAccount} />
 
       <div data-sidebar-list="true" className="flex flex-1 flex-col gap-[6px] overflow-y-auto p-[2px_6px_8px] text-[12px]">
-        {!filter.archived && <TasksSection />}
+        {!filter.archived && <ScheduledTasksEntry />}
         {filter.archived && isEmpty && <div data-volatile-text="true" className="p-[8px_9px] text-[11px] text-mg-muted">{t('sidebar.archived.empty')}</div>}
         {!filter.archived && isEmpty && projects.length === 0 && (
           <div data-volatile-text="true" className="p-[8px_9px] text-[11px] text-mg-muted">{view.filterActive ? t('sidebar.search.noMatches') : t('sidebar.shared.empty')}</div>

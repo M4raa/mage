@@ -187,6 +187,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   handoffOpen: boolean; // modal de prompt handoff (preview + copiar / nuevo chat) abierto
   settingsOpen: boolean; // pantalla de Configuracion de la app (M2.3) abierta
   accountsUsageOpen: boolean; // pantalla «Cuentas y consumo» (P-038 V11) abierta
+  scheduledTasksOpen: boolean; // pantalla «Tareas programadas» abierta
   // el espacio de trabajo terminó de restaurarse (bien o mal): a partir de aquí se pueden abrir conversaciones de tareas programadas
   workspaceReady: boolean;
   // Seccion con la que se abre Configuracion (P-028, 41: «Añadir cuenta» del gateway lleva a
@@ -457,6 +458,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   openSettings: (section?: string) => void;
   openAccountsUsage: () => void;
   closeAccountsUsage: () => void;
+  openScheduledTasks: () => void;
+  closeScheduledTasks: () => void;
   closeSettings: () => void;
   // Abre (o enfoca) la pseudo-pestaña de novedades en `version`, o en la instalada sin argumento.
   openReleaseNotes: (version?: string) => void;
@@ -508,6 +511,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setAccountHidden: (accountId: string, hidden: boolean) => void;
   // MCP de Mage en todas las conversaciones (P-038 V7): aplica a las que se lancen o reabran después.
   setMageMcpEnabled: (enabled: boolean) => void;
+  // «Mantener activo» de las tareas programadas: se guarda al momento (main sincroniza el bloqueo de suspensión).
+  setScheduledTasksKeepAwake: (enabled: boolean) => void;
   // Comando de agy permitido, denegado o quitado (null). Se guarda al momento: agy lee sus reglas al lanzar.
   setAgyCommandVerdict: (command: string, verdict: AgyCommandVerdict | null) => void;
   // Carpetas extra que Mage enlaza en el perfil de agy (relativas a la casa del usuario).
@@ -1503,6 +1508,7 @@ export function createWorkbenchStore(mage: MageClient) {
     accountSwitchPrompt: null,
     settingsOpen: false,
     accountsUsageOpen: false,
+    scheduledTasksOpen: false,
     workspaceReady: false,
     settingsSection: null,
     releaseNotesVersion: null,
@@ -2580,6 +2586,8 @@ export function createWorkbenchStore(mage: MageClient) {
     closeSettings: () => set({ settingsOpen: false }),
     openAccountsUsage: () => set({ accountsUsageOpen: true }),
     closeAccountsUsage: () => set({ accountsUsageOpen: false }),
+    openScheduledTasks: () => set({ scheduledTasksOpen: true }),
+    closeScheduledTasks: () => set({ scheduledTasksOpen: false }),
 
     openReleaseNotes: (version) => {
       set({ releaseNotesVersion: version ?? null });

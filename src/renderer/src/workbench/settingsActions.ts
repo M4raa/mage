@@ -37,6 +37,7 @@ export type SettingsActionName =
   | 'setAccountAccent'
   | 'setClaudeAiConnectorsEnabled'
   | 'setMageMcpEnabled'
+  | 'setScheduledTasksKeepAwake'
   | 'renameAccount'
   | 'setPlanPrice'
   | 'setAdminMode'
@@ -172,6 +173,12 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
     // Se guarda YA: main lee el ajuste en cada lanzamiento, y la siguiente conversación ya debe tenerlo.
     setMageMcpEnabled: (enabled) => {
       set((s) => ({ settings: { ...s.settings, mageMcpEnabled: enabled } }));
+      deps.persistSettingsNow();
+    },
+
+    // Se guarda YA: main lo lee en cada vuelta del planificador y al guardar los ajustes.
+    setScheduledTasksKeepAwake: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, scheduledTasksKeepAwake: enabled } }));
       deps.persistSettingsNow();
     },
 

@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskRecord } from '@shared/tasks';
-import type { SidebarRow } from '../sidebarModel';
 import type { Block, Tab } from '../types';
 import {
-  buildTaskIndex, canStartTask, capabilitiesFor, declaredDeliverablesOf, isTaskRow, planOf, shouldVerify, taskDisplayName, taskOfTab, taskPhase, taskTitle,
+  canStartTask, capabilitiesFor, declaredDeliverablesOf, planOf, shouldVerify, taskDisplayName, taskOfTab, taskPhase, taskTitle,
 } from './taskView';
 
 const task = (over: Partial<TaskRecord> = {}): TaskRecord => ({
@@ -25,18 +24,6 @@ describe('taskOfTab', () => {
   });
   it('taskOfTab_ninguna_undefined', () => {
     expect(taskOfTab([task({ sessionId: 'x', conversationId: 'y' })], tabOf(), 's1')).toBeUndefined();
-  });
-});
-
-describe('isTaskRow', () => {
-  const index = buildTaskIndex([task({ sessionId: 's1', conversationId: 'c1' })]);
-  it('isTaskRow_historialDeTarea_true', () => {
-    const row = { kind: 'history', item: { sessionId: 'c1' }, accountId: '/a' } as unknown as SidebarRow;
-    expect(isTaskRow(row, index, {})).toBe(true);
-  });
-  it('isTaskRow_pestanaNormal_false', () => {
-    const row = { kind: 'tab', tab: tabOf(), accountId: '/a' } as SidebarRow;
-    expect(isTaskRow(row, index, { tab1: 'otra' })).toBe(false);
   });
 });
 
@@ -110,14 +97,21 @@ describe('shouldVerify', () => {
 });
 
 describe('canStartTask', () => {
+  const full = { name: 'n', goal: 'x', accountDir: '/a', folders: ['/f'], scheduleValid: true };
   it('canStartTask_sinCarpeta_false', () => {
-    expect(canStartTask({ goal: 'x', accountDir: '/a', folders: [] })).toBe(false);
+    expect(canStartTask({ ...full, folders: [] })).toBe(false);
   });
   it('canStartTask_objetivoEspacios_false', () => {
-    expect(canStartTask({ goal: '   ', accountDir: '/a', folders: ['/f'] })).toBe(false);
+    expect(canStartTask({ ...full, goal: '   ' })).toBe(false);
+  });
+  it('canStartTask_sinNombre_false', () => {
+    expect(canStartTask({ ...full, name: '  ' })).toBe(false);
+  });
+  it('canStartTask_programacionInvalida_false', () => {
+    expect(canStartTask({ ...full, scheduleValid: false })).toBe(false);
   });
   it('canStartTask_completo_true', () => {
-    expect(canStartTask({ goal: 'x', accountDir: '/a', folders: ['/f'] })).toBe(true);
+    expect(canStartTask(full)).toBe(true);
   });
 });
 

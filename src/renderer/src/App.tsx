@@ -34,6 +34,7 @@ import { OnboardingWizard } from './workbench/components/OnboardingWizard';
 
 const SettingsView = lazy(() => import('./workbench/components/SettingsView').then((m) => ({ default: m.SettingsView })));
 const AccountsUsageView = lazy(() => import('./workbench/components/AccountsUsageView').then((m) => ({ default: m.AccountsUsageView })));
+const ScheduledTasksView = lazy(() => import('./workbench/tasks/ScheduledTasksView').then((m) => ({ default: m.ScheduledTasksView })));
 // Novedades, tambien en diferido: arrastra el changelog entero y casi nunca se abre.
 // El de «actualización lista», en diferido: sale una vez por version.
 const UpdateReadyDialog = lazy(() => import('./workbench/components/UpdateReadyDialog').then((m) => ({ default: m.UpdateReadyDialog })));
@@ -307,6 +308,7 @@ export function App(): React.JSX.Element {
         <AccountSwitchDialog />
         <SettingsView />
         <AccountsUsageView />
+        <ScheduledTasksView />
         <UpdateReadyDialog />
       </Suspense>
       <TrustFolderDialog />
