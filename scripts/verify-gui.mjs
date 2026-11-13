@@ -9360,6 +9360,120 @@ const CHECKS = [
     },
   },
   {
+    // DEVOLUCION-095: historial SEMBRADO (no lee transcripciones) y ventanas sembradas. Mide columnas, totales, series, filas
+    // ordenadas, reparto de tokens, acierto de caché, mapa de horas y medidores contra la siembra. Capturas en oscuro y en
+    // claro. No spawnea ningún CLI ni pulsa Enter.
+    name: 'Métricas: «Cuentas y consumo» responde las cinco preguntas con datos sembrados',
+    async run(page, { runDir }) {
+      const siembra = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        const cuentas = s.accounts.filter((a) => a.providerId === 'claude' && !a.apiBilled).slice(0, 2).map((a) => a.id);
+        if (cuentas.length < 2) return { cuentas };
+        window.__vg95Previo = { refreshUsage: s.refreshUsage, usageByAccount: s.usageByAccount, load: window.__mageDev.usageHistorySource.load, theme: s.settings.theme, admin: s.settings.adminMode };
+        const ahora = new Date();
+        const hoy = new Date(ahora.getTime() - ahora.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+        const dia = (atras) => new Date(Date.parse(`${hoy}T00:00:00Z`) - atras * 86_400_000).toISOString().slice(0, 10);
+        const uso = (input, output, cacheRead, cacheWrite5m, turns) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWrite5mTokens: cacheWrite5m, cacheWrite1hTokens: 0, turns });
+        const horas = (hora, turnos) => { const h = new Array(24).fill(0); h[hora] = turnos; return h; };
+        const detalle = (day, byModel, hora, turnos, cwd, tokens, sesion) => ({ day, byModel, limits: { fiveHour: 0, weekly: 0, other: 0 }, hours: horas(hora, turnos), tools: { Read: 1 }, sessions: [sesion], projects: { [cwd]: tokens } });
+        const totales = (d) => {
+          const usos = Object.values(d.byModel);
+          const suma = (k) => usos.reduce((acc, u) => acc + u[k], 0);
+          return { day: d.day, inputTokens: suma('inputTokens'), outputTokens: suma('outputTokens'), cacheReadTokens: suma('cacheReadTokens'), cacheCreationTokens: suma('cacheWrite5mTokens') + suma('cacheWrite1hTokens'), turns: suma('turns') };
+        };
+        const a = [
+          detalle(dia(2), { 'gpt-6.1-sol': uso(3000, 1000, 0, 0, 1) }, 15, 1, '/vg95/beta', 4000, 'vg95-a2'),
+          detalle(hoy, { 'claude-opus-5-5': uso(1000, 2000, 7000, 0, 4), 'claude-haiku-5-5': uso(500, 500, 0, 1000, 2) }, 10, 6, '/vg95/alfa', 12000, 'vg95-a1'),
+        ];
+        const b = [detalle(hoy, { 'claude-sonnet-5-5': uso(100, 100, 0, 0, 1) }, 10, 1, '/vg95/alfa', 200, 'vg95-b1')];
+        const historia = { generatedAt: Date.now(), fromDay: dia(29), unattributed: [], accounts: [
+          { accountId: cuentas[0], days: a.map(totales), detail: a, windows: [] },
+          { accountId: cuentas[1], days: b.map(totales), detail: b, windows: [] },
+        ] };
+        window.__mageDev.usageHistorySource.load = async () => historia;
+        const ventana = (utilization, horasHastaReset) => ({ utilization, resetsAt: Date.now() + horasHastaReset * 3_600_000 });
+        window.__mageDev.store.setState({
+          refreshUsage: async () => undefined,
+          usageByAccount: { ...s.usageByAccount,
+            [cuentas[0]]: { fiveHour: ventana(40, 2), sevenDay: ventana(85, 72), limits: [], apiCreditsMinor: null, fetchedAt: Date.now() },
+            [cuentas[1]]: { fiveHour: ventana(0, 5), sevenDay: ventana(10, 100), limits: [], apiCreditsMinor: null, fetchedAt: Date.now() } },
+        });
+        s.setAdminMode(false);
+        return { cuentas, hoy, ayer: dia(1), antes: dia(2) };
+      });
+      if (siembra.cuentas.length < 2) return { ok: false, detail: `Hacen falta dos cuentas de Claude de prueba: ${JSON.stringify(siembra.cuentas)}` };
+      const medido = {};
+      try {
+        await page.locator('[data-usage-summary]').first().click();
+        const dialogo = page.locator('[data-accounts-usage]');
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialogo.getByRole('radio', { name: ui('accountsUsage.period', { days: 7 }) }).click();
+        await dialogo.locator('[data-account-row="all"]').click();
+        await dialogo.locator('[data-usage-question="top"] [data-ranked-row]').first().waitFor({ state: 'visible', timeout: 60_000 });
+        const tendencia = dialogo.locator('[data-usage-question="trend"]');
+        const grafico = tendencia.locator('[data-accounts-usage-chart]');
+        const total = (dia) => grafico.locator(`[data-day="${dia}"]`).getAttribute('data-total');
+        const series = () => tendencia.locator('[data-usage-legend] [data-series]').evaluateAll((n) => n.map((x) => x.getAttribute('data-series')));
+        await tendencia.locator('[data-usage-toggle="measure"] [data-option="tokens"]').click();
+        medido.medida = await grafico.getAttribute('data-measure');
+        medido.columnas = await grafico.locator('[data-day]').count();
+        medido.totales = [await total(siembra.antes), await total(siembra.ayer), await total(siembra.hoy)];
+        medido.segmentosHoy = await grafico.locator(`[data-day="${siembra.hoy}"] [data-segment]`).count();
+        medido.seriesModelo = await series();
+        await tendencia.locator('[data-usage-toggle="by"] [data-option="account"]').click();
+        medido.seriesCuenta = await series();
+        medido.totalHoyPorCuenta = await total(siembra.hoy);
+        await tendencia.locator('[data-usage-table] summary').click();
+        medido.filasTabla = await tendencia.locator('[data-usage-table] tbody tr').count();
+        const filas = (cual) => dialogo.locator(`[data-usage-ranked="${cual}"] [data-ranked-row]`).evaluateAll((n) => n.map((x) => [x.getAttribute('data-ranked-row'), x.getAttribute('data-value')]));
+        medido.modelos = await filas('models');
+        medido.proyectos = await filas('projects');
+        medido.partes = await dialogo.locator('[data-token-part]').evaluateAll((n) => Object.fromEntries(n.map((x) => [x.getAttribute('data-token-part'), x.getAttribute('data-tokens')])));
+        medido.acierto = await dialogo.locator('[data-cache-hit]').getAttribute('data-cache-hit');
+        medido.celdas = await dialogo.locator('[data-heat-cell]').evaluateAll((n) => n.map((x) => Number(x.getAttribute('data-turns'))));
+        medido.horaPunta = await dialogo.locator('[data-heat-peak]').getAttribute('data-heat-peak');
+        await page.screenshot({ path: path.join(runDir, 'metricas-oscuro.png') });
+        await page.evaluate(() => window.__mageDev.store.getState().setTheme('light'));
+        await page.waitForFunction(() => document.documentElement.dataset.theme === 'light', null, { timeout: CONFIG.actionTimeoutMs });
+        await page.screenshot({ path: path.join(runDir, 'metricas-claro.png') });
+        await dialogo.locator('[data-usage-question="tokens"]').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(runDir, 'metricas-claro-abajo.png') });
+        await dialogo.locator(`[data-account-row="${cssAttr(siembra.cuentas[0])}"]`).click();
+        const queda = dialogo.locator('[data-usage-question="remaining"]');
+        await queda.locator('[data-meter="fiveHour"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.quedan = await queda.locator('[data-meter]').evaluateAll((n) => n.map((x) => [x.getAttribute('data-meter'), x.getAttribute('data-remaining'), x.getAttribute('data-severity')]));
+        medido.toggleEnUnaCuenta = await dialogo.locator('[data-usage-toggle="by"]').count();
+        medido.seriesCuentaA = (await series()).length;
+        const celdas = medido.celdas;
+        const igual = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+        const ok = medido.medida === 'tokens' && medido.columnas === 7
+          && igual(medido.totales, ['4000', '0', '12200']) && medido.segmentosHoy === 3
+          && igual(medido.seriesModelo, ['claude-opus-5-5', 'gpt-6.1-sol', 'claude-haiku-5-5', '__other__'])
+          && igual(medido.seriesCuenta, siembra.cuentas) && medido.totalHoyPorCuenta === '12200' && medido.filasTabla === 7
+          && igual(medido.modelos, [['claude-opus-5-5', '10000'], ['gpt-6.1-sol', '4000'], ['claude-haiku-5-5', '2000'], ['claude-sonnet-5-5', '200']])
+          && igual(medido.proyectos, [['/vg95/alfa', '12200'], ['/vg95/beta', '4000']])
+          && igual(medido.partes, { input: '4600', output: '3600', cacheRead: '7000', cacheWrite: '1000' }) && medido.acierto === '56'
+          && celdas.length === 168 && celdas.reduce((x, y) => x + y, 0) === 8 && Math.max(...celdas) === 7 && medido.horaPunta === '10'
+          && igual(medido.quedan, [['fiveHour', '60', 'ok'], ['sevenDay', '15', 'warn']])
+          && medido.toggleEnUnaCuenta === 0 && medido.seriesCuentaA === 3;
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          store.getState().closeAccountsUsage();
+          const p = window.__vg95Previo;
+          if (p === undefined) return;
+          window.__mageDev.usageHistorySource.load = p.load;
+          store.setState({ refreshUsage: p.refreshUsage, usageByAccount: p.usageByAccount });
+          store.getState().setTheme(p.theme);
+          store.getState().setAdminMode(p.admin);
+          delete window.__vg95Previo;
+        });
+        await page.locator('[data-accounts-usage]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      }
+    },
+  },
+  {
     name: 'P-038 V6: el lateral enseña 10 proyectos y «Mostrar más»; el scratch de otro perfil no es proyecto',
     async run(page) {
       const previo = await page.evaluate(() => {
