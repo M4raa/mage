@@ -5321,6 +5321,46 @@ const CHECKS = [
     },
   },
   {
+    // Punto 14 de P-043: tras rebobinar, Actividad sigue enseñando lo descartado, atenuado y bajo «Rama descartada». Se monta el
+    // estado que deja `applyRewind` (rama guardada y bloques sustituidos); la captura la cubre discardedBranch.test.ts.
+    name: 'Punto 14: Actividad enseña la rama descartada atenuada y con su etiqueta',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      try {
+        await openTemporaryConversation(page);
+        await injectTurn(page, [
+          { kind: 'thinking_delta', text: 'pensamiento descartado' },
+          { kind: 'tool_use', tool: { toolUseId: 'v14-t1', toolName: 'Bash', input: { command: 'ls' } } },
+          { kind: 'tool_result', result: { toolUseId: 'v14-t1', isError: false, output: 'salida v14', durationMs: 3 } },
+        ]);
+        await page.locator('[data-turn-status]').first().click();
+        await page.locator('[data-panel="activity"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.evaluate(() => {
+          const st = window.__mageDev.store.getState();
+          const id = st.activeTabId;
+          const rama = (st.blocksByChat[id] ?? []).map((b) => ({ ...b, id: `discarded:${b.id}` }));
+          window.__mageDev.store.setState({ discardedBranchByChat: { ...st.discardedBranchByChat, [id]: rama }, blocksByChat: { ...st.blocksByChat, [id]: [] }, statusByChat: { ...st.statusByChat, [id]: 'idle' } });
+        });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const medido = await page.evaluate(() => {
+          const rama = document.querySelector('[data-panel="activity"] [data-activity-discarded="true"]');
+          return {
+            rama: rama !== null,
+            filas: rama?.querySelectorAll('[data-activity-row]').length ?? 0,
+            filasFuera: [...document.querySelectorAll('[data-panel="activity"] [data-activity-row]')].filter((n) => rama === null || !rama.contains(n)).length,
+            etiqueta: rama?.querySelector('[data-activity-discarded-label]')?.textContent?.trim() ?? '',
+            opacidad: rama === null ? null : getComputedStyle(rama).opacity,
+          };
+        });
+        const ok = medido.rama && medido.filas === 2 && medido.filasFuera === 0 && medido.etiqueta === uiPlural('chat.activity.discardedBranch', { count: 2 }) && medido.opacidad === '0.5';
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate(() => window.__mageDev.store.setState({ discardedBranchByChat: {} }));
+        await restoreTurnState(page, previo);
+      }
+    },
+  },
+  {
     // D21: los subagentes dejan UNA linea en el chat, se anclan encima del input mientras dura el turno
     // y un clic en su fila filtra el panel a sus pasos (que llegan con `parentToolUseId`, medido).
     name: '3.4: subagentes: una linea en el chat, el dock encima del input y su clic filtra Actividad',
