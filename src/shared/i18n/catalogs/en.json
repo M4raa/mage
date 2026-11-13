@@ -1061,6 +1061,7 @@
   "errors.workbench.closeSessionFailed": "Could not close the session",
   "errors.workbench.deleteConversationFailed": "Could not delete the conversation",
   "errors.workbench.installUpdateFailed": "Could not install the update",
+  "errors.workbench.openDelegatedFailed": "Could not open the subsession",
   "errors.workbench.saveSettingsFailed": "Could not save the settings",
   "errors.workbench.saveWorkspaceFailed": "Could not save the workspace",
   "errors.workbench.unknownError": "Unknown error: {value}",

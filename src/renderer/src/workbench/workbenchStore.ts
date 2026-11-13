@@ -63,7 +63,17 @@ export interface DocumentTarget {
 }
 import { mergeIntoDraft, type QueuedMessage } from './messageQueue';
 import type { ConversationSnapshot, SendMode, SendReceipt } from '@shared/coordination';
-import { adoptedTab, adoptionTarget, chatStatusOf, pinnedAccountMissing, snapshotEvents } from './adoptSession';
+import {
+  adoptedTab,
+  adoptionTarget,
+  adoptsWithoutTab,
+  backgroundStateOf,
+  chatStatusOf,
+  delegatedBackgroundEntry,
+  delegatedSessionToOpen,
+  pinnedAccountMissing,
+  snapshotEvents,
+} from './adoptSession';
 import { deliveryNotices } from './sendNow';
 import { readOnlyLockMessage, type ConversationLockStatus } from '@shared/conversationLock';
 import { lockRefOf } from './conversationLockSync';
@@ -86,6 +96,7 @@ import {
 import { restoreTabs, toPersistedWorkspace } from './workspaceView';
 import { orderTabsForDisplay, tabsToCloseAll, tabsToCloseInactive } from './tabActions';
 import {
+  backgroundMetaPatch,
   backgroundMoveBlockedReason,
   backgroundOfConversation,
   nextBackgroundState,
@@ -371,6 +382,9 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // puede seguir escribiendo el .jsonl) y el temporizador de la semana.
   discardBackgroundSession: (sessionId: string) => Promise<void>;
   discardBackgroundConversation: (conversationId: string) => Promise<void>;
+  // Decisión 13-11: abre como pestaña ACTIVA una subsesión del MCP que seguía sin pestaña, enganchada a su sesión
+  // viva. Lanza si main ya no la sigue.
+  openDelegatedSession: (sessionId: string) => Promise<void>;
   // La transcripción de la conversación de una pestaña de Codex o agy no existe en su cuenta: la pestaña deja de
   // reanudar ese id (su primer turno abre un hilo nuevo) y el chat lo dice. Ver `missingConversationPatch`.
   forgetMissingConversation: (tabId: string, conversationId: string) => void;
@@ -431,7 +445,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   openInNewWindow: (tabId: string) => Promise<void>;
   moveTabToWindow: (tabId: string, targetWindowId: string) => Promise<void>;
   adoptTab: (persisted: PersistedTab) => void;
-  // U17: una sesión viva creada por el host (terminal o MCP) entra como pestaña en segundo plano, con su historial y la sesión de main; nunca arranca otra.
+  // U17: una sesión viva creada por el host entra como pestaña en segundo plano (nunca arranca otra). Las del MCP sin pestaña previa no abren pestaña: se siguen en `backgroundSessions` (decisión 13-11).
   adoptLiveSession: (session: AdoptableSession) => Promise<void>;
   // P-028, 36. Se solto la pestaña fuera de su ventana: main decide por el cursor (otra ventana, una
   // nueva o nada) y, si se movio, se cierra aqui.
@@ -794,9 +808,10 @@ function applyBackgroundEvent(
 ): void {
   const entry = get().backgroundSessions[sessionId];
   if (entry === undefined) return; // sesion ya parada: evento rezagado, se ignora
-  // Cerrada antes de que Codex o agy dieran su hilo: la conversacion se conoce ahora.
-  if (event.kind === 'session_init' && entry.conversationId === undefined) {
-    set((s) => ({ backgroundSessions: { ...s.backgroundSessions, [sessionId]: { ...entry, conversationId: event.sessionId } } }));
+  // Cerrada antes de que Codex o agy dieran su hilo, o subsesión que espera a su creadora: se apunta y nada más.
+  const patched = backgroundMetaPatch(entry, event);
+  if (patched !== null) {
+    set((s) => ({ backgroundSessions: { ...s.backgroundSessions, [sessionId]: patched } }));
     return;
   }
   // Caducada en main (F2.4): main la para; su fila desaparece y el historial se refresca.
@@ -1468,6 +1483,48 @@ async function adoptLiveSessionInto(mage: MageClient, get: () => WorkbenchState,
   schedulePersist(mage, get);
 }
 
+// Decisión 13-11: una subsesión del MCP no abre pestaña. La ventana se engancha a su sesión para recibir sus
+// eventos y la apunta en `backgroundSessions` con su sesión del host. La entrada va ANTES de la instantánea,
+// para que los eventos de entretanto no se pierdan.
+async function trackDelegatedSession(mage: MageClient, get: () => WorkbenchState, set: SetFn, session: AdoptableSession): Promise<void> {
+  if (get().backgroundSessions[session.sessionId] !== undefined) return;
+  if (!get().accounts.some((a) => a.id === session.accountId)) {
+    console.warn('Subsesión de una cuenta que esta ventana no conoce:', session.accountId);
+    return;
+  }
+  set((s) => ({ backgroundSessions: { ...s.backgroundSessions, [session.sessionId]: delegatedBackgroundEntry(session, 'working', Date.now()) } }));
+  let snapshot: ConversationSnapshot;
+  try {
+    snapshot = await mage.attachSession(session.sessionId);
+  } catch (err) {
+    console.warn('No se pudo seguir la subsesión del MCP:', describeError(err));
+    set((s) => ({ backgroundSessions: without(s.backgroundSessions, session.sessionId) }));
+    return;
+  }
+  const state = backgroundStateOf(snapshot);
+  set((s) => {
+    const current = s.backgroundSessions[session.sessionId];
+    return current === undefined ? {} : { backgroundSessions: { ...s.backgroundSessions, [session.sessionId]: { ...current, state } } };
+  });
+}
+
+// Decisión 13-11: una subsesión sin pestaña pasa a pestaña ACTIVA enganchada a su sesión viva. La instantánea
+// repone permisos y preguntas pendientes. Nunca crea otra sesión ni corta la que hay.
+async function openDelegatedSessionInto(mage: MageClient, get: () => WorkbenchState, set: SetFn, sessionId: string): Promise<void> {
+  const entry = get().backgroundSessions[sessionId];
+  if (entry?.hostSession === undefined) throw new Error(`No hay ninguna subsesión sin pestaña con la sesión ${JSON.stringify(sessionId)}`);
+  set((s) => ({ backgroundSessions: without(s.backgroundSessions, sessionId) }));
+  await adoptLiveSessionInto(mage, get, set, delegatedSessionToOpen(entry));
+  const tabId = tabIdForSession(get(), sessionId);
+  if (tabId === null) {
+    void get().loadConversationHistory();
+    throw new Error(`La subsesión ${JSON.stringify(sessionId)} ya no está en marcha en main`);
+  }
+  if (entry.awaitingCreator === true) set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, awaitingCreator: true } : t)) }));
+  get().setActiveTab(tabId);
+  get().focusPrompt();
+}
+
 function withoutPendingCliTitle(tab: Tab): Tab {
   const { pendingCliTitle: _sent, ...rest } = tab;
   return rest;
@@ -1843,6 +1900,8 @@ export function createWorkbenchStore(mage: MageClient) {
       if (entry !== undefined) await get().discardBackgroundSession(entry.sessionId);
     },
 
+    openDelegatedSession: (sessionId) => openDelegatedSessionInto(mage, get, set, sessionId),
+
     movePaneTab: (draggedTabId, targetPath, zone) => {
       set((s) => ({ activeTabId: draggedTabId, splitLayout: applyDrop(s.splitLayout, draggedTabId, targetPath, zone) }));
       schedulePersist(mage, get);
@@ -2104,7 +2163,7 @@ export function createWorkbenchStore(mage: MageClient) {
       for (const persisted of pending) get().adoptTab(persisted);
     },
 
-    adoptLiveSession: (session) => adoptLiveSessionInto(mage, get, set, session),
+    adoptLiveSession: (session) => (adoptsWithoutTab(get(), session) ? trackDelegatedSession(mage, get, set, session) : adoptLiveSessionInto(mage, get, set, session)),
 
     adoptTab: (persisted) => {
       const { accounts } = get();
@@ -2337,6 +2396,12 @@ export function createWorkbenchStore(mage: MageClient) {
     // sobre la misma transcripcion la corromperian. La decision vive en planOpenConversation (pura).
     // La sesion arranca perezosa al primer mensaje (ensureSession con --resume). Solo Claude.
     openConversation: async (item, accountIdOverride) => {
+      // Subsesión del MCP sin pestaña (decisión 13-11): se engancha a la viva, no se corta.
+      const delegated = backgroundOfConversation(get().backgroundSessions, item.sessionId);
+      if (delegated?.hostSession !== undefined) {
+        await get().openDelegatedSession(delegated.sessionId).catch((err: unknown) => reportActionError(t('errors.workbench.openDelegatedFailed'), err, 'chat'));
+        return;
+      }
       // Reabrir una conversacion que quedo en segundo plano CORTA su sesion viva y la reanuda con
       // `--resume` (decision del usuario, 2026-09-15): dos procesos del CLI no pueden escribir la misma
       // transcripcion, y re-engancharse a la viva era el camino caro. Si estaba esperando un permiso,

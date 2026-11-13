@@ -1063,6 +1063,7 @@ export interface MessageValues {
   readonly "errors.workbench.closeSessionFailed": never;
   readonly "errors.workbench.deleteConversationFailed": never;
   readonly "errors.workbench.installUpdateFailed": never;
+  readonly "errors.workbench.openDelegatedFailed": never;
   readonly "errors.workbench.saveSettingsFailed": never;
   readonly "errors.workbench.saveWorkspaceFailed": never;
   readonly "errors.workbench.unknownError": { readonly "value": string | number };

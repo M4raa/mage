@@ -1,7 +1,8 @@
 import { useCallback } from 'react';
 import { useT } from '../i18n/uiLanguage';
 import { findSubsession } from './delegationView';
-import { notify } from './notificationStore';
+import { backgroundOfConversation } from './backgroundWork';
+import { notify, reportActionError } from './notificationStore';
 import { accountToOpenWith } from './sidebarModel';
 import { useWorkbenchStore } from './workbenchStore';
 
@@ -11,6 +12,11 @@ export function useOpenSubsession(): (conversationId: string) => void {
   const t = useT();
   return useCallback((conversationId: string): void => {
     const state = useWorkbenchStore.getState();
+    const delegated = backgroundOfConversation(state.backgroundSessions, conversationId);
+    if (delegated?.hostSession !== undefined) {
+      void state.openDelegatedSession(delegated.sessionId).catch((err: unknown) => reportActionError(t('errors.workbench.openDelegatedFailed'), err, 'chat'));
+      return;
+    }
     const target = findSubsession(conversationId, { tabs: state.tabs, sessionIdByChat: state.sessionIdByChat, history: state.allConversationHistory });
     if (target.kind === 'tab') {
       state.setActiveTab(target.tabId);

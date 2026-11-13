@@ -925,6 +925,7 @@
   "errors.workbench.closeSessionFailed": { "description": "Aviso de error al cerrar la sesión de una conversación.", "usage": "src/renderer/src/workbench/workbenchStore.ts:947", "maxLength": 60 },
   "errors.workbench.deleteConversationFailed": { "description": "Aviso de error al borrar una conversación del historial.", "usage": "src/renderer/src/workbench/workbenchStore.ts:2064", "maxLength": 60 },
   "errors.workbench.installUpdateFailed": { "description": "Aviso de error al instalar la actualización de Mage descargada.", "usage": "src/renderer/src/workbench/workbenchStore.ts:2219", "maxLength": 60 },
+  "errors.workbench.openDelegatedFailed": { "description": "Aviso de error cuando no se puede abrir como pestaña una subsesión del MCP que seguía sin ella (main ya no la sigue).", "usage": "src/renderer/src/workbench/workbenchStore.ts:2402", "maxLength": 60 },
   "errors.workbench.saveSettingsFailed": { "description": "Aviso de error cuando falla el guardado de la configuración de Mage.", "usage": "src/renderer/src/workbench/workbenchStore.ts:785", "maxLength": 60 },
   "errors.workbench.saveWorkspaceFailed": { "description": "Aviso de error cuando falla el guardado automático del workspace (pestañas y disposición).", "usage": "src/renderer/src/workbench/workbenchStore.ts:659", "maxLength": 60 },
   "errors.workbench.unknownError": { "description": "Texto de un fallo que no es un Error de JavaScript. {value} es el valor recibido, tal cual.", "usage": "src/renderer/src/workbench/describeError.ts:8", "variables": {"value":"string"} },
