@@ -23,6 +23,18 @@ describe('BUILT_IN_PROVIDERS labels', () => {
     expect(agy?.label).toEqual({ key: 'prompt.providers.agyLabel' });
     expect(agy === undefined ? '' : renderForLog(agy.label)).toBe('Antigravity · el CLI de Google (agy) · sin permisos');
   });
+
+  it('builtInProviders_agyRespaldo_sinGemini36', () => {
+    // Preparar.
+    const agy = BUILT_IN_PROVIDERS.find((provider) => provider.id === AGY_PROVIDER_ID);
+
+    // Ejecutar.
+    const ids = (agy?.models ?? []).map((model) => model.id);
+
+    // Comprobar: ninguno es un 3.6 y el primero sigue siendo el 3.8 High.
+    expect(ids.filter((id) => id.startsWith('gemini-3.6'))).toEqual([]);
+    expect(ids[0]).toBe('gemini-3.8-flash-high');
+  });
 });
 
 describe('chatCompletionsUrl', () => {

@@ -177,7 +177,7 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     // es solo el RESPALDO de la seccion "Proveedores y modelos", que sondea el CLI en vivo: cuando se
     // pudo preguntar manda lo que responda `agy models`, no esto. Aun asi se mantiene al dia porque es
     // lo que se ofrece sin `agy` instalado o sin conexion (y estuvo un mes desfasada: la cuenta ya
-    // ofrecia Gemini 3.8 y 3.7 cuando aqui seguian el 3.6 y un 3.5 que ya no existe).
+    // ofrecia Gemini 3.8 y 3.7 cuando aqui seguian el 3.6 y un 3.5 que ya no existe; el 3.6 salió de esta lista el 13-11).
     id: AGY_PROVIDER_ID,
     label: localized('prompt.providers.agyLabel'),
     models: [
@@ -187,9 +187,6 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
       { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
       { id: 'gemini-3.7-flash-medium', label: 'Gemini 3.7 Flash (Medium)' },
       { id: 'gemini-3.7-flash-low', label: 'Gemini 3.7 Flash (Low)' },
-      { id: 'gemini-3.6-flash-high', label: 'Gemini 3.6 Flash (High)' },
-      { id: 'gemini-3.6-flash-medium', label: 'Gemini 3.6 Flash (Medium)' },
-      { id: 'gemini-3.6-flash-low', label: 'Gemini 3.6 Flash (Low)' },
       { id: 'gemini-3.1-pro-high', label: 'Gemini 3.1 Pro (High)' },
       { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro (Low)' },
       { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Thinking)' },
