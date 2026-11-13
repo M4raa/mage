@@ -1,4 +1,5 @@
 import type { MageEvent } from '@shared/events';
+import type { AdoptableSession } from '@shared/ipc';
 import type { ChatStatus } from './types';
 import { t } from '../i18n/uiLanguage';
 
@@ -21,6 +22,11 @@ export interface BackgroundSession {
   readonly accountId: string;
   readonly state: BackgroundState;
   readonly sinceMs: number; // cuando se mando a segundo plano (la caducidad la lleva main, F2.4)
+  // Solo una subsesión del MCP que aún no tiene pestaña (decisión 13-11): con ella se abre su pestaña
+  // enganchada a la sesión viva. Ausente = una pestaña que se cerró trabajando.
+  readonly hostSession?: AdoptableSession;
+  // U26: la subsesión espera la respuesta de su creadora (`mage_ask_creator`); pasa a la pestaña al abrirla.
+  readonly awaitingCreator?: boolean;
 }
 
 // Solo se manda a segundo plano lo que TIENE trabajo vivo. Una conversacion parada se cierra como
@@ -54,6 +60,15 @@ export function backgroundMoveBlockedReason(background: BackgroundSession | unde
   return t('history.background.moveBlocked');
 }
 
+// Señales de que una conversación que había terminado empieza otro turno (una subsesión recibe otro encargo).
+const TURN_ACTIVITY_KINDS: ReadonlySet<MageEvent['kind']> = new Set<MageEvent['kind']>([
+  'request_started',
+  'stream_delta',
+  'thinking_delta',
+  'assistant_text',
+  'tool_use',
+]);
+
 // Transicion de estado al llegar un evento de una sesion SIN pestaña. Devuelve el estado actual si el
 // evento no cambia nada (la inmensa mayoria: deltas de texto, herramientas...), para que quien llama
 // pueda no tocar el store.
@@ -64,7 +79,16 @@ export function nextBackgroundState(current: BackgroundState, event: MageEvent):
   // Un permiso cancelado (por timeout del CLI o por el propio agente) deja de exigir accion: si el
   // turno sigue, vuelve a ser trabajo normal.
   if ((event.kind === 'permission_cancelled' || event.kind === 'elicitation_cancelled' || event.kind === 'elicitation_resolved') && current === 'needs_action') return 'working';
+  if (current === 'done' && TURN_ACTIVITY_KINDS.has(event.kind)) return 'working';
   return current;
+}
+
+// Cambio de una entrada que no es de estado: el hilo que dan Codex y agy al arrancar, o la espera de una subsesión a
+// su creadora (U26). null = el evento no la toca.
+export function backgroundMetaPatch(entry: BackgroundSession, event: MageEvent): BackgroundSession | null {
+  if (event.kind === 'session_init' && entry.conversationId === undefined) return { ...entry, conversationId: event.sessionId };
+  if (event.kind === 'delegation_waiting') return { ...entry, awaitingCreator: event.waiting };
+  return null;
 }
 
 // Cuántas sesiones sin pestaña siguen haciendo algo que importa: trabajando o esperando una acción tuya. Las

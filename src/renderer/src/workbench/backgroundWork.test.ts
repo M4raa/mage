@@ -3,6 +3,7 @@ import type { MageEvent } from '@shared/events';
 import { foreignText } from '@shared/i18n/localizedText';
 import {
   backgroundLabel,
+  backgroundMetaPatch,
   backgroundMoveBlockedReason,
   backgroundOfConversation,
   countBackgroundWork,
@@ -76,7 +77,32 @@ describe('nextBackgroundState', () => {
 
   it('nextBackgroundState_eventoDeRuido_devuelveElMismoEstado', () => {
     expect(nextBackgroundState('working', event('stream_delta'))).toBe('working');
-    expect(nextBackgroundState('done', event('stream_delta'))).toBe('done');
+  });
+
+  it('nextBackgroundState_terminadaYLlegaActividad_vuelveATrabajando', () => {
+    expect(nextBackgroundState('done', { kind: 'stream_delta', text: 'x' })).toBe('working');
+  });
+
+  it('nextBackgroundState_trabajandoYLlegaTexto_sinCambio', () => {
+    expect(nextBackgroundState('working', { kind: 'assistant_text', text: 'x' })).toBe('working');
+  });
+});
+
+describe('backgroundMetaPatch', () => {
+  const entry: BackgroundSession = { sessionId: 's1', conversationId: undefined, title: 't', accountId: 'a', state: 'working', sinceMs: 1 };
+  const init: MageEvent = { kind: 'session_init', sessionId: 'hilo-1', model: 'm', tools: [], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] };
+
+  it('backgroundMetaPatch_sessionInitSinConversacion_laApunta', () => {
+    expect(backgroundMetaPatch(entry, init)).toEqual({ ...entry, conversationId: 'hilo-1' });
+  });
+
+  it('backgroundMetaPatch_esperaACreadora_laMarca', () => {
+    const patched = backgroundMetaPatch(entry, { kind: 'delegation_waiting', creatorId: 'c', waiting: true });
+    expect(patched?.awaitingCreator).toBe(true);
+  });
+
+  it('backgroundMetaPatch_textoNormal_null', () => {
+    expect(backgroundMetaPatch(entry, { kind: 'stream_delta', text: 'x' })).toBeNull();
   });
 });
 
