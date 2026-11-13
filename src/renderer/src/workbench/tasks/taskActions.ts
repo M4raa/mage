@@ -4,7 +4,7 @@ import { t } from '../../i18n/uiLanguage';
 import { describeError } from '../describeError';
 import { reportActionError } from '../notificationStore';
 import { useWorkbenchStore } from '../workbenchStore';
-import { launchTask, type StartTaskDeps } from './startTask';
+import { launchTaskKeepingFocus, type StartTaskDeps } from './startTask';
 import { useTaskStore } from './taskStore';
 import type { ScheduledRunsDeps } from './taskRunner';
 import { taskOfTab } from './taskView';
@@ -19,6 +19,8 @@ export function realStartTaskDeps(): StartTaskDeps {
     setActiveAccount: (accountId) => store().setActiveAccount(accountId),
     createConversation: (folder) => store().createConversation(folder),
     activeTabId: () => store().activeTabId,
+    setActiveTab: (tabId) => store().setActiveTab(tabId),
+    hasTab: (tabId) => store().tabs.some((tab) => tab.id === tabId),
     attachTask: (tabId, taskId) => store().attachTaskToTab(tabId, taskId),
     ensureSession: (tabId) => store().ensureSession(tabId),
     tabMentionContext: (tabId) => {
@@ -50,7 +52,7 @@ export function openTaskConversation(task: TaskRecord, translate: typeof t): voi
 export function realScheduledRunsDeps(): ScheduledRunsDeps {
   return {
     takeDue: () => window.mage.takeDueTaskRuns(),
-    launch: (task) => launchTask(task, realStartTaskDeps()),
+    launch: (task) => launchTaskKeepingFocus(task, realStartTaskDeps()),
     reportFailed: (taskId, error) => window.mage.reportTaskRunFailed({ taskId, error }),
     reload: () => useTaskStore.getState().load(),
     onDue: (listener) => window.mage.onTasksDue(listener),

@@ -3,7 +3,7 @@ import type { MentionResolution, MentionResolveParams } from '@shared/mentions';
 import { classifySystemWrapper } from '@shared/systemWrappers';
 import type { TaskSchedule } from '@shared/taskSchedule';
 import type { TaskDraft, TaskRecord } from '@shared/tasks';
-import { launchTask, startTask, type StartTaskDeps } from './startTask';
+import { launchTask, launchTaskKeepingFocus, startTask, type StartTaskDeps } from './startTask';
 
 const draft = (over: Partial<TaskDraft> = {}): TaskDraft => ({
   name: 'Informe', schedule: null, goal: '  Haz el informe  ', language: 'es', provider: 'claude', accountDir: '/acc', folders: ['/work'], documents: [], capabilities: [], ...over,
@@ -29,6 +29,8 @@ function fakeDeps(over: Partial<StartTaskDeps> = {}): { deps: StartTaskDeps; cal
     setActiveAccount: () => { calls.push('setActiveAccount'); },
     createConversation: async () => { calls.push('createConversation'); },
     activeTabId: () => 'tab1',
+    setActiveTab: () => { calls.push('setActiveTab'); },
+    hasTab: () => true,
     attachTask: (tabId, taskId) => { calls.push('attachTask'); attached.push({ tabId, taskId }); },
     ensureSession: async () => { calls.push('ensureSession'); return 's1'; },
     tabMentionContext: () => ({ accountDir: '/acc', provider: 'claude' }),
@@ -107,5 +109,57 @@ describe('launchTask', () => {
     await launchTask(recordOf(draft()), deps);
 
     expect(calls).not.toContain('createTask');
+  });
+});
+
+// El usuario estaba en la pestaña 'tab0' de la cuenta '/other'; lanzar la tarea (cuenta '/acc') crea 'tab1'.
+function focusDeps(over: Partial<StartTaskDeps> = {}) {
+  const focus = { accountId: '/other', tabId: 'tab0' };
+  const restored: string[] = [];
+  const { deps } = fakeDeps({
+    activeAccountId: () => focus.accountId,
+    setActiveAccount: (id) => { focus.accountId = id; restored.push(`account:${id}`); },
+    activeTabId: () => focus.tabId,
+    createConversation: async () => { focus.tabId = 'tab1'; },
+    setActiveTab: (id) => { focus.tabId = id; restored.push(`tab:${id}`); },
+    ...over,
+  });
+  return { deps, focus, restored };
+}
+
+describe('launchTaskKeepingFocus', () => {
+  it('launchTaskKeepingFocus_otraCuentaYPestana_devuelveAmbas', async () => {
+    const { deps, focus, restored } = focusDeps();
+
+    const tabId = await launchTaskKeepingFocus(recordOf(draft()), deps);
+
+    expect(tabId).toBe('tab1');
+    expect(focus).toEqual({ accountId: '/other', tabId: 'tab0' });
+    expect(restored).toEqual(['account:/acc', 'account:/other', 'tab:tab0']);
+  });
+
+  it('launchTaskKeepingFocus_envioFalla_tambienDevuelve', async () => {
+    const { deps, focus } = focusDeps({ sendMessageToTab: async () => { throw new Error('sin red'); } });
+
+    await expect(launchTaskKeepingFocus(recordOf(draft()), deps)).rejects.toThrow('sin red');
+
+    expect(focus).toEqual({ accountId: '/other', tabId: 'tab0' });
+  });
+
+  it('launchTaskKeepingFocus_pestanaPreviaCerrada_noLaActiva', async () => {
+    const { deps, focus } = focusDeps({ hasTab: () => false });
+
+    await launchTaskKeepingFocus(recordOf(draft()), deps);
+
+    expect(focus.tabId).toBe('tab1');
+  });
+
+  it('launchTaskKeepingFocus_sinPestanaPrevia_dejaLaNueva', async () => {
+    const { deps, focus } = focusDeps();
+    focus.tabId = '';
+
+    await launchTaskKeepingFocus(recordOf(draft()), deps);
+
+    expect(focus.tabId).toBe('tab1');
   });
 });

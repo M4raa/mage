@@ -15,6 +15,8 @@ export interface StartTaskDeps {
   readonly setActiveAccount: (accountId: string) => void;
   readonly createConversation: (folder: { readonly cwd: string }) => Promise<void>;
   readonly activeTabId: () => string;
+  readonly setActiveTab: (tabId: string) => void;
+  readonly hasTab: (tabId: string) => boolean;
   readonly attachTask: (tabId: string, taskId: string) => void;
   readonly ensureSession: (tabId: string) => Promise<string>;
   readonly tabMentionContext: (tabId: string) => { readonly accountDir: string; readonly provider: string };
@@ -80,4 +82,21 @@ export async function launchTask(task: TaskRecord, deps: StartTaskDeps): Promise
   const text = task.schedule === null ? merged.text : scheduledTaskMessage({ name: taskDisplayName(task), text: merged.text });
   await deps.sendMessageToTab(tabId, text, merged.attachments);
   return tabId;
+}
+
+// Ejecución del PLANIFICADOR (D-8): el camino de siempre activa la cuenta de la tarea y su pestaña nueva; al acabar
+// (bien o mal) se devuelven la cuenta y la pestaña que tenía el usuario. La de la tarea queda abierta, sin foco.
+// "Ejecutar ahora" y "Empezar tarea" usan `launchTask` y sí la enseñan.
+export async function launchTaskKeepingFocus(task: TaskRecord, deps: StartTaskDeps): Promise<string> {
+  const before = { accountId: deps.activeAccountId(), tabId: deps.activeTabId() };
+  try {
+    return await launchTask(task, deps);
+  } finally {
+    restoreFocus(before, deps);
+  }
+}
+
+function restoreFocus(before: { readonly accountId: string; readonly tabId: string }, deps: StartTaskDeps): void {
+  if (before.accountId.length > 0 && deps.activeAccountId() !== before.accountId) deps.setActiveAccount(before.accountId);
+  if (before.tabId.length > 0 && deps.activeTabId() !== before.tabId && deps.hasTab(before.tabId)) deps.setActiveTab(before.tabId);
 }
