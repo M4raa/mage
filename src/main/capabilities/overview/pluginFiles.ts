@@ -2,7 +2,15 @@
 // Si un plugin está activo lo dice settings.json → enabledPlugins (Mage lo hereda entre cuentas, accountService.ts:37-40).
 // De settings.json SOLO se lee esa clave: el resto (env, permisos…) nunca sale de aquí.
 import { z } from 'zod';
-import type { CapabilityFileState, InstalledPluginView, PluginScope } from '@shared/capabilities';
+import { isAbsolute } from 'node:path';
+import type {
+  CapabilityFileState,
+  DiscoverPluginView,
+  InstalledPluginView,
+  MarketplaceView,
+  PluginCatalogView,
+  PluginScope,
+} from '@shared/capabilities';
 import { parseJsonObject } from './policyFiles';
 
 const PLUGIN_SCOPES: ReadonlySet<string> = new Set<PluginScope>(['user', 'project', 'local']);
@@ -45,4 +53,137 @@ export function parseInstalledPlugins(
     .map(([id, installs]) => pluginView(id, installs, enabledIds.has(id)))
     .sort((a, b) => a.id.localeCompare(b.id, 'en'));
   return { state: 'ok', plugins };
+}
+
+// known_marketplaces.json MEDIDO con Claude Code 2.1.319: { "<nombre>": { source: { source: 'github'|'git'|'directory', repo?|url?|path? }, installLocation: <ruta absoluta>, lastUpdated, autoUpdate? } }.
+const KNOWN = z
+  .object({
+    source: z.object({ source: z.string() }).passthrough().catch({ source: 'unknown' }),
+    installLocation: z.string().optional().catch(undefined),
+  })
+  .passthrough();
+
+export interface KnownMarketplace { readonly name: string; readonly sourceKind: string; readonly installLocation: string | null }
+
+export function parseKnownMarketplaces(text: string | null): readonly KnownMarketplace[] {
+  const parsed = parseJsonObject(text);
+  if (parsed.state !== 'ok') return [];
+  const known: KnownMarketplace[] = [];
+  for (const [name, raw] of Object.entries(parsed.value)) {
+    const entry = KNOWN.safeParse(raw);
+    if (!entry.success) continue;
+    const location = entry.data.installLocation;
+    known.push({
+      name,
+      sourceKind: entry.data.source.source,
+      installLocation: location !== undefined && isAbsolute(location) ? location : null,
+    });
+  }
+  return known.sort((a, b) => a.name.localeCompare(b.name, 'en'));
+}
+
+// <installLocation>/.claude-plugin/marketplace.json MEDIDO: { name, owner, description?, plugins: [{ name, description, category?, author?: { name }, homepage?, source, version? }] }.
+const MANIFEST_PLUGIN = z
+  .object({
+    name: z.string().min(1),
+    description: z.string().catch(''),
+    category: z.string().optional().catch(undefined),
+    author: z.object({ name: z.string() }).passthrough().optional().catch(undefined),
+    homepage: z.string().optional().catch(undefined),
+  })
+  .passthrough();
+
+export interface MarketplacePluginEntry {
+  readonly name: string;
+  readonly description: string;
+  readonly category: string | null;
+  readonly author: string | null;
+  readonly homepage: string | null;
+}
+export interface MarketplaceManifest { readonly state: CapabilityFileState; readonly entries: readonly MarketplacePluginEntry[] }
+
+const HTTPS_PREFIX = 'https://';
+
+export function parseMarketplaceManifest(text: string | null): MarketplaceManifest {
+  const parsed = parseJsonObject(text);
+  if (parsed.state !== 'ok') return { state: parsed.state, entries: [] };
+  const entries: MarketplacePluginEntry[] = [];
+  for (const raw of z.array(z.unknown()).catch([]).parse(parsed.value.plugins)) {
+    const plugin = MANIFEST_PLUGIN.safeParse(raw);
+    if (!plugin.success) continue;
+    const { name, description, category, author, homepage } = plugin.data;
+    entries.push({
+      name,
+      description,
+      category: category ?? null,
+      author: author?.name ?? null,
+      homepage: homepage !== undefined && homepage.startsWith(HTTPS_PREFIX) ? homepage : null,
+    });
+  }
+  return { state: 'ok', entries };
+}
+
+// plugin-catalog-cache.json MEDIDO (538 KB, solo claude-plugins-official): { version: 1, fetchedAt, catalog: { plugins: { "<nombre>@<marketplace>": { unique_installs: number, components: { skills: [{ name, chars }], commands, agents, hooks, mcpServers, lspServers }, … } } } }.
+const STATS = z
+  .object({
+    unique_installs: z.number().int().nonnegative().optional().catch(undefined),
+    components: z.object({ skills: z.array(z.unknown()).optional().catch(undefined) }).passthrough().optional().catch(undefined),
+  })
+  .passthrough();
+
+export interface PluginStats { readonly installs: number | null; readonly skills: number | null }
+
+export function parseCatalogStats(text: string | null): ReadonlyMap<string, PluginStats> {
+  const parsed = parseJsonObject(text);
+  if (parsed.state !== 'ok') return new Map();
+  const { plugins } = z
+    .object({ plugins: z.record(z.string(), z.unknown()).catch({}) })
+    .passthrough()
+    .catch({ plugins: {} })
+    .parse(parsed.value.catalog);
+  const stats = new Map<string, PluginStats>();
+  for (const [id, raw] of Object.entries(plugins)) {
+    const entry = STATS.safeParse(raw);
+    if (!entry.success) continue;
+    stats.set(id, { installs: entry.data.unique_installs ?? null, skills: entry.data.components?.skills?.length ?? null });
+  }
+  return stats;
+}
+
+export interface PluginCatalogInput {
+  readonly marketplaces: readonly KnownMarketplace[];
+  readonly manifests: ReadonlyMap<string, MarketplaceManifest>;
+  readonly stats: ReadonlyMap<string, PluginStats>;
+  readonly installedIds: ReadonlySet<string>;
+}
+
+const NO_MANIFEST: MarketplaceManifest = { state: 'absent', entries: [] };
+
+function discoverView(marketplace: string, entry: MarketplacePluginEntry, input: PluginCatalogInput): DiscoverPluginView {
+  const id = `${entry.name}@${marketplace}`;
+  const stats = input.stats.get(id);
+  return {
+    id,
+    name: entry.name,
+    marketplace,
+    description: entry.description,
+    category: entry.category,
+    author: entry.author,
+    homepage: entry.homepage,
+    installs: stats?.installs ?? null,
+    skills: stats?.skills ?? null,
+    installed: input.installedIds.has(id),
+  };
+}
+
+// Marketplaces conocidos + su manifiesto + estadísticas del CLI → lo que enseña «Descubrir».
+export function buildPluginCatalog(input: PluginCatalogInput): PluginCatalogView {
+  const marketplaces: MarketplaceView[] = [];
+  const plugins: DiscoverPluginView[] = [];
+  for (const market of input.marketplaces) {
+    const manifest = input.manifests.get(market.name) ?? NO_MANIFEST;
+    marketplaces.push({ name: market.name, sourceKind: market.sourceKind, state: manifest.state, count: manifest.entries.length });
+    for (const entry of manifest.entries) plugins.push(discoverView(market.name, entry, input));
+  }
+  return { marketplaces, plugins };
 }

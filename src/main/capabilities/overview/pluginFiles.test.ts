@@ -1,5 +1,13 @@
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseInstalledPlugins, splitPluginId } from './pluginFiles';
+import {
+  buildPluginCatalog,
+  parseCatalogStats,
+  parseInstalledPlugins,
+  parseKnownMarketplaces,
+  parseMarketplaceManifest,
+  splitPluginId,
+} from './pluginFiles';
 
 const installed = (plugins: Record<string, unknown>): string => JSON.stringify({ version: 2, plugins });
 
@@ -62,5 +70,107 @@ describe('parseInstalledPlugins', () => {
 describe('splitPluginId', () => {
   it('splitPluginId_sinArroba_marketplaceVacio', () => {
     expect(splitPluginId('solo')).toEqual({ name: 'solo', marketplace: '' });
+  });
+});
+
+const ABS = resolve('market-dir');
+
+describe('parseKnownMarketplaces', () => {
+  it('parseKnownMarketplaces_formaMedida_nombresTipoYUbicacion', () => {
+    const text = JSON.stringify({
+      zeta: { source: { source: 'github', repo: 'a/b' }, installLocation: ABS, lastUpdated: 'x' },
+      alfa: { source: { source: 'directory', path: ABS }, installLocation: ABS },
+    });
+
+    const result = parseKnownMarketplaces(text);
+
+    expect(result).toEqual([
+      { name: 'alfa', sourceKind: 'directory', installLocation: ABS },
+      { name: 'zeta', sourceKind: 'github', installLocation: ABS },
+    ]);
+  });
+
+  it('parseKnownMarketplaces_ubicacionRelativa_null', () => {
+    const text = JSON.stringify({ m: { source: { source: 'git', url: 'u' }, installLocation: 'relativa/x' } });
+
+    expect(parseKnownMarketplaces(text)[0]?.installLocation).toBeNull();
+  });
+});
+
+describe('parseMarketplaceManifest', () => {
+  it('parseMarketplaceManifest_formaMedida_plugins', () => {
+    const text = JSON.stringify({
+      name: 'm',
+      plugins: [{ name: 'p', description: 'd', category: 'dev', author: { name: 'Ana' }, homepage: 'https://x.dev', source: './p' }],
+    });
+
+    const result = parseMarketplaceManifest(text);
+
+    expect(result).toEqual({
+      state: 'ok',
+      entries: [{ name: 'p', description: 'd', category: 'dev', author: 'Ana', homepage: 'https://x.dev' }],
+    });
+  });
+
+  it('parseMarketplaceManifest_entradaSinNombre_seDescarta', () => {
+    const text = JSON.stringify({ plugins: [{ description: 'sin nombre' }, { name: 'ok', description: 'd' }] });
+
+    expect(parseMarketplaceManifest(text).entries.map((e) => e.name)).toEqual(['ok']);
+  });
+
+  it('parseMarketplaceManifest_homepageNoHttps_null', () => {
+    const text = JSON.stringify({ plugins: [{ name: 'p', description: 'd', homepage: 'http://x.dev' }] });
+
+    expect(parseMarketplaceManifest(text).entries[0]?.homepage).toBeNull();
+  });
+
+  it('parseMarketplaceManifest_ausente_estadoAbsent', () => {
+    expect(parseMarketplaceManifest(null)).toEqual({ state: 'absent', entries: [] });
+  });
+});
+
+describe('parseCatalogStats', () => {
+  it('parseCatalogStats_formaMedida_instalacionesYSkills', () => {
+    const text = JSON.stringify({
+      version: 1,
+      catalog: { plugins: { 'a@m': { unique_installs: 7, components: { skills: [{ name: 's' }, { name: 't' }] } }, 'b@m': {} } },
+    });
+
+    const result = parseCatalogStats(text);
+
+    expect(result.get('a@m')).toEqual({ installs: 7, skills: 2 });
+    expect(result.get('b@m')).toEqual({ installs: null, skills: null });
+  });
+
+  it('parseCatalogStats_sinCatalogo_vacio', () => {
+    expect(parseCatalogStats(null).size).toBe(0);
+  });
+});
+
+describe('buildPluginCatalog', () => {
+  const entry = { name: 'p', description: 'd', category: null, author: null, homepage: null };
+
+  it('buildPluginCatalog_instalado_marcaInstalled', () => {
+    const result = buildPluginCatalog({
+      marketplaces: [{ name: 'm', sourceKind: 'git', installLocation: ABS }],
+      manifests: new Map([['m', { state: 'ok' as const, entries: [entry] }]]),
+      stats: new Map([['p@m', { installs: 5, skills: 1 }]]),
+      installedIds: new Set(['p@m']),
+    });
+
+    expect(result.marketplaces).toEqual([{ name: 'm', sourceKind: 'git', state: 'ok', count: 1 }]);
+    expect(result.plugins).toEqual([expect.objectContaining({ id: 'p@m', installed: true, installs: 5, skills: 1 })]);
+  });
+
+  it('buildPluginCatalog_marketplaceSinManifiesto_estadoAbsentSinPlugins', () => {
+    const result = buildPluginCatalog({
+      marketplaces: [{ name: 'm', sourceKind: 'git', installLocation: null }],
+      manifests: new Map(),
+      stats: new Map(),
+      installedIds: new Set(),
+    });
+
+    expect(result.marketplaces).toEqual([{ name: 'm', sourceKind: 'git', state: 'absent', count: 0 }]);
+    expect(result.plugins).toEqual([]);
   });
 });

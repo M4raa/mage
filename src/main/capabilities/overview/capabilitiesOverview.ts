@@ -1,9 +1,15 @@
 // Lector de las capacidades de una cuenta de Claude: políticas de la organización, plugins instalados y ajustes
 // gestionados del equipo. Solo lee; el FS se inyecta. Ver `policyFiles.ts` y `pluginFiles.ts` para las formas medidas.
 import { dirname, join, relative } from 'node:path';
-import type { CapabilitiesOverview, ManagedSettingsView } from '@shared/capabilities';
+import type { CapabilitiesOverview, ManagedSettingsView, PluginCatalogView } from '@shared/capabilities';
 import type { CapabilityFs } from '../capabilityFs';
-import { parseInstalledPlugins } from './pluginFiles';
+import {
+  buildPluginCatalog,
+  parseCatalogStats,
+  parseInstalledPlugins,
+  parseKnownMarketplaces,
+  parseMarketplaceManifest,
+} from './pluginFiles';
 import { parseManagedFile, parsePolicyLimits, parseRemoteSettings } from './policyFiles';
 
 export type OverviewFs = Pick<CapabilityFs, 'exists' | 'readFile' | 'listFiles'>;
@@ -54,4 +60,26 @@ export function readCapabilitiesOverview(deps: OverviewDeps, accountDir: string)
     pluginsState: installed.state,
     plugins: installed.plugins,
   };
+}
+
+export const MARKETPLACE_MANIFEST = join('.claude-plugin', 'marketplace.json');
+
+// «Descubrir» de Plugins (D-3 de la 094): un catálogo por marketplace que la cuenta YA conoce. El directorio web
+// (plugin-directory-cache-v2.json) no se lee.
+export function readPluginCatalog(deps: OverviewDeps, accountDir: string): PluginCatalogView {
+  const read = (...parts: string[]): string | null => readTextOrNull(deps.fs, join(accountDir, ...parts));
+  const marketplaces = parseKnownMarketplaces(read('plugins', 'known_marketplaces.json'));
+  const manifests = new Map(
+    marketplaces.map((m) => [
+      m.name,
+      parseMarketplaceManifest(m.installLocation === null ? null : readTextOrNull(deps.fs, join(m.installLocation, MARKETPLACE_MANIFEST))),
+    ]),
+  );
+  const installed = parseInstalledPlugins(read('plugins', 'installed_plugins.json'), null);
+  return buildPluginCatalog({
+    marketplaces,
+    manifests,
+    stats: parseCatalogStats(read('plugins', 'plugin-catalog-cache.json')),
+    installedIds: new Set(installed.plugins.map((p) => p.id)),
+  });
 }

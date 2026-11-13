@@ -35,3 +35,12 @@ export interface CapabilitiesOverview {
   readonly pluginsState: CapabilityFileState;
   readonly plugins: readonly InstalledPluginView[];
 }
+export interface MarketplaceView { readonly name: string; readonly sourceKind: string; readonly state: CapabilityFileState; readonly count: number }
+export interface DiscoverPluginView {
+  readonly id: string; readonly name: string; readonly marketplace: string; readonly description: string;
+  readonly category: string | null; readonly author: string | null; readonly homepage: string | null;
+  readonly installs: number | null; readonly skills: number | null; readonly installed: boolean;
+}
+export interface PluginCatalogView { readonly marketplaces: readonly MarketplaceView[]; readonly plugins: readonly DiscoverPluginView[] }
+export type PluginAction = 'install' | 'uninstall' | 'enable' | 'disable';
+export interface PluginActionParams { readonly accountDir: string; readonly action: PluginAction; readonly plugin: string; readonly marketplace: string }

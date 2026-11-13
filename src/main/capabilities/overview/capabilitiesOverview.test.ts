@@ -1,6 +1,14 @@
 import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { managedSettingsDir, readCapabilitiesOverview, readManagedSettings, type OverviewFs } from './capabilitiesOverview';
+import { resolve } from 'node:path';
+import {
+  managedSettingsDir,
+  MARKETPLACE_MANIFEST,
+  readCapabilitiesOverview,
+  readManagedSettings,
+  readPluginCatalog,
+  type OverviewFs,
+} from './capabilitiesOverview';
 
 function memoryFs(files: ReadonlyMap<string, string>): OverviewFs {
   return {
@@ -39,6 +47,22 @@ describe('readCapabilitiesOverview', () => {
     expect(result.policies.remoteState).toBe('absent');
     expect(result.pluginsState).toBe('absent');
     expect(result.managed.files).toEqual([]);
+  });
+});
+
+describe('readPluginCatalog', () => {
+  it('readPluginCatalog_marketplaceConManifiesto_susPlugins', () => {
+    const market = resolve('vg-market');
+    const files = new Map([
+      [join(ACCOUNT, 'plugins', 'known_marketplaces.json'), JSON.stringify({ m: { source: { source: 'directory' }, installLocation: market } })],
+      [join(market, MARKETPLACE_MANIFEST), JSON.stringify({ plugins: [{ name: 'p', description: 'd' }] })],
+      [join(ACCOUNT, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'p@m': [{ scope: 'user' }] } })],
+    ]);
+
+    const result = readPluginCatalog({ fs: memoryFs(files), managedDir: MANAGED }, ACCOUNT);
+
+    expect(result.marketplaces).toEqual([{ name: 'm', sourceKind: 'directory', state: 'ok', count: 1 }]);
+    expect(result.plugins.map((p) => [p.id, p.installed])).toEqual([['p@m', true]]);
   });
 });
 
