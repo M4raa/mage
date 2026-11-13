@@ -5,6 +5,7 @@ import { history, historyKeymap, standardKeymap } from '@codemirror/commands';
 import { promptExtensions } from '../promptExtensions';
 import type { TextState } from '../promptEditing';
 import { withoutImageTokens } from '@shared/imageRefs';
+import { droppedLink, isLinkDrag } from '../linkDrop';
 
 // Envoltorio de CodeMirror 6 para el prompt (2.7). TODO lo especifico de CM6 vive aqui y en
 // `promptExtensions.ts`: el resto de la app sigue hablando de `TextState` (value + seleccion), que es
@@ -46,6 +47,26 @@ export interface PromptEditorProps {
 // sitio): se excluye.
 function isUserDelete(update: ViewUpdate): boolean {
   return update.transactions.some((tr) => tr.isUserEvent('delete') && !tr.isUserEvent('delete.cut'));
+}
+
+// D9: el editor acepta un enlace arrastrado (si no, la guarda del documento lo deja en `dropEffect = 'none'`). No con el editor desactivado.
+function acceptLinkDrag(event: DragEvent, view: EditorView): boolean {
+  if (event.dataTransfer === null || view.contentDOM.getAttribute('contenteditable') === 'false') return false;
+  if (!isLinkDrag([...event.dataTransfer.types])) return false;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'copy';
+  return true;
+}
+
+// D9: la URL soltada entra como texto donde se suelta (o en el cursor, si el punto no cae en el texto).
+function insertDroppedLink(event: DragEvent, view: EditorView): boolean {
+  if (!acceptLinkDrag(event, view)) return false;
+  const url = droppedLink((format) => event.dataTransfer?.getData(format) ?? '');
+  if (url === null) return false;
+  const at = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.selection.main.head;
+  view.dispatch({ changes: { from: at, insert: url }, selection: { anchor: at + url.length }, userEvent: 'input.drop' });
+  view.focus();
+  return true;
 }
 
 export function PromptEditor({
@@ -95,6 +116,8 @@ export function PromptEditor({
                 handlersRef.current.onPasteImages(files);
                 return true;
               },
+              dragover: (event, view) => acceptLinkDrag(event, view),
+              drop: (event, view) => insertDroppedLink(event, view),
             }),
           ),
           EditorView.updateListener.of((update) => {
