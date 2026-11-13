@@ -7,6 +7,7 @@ import type {
 } from '@shared/ipc';
 import { CODEX_PROVIDER_ID } from '@shared/providers';
 import type { TranscriptBatch, TranscriptEntry } from '@shared/transcripts';
+import { countThinkingEntries } from '@shared/thinkingBlocks';
 import type { EngineRequest } from '../engine/providerAdapter';
 import type { RewindStateStore } from '../conversations/rewindStateStore';
 import { staticTranscriptBatch } from '../transcripts/staticBatch';
@@ -31,6 +32,8 @@ export interface RewindCoordinatorDeps {
   readonly coordinator: Pick<SessionCoordinator, 'rewindContext' | 'engineRequest' | 'waitForIdle' | 'returnQueueToDrafts' | 'announce' | 'interrupt' | 'send'>;
   readonly readClaudeBranch: (ref: { readonly accountDir: string; readonly cwd: string; readonly sessionId: string; readonly pendingCutUuid: string | null }) => Promise<readonly TranscriptEntry[]>;
   readonly state: Pick<RewindStateStore, 'pendingCut' | 'setPendingCut' | 'recordFork' | 'recordCopy'>;
+  // Pensamientos que guarda Mage: quita los `count` mas recientes de la conversacion `nativeId` (ThinkingStore.dropLast).
+  readonly forgetDiscardedThinking: (nativeId: string, count: number) => void;
   readonly newId: () => string;
   readonly now: () => number;
   // Un aviso que no impide seguir (una relectura que falla tras rebobinar, una respuesta del motor de otra forma).
@@ -321,8 +324,20 @@ export class RewindCoordinator {
     const parsed = REWIND_CONVERSATION_SCHEMA.safeParse(response.result);
     if (!response.ok || !parsed.success || !parsed.data.rewound) throw this.claudeConversationError(response, parsed, filesRestored);
     this.deps.state.setPendingCut(target.nativeId, target.point.uuid);
+    this.forgetDiscardedThinking(target);
     const projection = await this.readProjection(async () => branchBatch(await this.readBranchAfterCut(ctx, target)));
     return { draft: parsed.data.prefillText ?? target.point.text, projection, copyThreadId: null };
+  }
+
+  // Los pensamientos de la rama descartada salen del FINAL del fichero de Mage, que casa por la cola con la transcripcion.
+  // Un fallo aqui no deshace el rebobinado: se avisa.
+  private forgetDiscardedThinking(target: ClaudeTarget): void {
+    const discarded = countThinkingEntries(target.entries.slice(target.point.entryIndex));
+    try {
+      this.deps.forgetDiscardedThinking(target.nativeId, discarded);
+    } catch (err) {
+      this.deps.log('warn', 'No se pudieron olvidar los pensamientos de la rama descartada', { error: errorDetail(err) });
+    }
   }
 
   private claudeConversationError(response: EngineResponse, parsed: ReturnType<typeof REWIND_CONVERSATION_SCHEMA.safeParse>, filesRestored: boolean): UserFacingError {

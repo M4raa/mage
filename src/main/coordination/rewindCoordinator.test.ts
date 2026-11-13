@@ -18,6 +18,7 @@ function entry(kind: string, uuid: string, content: string | Block[]): Transcrip
 
 const user = (uuid: string, text: string) => entry('user', uuid, text);
 const assistant = (uuid: string) => entry('assistant', uuid, [{ type: 'text', text: 'ok' }]);
+const thinker = (uuid: string) => entry('assistant', uuid, [{ type: 'thinking', thinking: '', signature: 'f' }, { type: 'text', text: 'ok' }]);
 const BRANCH = [user('p1', 'uno'), assistant('a1'), user('p2', 'dos'), assistant('a2')];
 
 const item = (id: string, text: string, clientId?: string) => ({ type: 'userMessage', id, ...(clientId === undefined ? {} : { clientId }), content: [{ type: 'text', text }] });
@@ -71,8 +72,8 @@ function setup(options: Options = {}) {
   };
   const state = { pendingCut: vi.fn(() => null), setPendingCut: vi.fn(), recordFork: vi.fn(), recordCopy: vi.fn() };
   const readClaudeBranch = vi.fn(async () => options.branch ?? BRANCH);
-  const deps: RewindCoordinatorDeps = { coordinator, readClaudeBranch, state, newId: () => 'cmd-1', now: () => 1234, log: vi.fn() };
-  return { rc: new RewindCoordinator(deps), calls, requests, coordinator, state, readClaudeBranch, log: deps.log };
+  const deps: RewindCoordinatorDeps = { coordinator, readClaudeBranch, state, forgetDiscardedThinking: vi.fn(), newId: () => 'cmd-1', now: () => 1234, log: vi.fn() };
+  return { rc: new RewindCoordinator(deps), calls, requests, coordinator, state, readClaudeBranch, log: deps.log, forgetDiscardedThinking: deps.forgetDiscardedThinking };
 }
 
 // Respuestas por tipo de peticion; lo no indicado devuelve ok vacio.
@@ -164,6 +165,33 @@ describe('apply Claude', () => {
     expect(requests).toEqual([{ kind: 'rewind_conversation', targetUuid: 'p2', lastSeenUuid: 'p2' }]);
     expect(state.setPendingCut).toHaveBeenCalledWith('nat', 'p2');
     expect(result).toMatchObject({ draft: 'dos!', filesRestored: false, copyThreadId: null, retried: null });
+  });
+
+  it('apply_claudeConPensamientosDescartados_olvidaLosDeLaRama', async () => {
+    const branch = [user('p1', 'uno'), thinker('a1'), user('p2', 'dos'), thinker('a2'), thinker('a3')];
+    const { rc, forgetDiscardedThinking } = setup({ branch, handler: byKind({ rewind_conversation: () => ok({ rewound: true, prefillText: 'dos!' }) }) });
+
+    await rc.apply(applyParams('p2'));
+
+    expect(forgetDiscardedThinking).toHaveBeenCalledWith('nat', 2);
+  });
+
+  it('apply_claudeSinPensamientos_olvidaCero', async () => {
+    const { rc, forgetDiscardedThinking } = setup({ handler: byKind({ rewind_conversation: () => ok({ rewound: true }) }) });
+
+    await rc.apply(applyParams('p2'));
+
+    expect(forgetDiscardedThinking).toHaveBeenCalledWith('nat', 0);
+  });
+
+  it('apply_claudeOlvidarFalla_rebobinaIgualYAvisa', async () => {
+    const { rc, state, log, forgetDiscardedThinking } = setup({ handler: byKind({ rewind_conversation: () => ok({ rewound: true }) }) });
+    vi.mocked(forgetDiscardedThinking).mockImplementation(() => { throw new Error('disco lleno'); });
+
+    await expect(rc.apply(applyParams('p2'))).resolves.toBeDefined();
+
+    expect(state.setPendingCut).toHaveBeenCalledWith('nat', 'p2');
+    expect(log).toHaveBeenCalledWith('warn', 'No se pudieron olvidar los pensamientos de la rama descartada', expect.anything());
   });
 
   it('apply_claudeBusy_returnsQueueInterruptsThenRewinds', async () => {
@@ -279,6 +307,14 @@ describe('apply Codex', () => {
     expect(requests.map((r) => r.kind)).toEqual(['thread_turns', 'thread_revert', 'thread_turns']);
     expect(result.projection).toMatchObject({ reset: true, isFinal: true });
     expect(result.projection?.entries.length).toBeGreaterThan(0);
+  });
+
+  it('apply_codex_noOlvidaPensamientos', async () => {
+    const { rc, forgetDiscardedThinking } = setup({ ctx: CODEX_CTX, handler: codexHandler() });
+
+    await rc.apply(applyParams('c2'));
+
+    expect(forgetDiscardedThinking).not.toHaveBeenCalled();
   });
 });
 

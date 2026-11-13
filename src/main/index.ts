@@ -1847,6 +1847,11 @@ function createRewindCoordinator(): RewindCoordinator {
       onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente al rebobinar', { uuid }),
     }),
     state: getRewindState(),
+    // El buffer en vuelo de esa sesion es de la rama descartada: se suelta antes de recortar.
+    forgetDiscardedThinking: (nativeId, count) => {
+      thinkingBuffers.delete(nativeId);
+      getThinkingStore().dropLast(nativeId, count);
+    },
     newId: randomUUID,
     now: Date.now,
     log: (level, message, data) => mainLog(level, message, data),
