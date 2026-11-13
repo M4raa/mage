@@ -11916,6 +11916,29 @@ const CHECKS = [
     },
   },
   {
+    // DEVOLUCION-093: «Capacidades». Skills con su ORIGEN (catálogo con skills sembradas) y Organización con las políticas
+    // FALSAS del HOME de prueba (policy-limits, remote-settings, managed-settings y un drop-in). Mide que ningún valor
+    // secreto sembrado llega al DOM. No lanza ningún CLI ni pulsa Enter. Abre Configuración y la cierra (error 5);
+    // autosuficiente con --only=Capacidades (error 8). Siembra y deshace lo suyo.
+    name: 'Capacidades: Skills con su origen y Organización con las políticas sembradas, sin secretos en el DOM',
+    async run(page, { userDataDir, runDir }) {
+      if (HARNESS_HOME === os.homedir()) return { ok: false, notRunnable: true, detail: 'HOME real: no se escribe en él' };
+      const cuenta = path.join(HARNESS_HOME, '.claude');
+      const sembrados = seedCapabilitiesFixture(cuenta, userDataDir);
+      await openSettingsDialog(page);
+      try {
+        const skills = await measureSkillsPage(page, { cuenta, runDir });
+        const organizacion = await measureOrganizationPage(page, { cuenta, runDir });
+        const secretoEnDom = await page.evaluate((secretos) => secretos.some((s) => document.documentElement.outerHTML.includes(s)), CAPABILITY_SECRETS);
+        return { ok: skills.ok && organizacion.ok && !secretoEnDom, detail: JSON.stringify({ skills, organizacion, secretoEnDom }) };
+      } finally {
+        await page.keyboard.press('Escape');
+        await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        restoreCapabilitiesFixture(sembrados);
+      }
+    },
+  },
+  {
     // F11b (carril S, S05): el panel «Navegador» con una sesión del RUNTIME PROPIO (servidor falso, sin CLI, sin cuota y sin
     // pulsar Enter en el prompt). Una página de prueba local (`spike/__fixtures__/browser-test-page.html`) se abre por la barra
     // de direcciones; la pluma dibuja una caja y adjunta la captura al borrador (una sola por turno); la barra de control se
@@ -13893,6 +13916,126 @@ function seedCommandCatalog(userDataDir) {
   const byAccount = Object.fromEntries(accounts.map((dir) => [dir, { measuredAtMs: 1, commands }]));
   fs.writeFileSync(path.join(userDataDir, 'command-catalog.json'), JSON.stringify({ version: 1, byAccount }, null, 2), 'utf-8');
   return accounts.length;
+}
+
+// Valores «secretos» sembrados en las políticas y en los ajustes gestionados: ninguno puede llegar al DOM.
+const CAPABILITY_SECRETS = ['vg-secreto-politica', 'vg-secreto-gestionado'];
+// Comandos del catálogo con la forma de `COMMAND_SCHEMA`: cuatro skills de origen distinto y un prompt de MCP.
+const CAPABILITY_SKILLS = [
+  { name: 'vg-mia', description: 'Skill mía de prueba (user)', argumentHint: null, aliases: [] },
+  { name: 'vg-proyecto', description: 'Skill del proyecto de prueba (project)', argumentHint: null, aliases: [] },
+  { name: 'vgplug:vg-de-plugin', description: 'Skill de un plugin de prueba', argumentHint: null, aliases: [] },
+  { name: 'vg-org', description: 'Skill de la organización de prueba (claude.ai sync)', argumentHint: null, aliases: [] },
+  { name: 'vgserver:prompt (MCP)', description: 'Prompt de un MCP de prueba', argumentHint: null, aliases: [] },
+];
+
+// DEVOLUCION-093: políticas, plugin instalado, ajustes gestionados y skills FALSOS en el HOME de prueba. Devuelve lo que hay que deshacer.
+function seedCapabilitiesFixture(cuenta, userDataDir) {
+  const managed = path.join(HARNESS_HOME, 'managed-settings');
+  const files = {
+    [path.join(cuenta, 'policy-limits.json')]: {
+      restrictions: { allow_remote_control: { allowed: false }, require_trusted_devices: { allowed: true }, vg_unknown_flag: { allowed: true } },
+      compliance_taints: [],
+      monitoring_notice: null,
+      defaults: { remote_control_at_startup: false },
+      vg_extra: { token: CAPABILITY_SECRETS[0] },
+    },
+    [path.join(cuenta, 'remote-settings.json')]: { channelsEnabled: true },
+    [path.join(cuenta, 'plugins', 'installed_plugins.json')]: {
+      version: 2,
+      plugins: {
+        'vgplug@vg-market': [
+          { scope: 'user', installPath: path.join(cuenta, 'plugins', 'cache', 'vgplug'), version: '1.0.0', installedAt: '2026-01-01T00:00:00.000Z', lastUpdated: '2026-01-01T00:00:00.000Z' },
+        ],
+      },
+    },
+    [path.join(managed, 'managed-settings.json')]: { permissions: { deny: ['Bash(rm:*)'] }, env: { VG_SECRET: CAPABILITY_SECRETS[1] } },
+    [path.join(managed, 'managed-settings.d', '10-vg.json')]: { vgDropIn: true },
+  };
+  const dirs = [path.join(cuenta, 'plugins'), managed].filter((dir) => !fs.existsSync(dir));
+  for (const [file, json] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(json), 'utf-8');
+  }
+  const catalogPath = path.join(userDataDir, 'command-catalog.json');
+  const catalogBefore = readIfExists(catalogPath);
+  const catalog = catalogBefore === null ? { version: 1, byAccount: {} } : JSON.parse(catalogBefore);
+  const previo = catalog.byAccount[cuenta] ?? { measuredAtMs: 1, commands: [] };
+  catalog.byAccount[cuenta] = { ...previo, commands: [...previo.commands, ...CAPABILITY_SKILLS] };
+  fs.writeFileSync(catalogPath, JSON.stringify(catalog, null, 2), 'utf-8');
+  return { files: Object.keys(files), dirs, catalogPath, catalogBefore };
+}
+
+function restoreCapabilitiesFixture({ files, dirs, catalogPath, catalogBefore }) {
+  for (const file of files) fs.rmSync(file, { force: true });
+  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  if (catalogBefore === null) fs.rmSync(catalogPath, { force: true });
+  else fs.writeFileSync(catalogPath, catalogBefore, 'utf-8');
+}
+
+// Elige en el selector de cuenta de la cabecera la que se llama como `cuenta` (sin distinguir mayúsculas).
+async function selectCapabilityAccount(page, cuenta) {
+  const selector = page.locator('[data-capability-choice="account"]');
+  await selector.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const valor = await selector.locator('option').evaluateAll((options, wanted) => options.map((o) => o.value).find((v) => v.toLowerCase() === wanted.toLowerCase()) ?? null, cuenta);
+  if (valor === null) return false;
+  await selector.selectOption(valor);
+  return true;
+}
+
+async function measureSkillsPage(page, { cuenta, runDir }) {
+  await page.locator(MODAL).first().getByRole('tab', { name: uiRegExp('settings.sections.skills.nav') }).click();
+  if (!(await selectCapabilityAccount(page, cuenta))) return { ok: false, motivo: 'sin la cuenta de prueba en el selector' };
+  await page.locator('[data-capability-row="vg-mia"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const filas = page.locator('[data-capability-row]');
+  const origenes = Object.fromEntries(await filas.evaluateAll((nodes) => nodes.map((n) => [n.getAttribute('data-capability-row'), n.getAttribute('data-skill-origin')])));
+  const textoPlugin = await page.locator('[data-capability-row="vgplug:vg-de-plugin"] [data-capability-origin]').innerText();
+  await page.screenshot({ path: path.join(runDir, 'capacidades-skills.png') });
+  await page.locator('[data-capability-search]').fill('proyecto de prueba');
+  const trasBuscar = await filas.count();
+  await page.locator('[data-capability-search]').fill('');
+  await page.locator('[data-capability-choice="filter"]').selectOption('organization');
+  const trasFiltrar = await filas.evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-capability-row')));
+  await page.locator('[data-capability-choice="filter"]').selectOption('all');
+  await page.locator('[data-capability-tab="discover"]').click();
+  await page.locator('[data-library-section]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const selectorDeBiblioteca = await page.locator('[data-library-account]').count();
+  await page.locator('[data-capability-tab="mine"]').click();
+  const sembradas = { 'vg-mia': 'user', 'vg-proyecto': 'project', 'vgplug:vg-de-plugin': 'plugin', 'vg-org': 'organization' };
+  const ok =
+    Object.entries(sembradas).every(([nombre, origen]) => origenes[nombre] === origen) &&
+    !('vgserver:prompt (MCP)' in origenes) &&
+    !('compact' in origenes) &&
+    textoPlugin.includes('vg-market') &&
+    trasBuscar === 1 &&
+    JSON.stringify(trasFiltrar) === JSON.stringify(['vg-org']) &&
+    selectorDeBiblioteca === 0;
+  const sembradasMedidas = Object.fromEntries(Object.keys(sembradas).map((nombre) => [nombre, origenes[nombre] ?? null]));
+  return { ok, origenes: sembradasMedidas, textoPlugin, trasBuscar, trasFiltrar, selectorDeBiblioteca };
+}
+
+async function measureOrganizationPage(page, { cuenta, runDir }) {
+  await page.locator(MODAL).first().getByRole('tab', { name: uiRegExp('settings.sections.organization.nav') }).click();
+  const bloque = page.locator(`[data-org-account="${cssAttr(cuenta)}"]`);
+  await bloque.locator('[data-org-restriction]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const control = await bloque.locator('[data-org-restriction="allow_remote_control"]').innerText();
+  const desconocida = await bloque.locator('[data-org-restriction="vg_unknown_flag"]').innerText();
+  const canales = await bloque.locator('[data-org-remote="channelsEnabled"]').innerText();
+  const extra = await bloque.locator('[data-org-extra="vg_extra"]').innerText();
+  const gestionado = await page.locator('[data-org-managed]').innerText();
+  // No se pulsa el enlace de administración: abriría el navegador del sistema.
+  const admin = await page.locator('[data-org-admin-link]').count();
+  await page.screenshot({ path: path.join(runDir, 'capacidades-organizacion.png') });
+  const ok =
+    control.includes(ui('capabilities.org.policy.allowRemoteControl')) &&
+    control.includes(ui('capabilities.org.state.off')) &&
+    desconocida.includes('vg_unknown_flag') &&
+    canales.includes(ui('capabilities.org.state.on')) &&
+    extra.includes('{token}') &&
+    // El título del grupo va en versales por CSS (`uppercase`) y `innerText` lo respeta: se compara sin mayúsculas.
+    ['permissions', 'VG_SECRET', '10-vg.json'].every((texto) => gestionado.toLowerCase().includes(texto.toLowerCase())) &&
+    admin === 1;
+  return { ok, control, desconocida, canales, extra, gestionado: gestionado.slice(0, 300), admin };
 }
 
 // --- Fase A: hidratacion del chat por el puente de desarrollo -------------------------------------
