@@ -19,6 +19,8 @@ import { HooksPermissionsSection } from './settings/HooksPermissionsSection';
 import { KeepAliveSection } from './settings/KeepAliveSection';
 import { LibrarySection } from './settings/LibrarySection';
 import { McpSection } from './settings/McpSection';
+import { OrganizationPage } from './settings/OrganizationPage';
+import { SkillsPage } from './settings/SkillsPage';
 import { ProvidersSection } from './settings/ProvidersSection';
 import { ThemeMarketSection } from './settings/ThemeMarketSection';
 import { useDialogA11y } from '../a11y/useDialogA11y';
@@ -47,6 +49,8 @@ type SectionKey =
   | 'widget'
   | 'mcp'
   | 'library'
+  | 'skills'
+  | 'organization'
   | 'hooksPermissions'
   | 'trustedFolders'
   | 'keybindings'
@@ -61,6 +65,7 @@ type SectionGroup =
   | 'settings.groups.general'
   | 'settings.groups.appearance'
   | 'settings.groups.agents'
+  | 'settings.groups.capabilities'
   | 'settings.groups.security'
   | 'settings.groups.about';
 
@@ -72,8 +77,10 @@ const SECTIONS = [
   { key: 'widget', group: 'settings.groups.appearance', icon: 'wand', nav: 'settings.sections.widget.nav', title: 'settings.sections.widget.title' },
   { key: 'keybindings', group: 'settings.groups.appearance', icon: 'keyboard', nav: 'settings.sections.keybindings.nav', title: 'settings.sections.keybindings.title' },
   { key: 'providers', group: 'settings.groups.agents', icon: 'plug', nav: 'settings.sections.providers.nav', title: 'settings.sections.providers.title' },
-  { key: 'mcp', group: 'settings.groups.agents', icon: 'puzzle', nav: 'settings.sections.mcp.nav', title: 'settings.sections.mcp.title' },
-  { key: 'library', group: 'settings.groups.agents', icon: 'import', nav: 'settings.sections.library.nav', title: 'settings.sections.library.title' },
+  { key: 'skills', group: 'settings.groups.capabilities', icon: 'brain', nav: 'settings.sections.skills.nav', title: 'settings.sections.skills.title' },
+  { key: 'mcp', group: 'settings.groups.capabilities', icon: 'puzzle', nav: 'settings.sections.mcp.nav', title: 'settings.sections.mcp.title' },
+  { key: 'organization', group: 'settings.groups.capabilities', icon: 'handshake', nav: 'settings.sections.organization.nav', title: 'settings.sections.organization.title' },
+  { key: 'library', group: 'settings.groups.capabilities', icon: 'import', nav: 'settings.sections.library.nav', title: 'settings.sections.library.title' },
   { key: 'hooksPermissions', group: 'settings.groups.security', icon: 'hook', nav: 'settings.sections.hooksPermissions.nav', title: 'settings.sections.hooksPermissions.title' },
   { key: 'trustedFolders', group: 'settings.groups.security', icon: 'shield', nav: 'settings.sections.trustedFolders.nav', title: 'settings.sections.trustedFolders.title' },
   // «Acerca de» va la ULTIMA y en su propio grupo: no es un ajuste, es donde viven los avisos de
@@ -224,6 +231,8 @@ function SettingsDialog(): React.JSX.Element {
             {section === 'widget' && <WidgetSection enabled={widgetEnabled} onChange={setWidgetEnabled} />}
             {section === 'mcp' && <McpSection />}
             {section === 'library' && <LibrarySection />}
+            {section === 'skills' && <SkillsPage />}
+            {section === 'organization' && <OrganizationPage />}
             {section === 'hooksPermissions' && <HooksPermissionsSection />}
             {section === 'trustedFolders' && <TrustedFoldersSection />}
             {section === 'storage' && <StorageSection retention={scratchRetention} onChange={setScratchRetention} />}
