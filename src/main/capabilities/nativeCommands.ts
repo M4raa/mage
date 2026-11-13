@@ -4,6 +4,7 @@
 // Qué se midió y contra qué: `mcp add|remove|list` y `plugin list` con Claude Code 2.1.311 y Codex 0.164.0.
 // El `--scope` de `plugin install|uninstall` de Claude y los `plugin add|remove` y
 // `marketplace add` de Codex salen del `--help` de Claude Code 2.1.314 y Codex 0.164.0, SIN medir de punta a punta.
+// `plugin install|uninstall|enable|disable <p>@<m> --scope user` MEDIDOS de punta a punta con Claude Code 2.1.319 en un config dir desechable (`spike/plugin-cli-spike.mjs`): instalar y desinstalar escriben en `plugins/` (`installed_plugins.json`), que comparten todas las cuentas (`SHARED_FOLDERS` de `accountService.ts`); activar y desactivar escriben `enabledPlugins` en el `settings.json` de LA cuenta (desactivar deja `false`). Un error sale con código distinto de 0.
 //
 // El `--` separa el comando del servidor MCP del resto: ningún argumento suyo se lee como opción del CLI.
 // El marketplace NO se quita al desinstalar un plugin porque puede servir a otros plugins.
@@ -100,8 +101,8 @@ export function nativeListCommand(engine: CapabilityEngine, type: NativeInstall[
   return { engine, args: ['mcp', 'list'] };
 }
 
-// D-4 de la 094: `claude plugin install|uninstall|enable|disable <nombre>@<marketplace> --scope user` (del `--help` de
-// 2.1.319, sin medir de punta a punta). Sin `-y`: un plugin que se instala ejecutando un comando declarado por su
+// D-4 de la 094: `claude plugin install|uninstall|enable|disable <nombre>@<marketplace> --scope user` (medido de punta a punta con
+// 2.1.319: `spike/plugin-cli-spike.mjs`). Sin `-y`: un plugin que se instala ejecutando un comando declarado por su
 // marketplace FALLA y el error se enseña (Mage no acepta comandos ajenos en nombre del usuario).
 const PLUGIN_VERBS = { install: 'install', uninstall: 'uninstall', enable: 'enable', disable: 'disable' } as const satisfies Record<PluginAction, string>;
 

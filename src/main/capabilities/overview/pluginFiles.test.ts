@@ -1,4 +1,6 @@
-import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   buildPluginCatalog,
@@ -8,6 +10,10 @@ import {
   parseMarketplaceManifest,
   splitPluginId,
 } from './pluginFiles';
+
+// Ficheros MEDIDOS con Claude Code 2.1.319 (spike/plugin-cli-spike.mjs), con la raíz desechable reescrita a `/spike`.
+const medido = (name: string): string =>
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'plugin-cli-2.1.319', name), 'utf-8');
 
 const installed = (plugins: Record<string, unknown>): string => JSON.stringify({ version: 2, plugins });
 
@@ -64,6 +70,18 @@ describe('parseInstalledPlugins', () => {
     const result = parseInstalledPlugins(installed({ 'a@m': [{ scope: 'user' }] }), settings);
 
     expect(JSON.stringify(result)).not.toContain('secreto');
+  });
+
+  it('parseInstalledPlugins_medido2_1_319TrasInstalar_deUsuarioYActivado', () => {
+    const result = parseInstalledPlugins(medido('installed_plugins.json'), medido('settings-instalado.json'));
+
+    expect(result.plugins).toMatchObject([{ id: 'hola@mage-spike', name: 'hola', marketplace: 'mage-spike', scopes: ['user'], enabled: true }]);
+  });
+
+  it('parseInstalledPlugins_medido2_1_319TrasDesactivar_sigueInstaladoYDesactivado', () => {
+    const result = parseInstalledPlugins(medido('installed_plugins.json'), medido('settings-desactivado.json'));
+
+    expect(result.plugins).toMatchObject([{ id: 'hola@mage-spike', name: 'hola', marketplace: 'mage-spike', scopes: ['user'], enabled: false }]);
   });
 });
 

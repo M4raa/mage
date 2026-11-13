@@ -1,4 +1,4 @@
-// installed_plugins.json MEDIDO con Claude Code 2.1.319: { version: 2, plugins: { "<nombre>@<marketplace>": [ { scope: 'user'|'project'|'local', projectPath?, installPath, version, installedAt, lastUpdated, gitCommitSha } ] } }.
+// installed_plugins.json MEDIDO con Claude Code 2.1.319: { version: 2, plugins: { "<nombre>@<marketplace>": [ { scope: 'user'|'project'|'local', projectPath?, installPath, version, installedAt, lastUpdated, gitCommitSha } ] } }. Medido de punta a punta en `spike/plugin-cli-spike.mjs`.
 // Si un plugin está activo lo dice settings.json → enabledPlugins (Mage lo hereda entre cuentas, accountService.ts:37-40).
 // De settings.json SOLO se lee esa clave: el resto (env, permisos…) nunca sale de aquí.
 import { z } from 'zod';

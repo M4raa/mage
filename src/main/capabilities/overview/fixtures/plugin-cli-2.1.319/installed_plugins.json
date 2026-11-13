@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "plugins": {
+    "hola@mage-spike": [
+      {
+        "scope": "user",
+        "installPath": "/spike/config/plugins/cache/mage-spike/hola/0.0.1",
+        "version": "0.0.1",
+        "installedAt": "2026-11-13T21:42:48.388Z",
+        "lastUpdated": "2026-11-13T21:42:48.388Z"
+      }
+    ]
+  }
+}
