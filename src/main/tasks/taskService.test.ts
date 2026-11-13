@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { UserFacingError } from '@shared/i18n/localizedText';
+import type { TaskSchedule } from '@shared/taskSchedule';
 import type { TaskDraft, TaskRecord } from '@shared/tasks';
 import { TaskService, type TaskServiceDeps } from './taskService';
 
@@ -8,12 +9,18 @@ const WORK = resolve('/work');
 const EXTRA = resolve('/extra');
 const ACCOUNT = resolve('/acc/claude');
 
+const MADRID = 'Europe/Madrid';
+const T0 = Date.parse('2026-06-10T06:00:00Z');
+const DAILY_9: TaskSchedule = { kind: 'daily', time: { hour: 9, minute: 0 }, timeZone: MADRID };
+const NEXT_DAILY_9 = Date.parse('2026-06-10T07:00:00Z');
+
 const draft = (over: Partial<TaskDraft> = {}): TaskDraft => ({
+  name: 'Informe', schedule: null,
   goal: ' Haz el informe ', language: 'es', provider: 'claude', accountDir: ACCOUNT, folders: [WORK, EXTRA], documents: [], capabilities: [], ...over,
 });
 
-function setup(over: Partial<TaskServiceDeps> = {}, initial: TaskRecord[] = []) {
-  let clock = 1000;
+function setup(over: Partial<TaskServiceDeps> = {}, initial: TaskRecord[] = [], startMs = T0) {
+  let clock = startMs;
   let counter = 0;
   const save = vi.fn();
   const deps: TaskServiceDeps = {
@@ -85,6 +92,111 @@ describe('TaskService.create', () => {
 
     expect(task.folders).toEqual([WORK]);
     expect(task.documents).toEqual([resolve('/d/a.pdf')]);
+  });
+});
+
+describe('TaskService programación', () => {
+  const dueTask = (id: string, nextRunAtMs: number | null, over: Partial<TaskRecord> = {}): TaskRecord => ({
+    ...draft({ name: id, schedule: DAILY_9, goal: 'g', folders: [WORK] }),
+    id, enabled: true, nextRunAtMs, lastRun: null, createdAtMs: 1, sessionId: 's', conversationId: 'c',
+    deliverables: [], verifiedAtMs: null, verdict: 'pending', ...over,
+  });
+
+  it('create_sinNombre_errorNombre', () => {
+    const { service } = setup();
+
+    expect(errorKey(() => service.create(draft({ name: '  ' })))).toBe('errors.tasks.nameEmpty');
+  });
+
+  it('create_nombreLargo_errorNombre', () => {
+    const { service } = setup();
+
+    expect(errorKey(() => service.create(draft({ name: 'x'.repeat(81) })))).toBe('errors.tasks.nameTooLong');
+  });
+
+  it('create_unaVezPasada_errorFecha', () => {
+    const { service } = setup();
+    const past: TaskSchedule = { kind: 'once', date: '2026-06-09', time: { hour: 9, minute: 0 }, timeZone: MADRID };
+
+    expect(errorKey(() => service.create(draft({ schedule: past })))).toBe('errors.tasks.scheduleInPast');
+  });
+
+  it('create_programada_calculaLaSiguiente', () => {
+    const { service } = setup();
+
+    const task = service.create(draft({ schedule: DAILY_9 }));
+
+    expect(task).toMatchObject({ enabled: true, nextRunAtMs: NEXT_DAILY_9, lastRun: null });
+  });
+
+  it('edit_cambiaProgramacion_recalculaYConservaLaSesion', () => {
+    const { service } = setup();
+    service.create(draft({ schedule: DAILY_9 }));
+    service.bindSession('t1', 's1', 'claude');
+    const weekly: TaskSchedule = { kind: 'weekly', weekday: 3, time: { hour: 10, minute: 0 }, timeZone: MADRID };
+
+    const edited = service.edit('t1', draft({ name: 'Nuevo', schedule: weekly }));
+
+    expect(edited).toMatchObject({ id: 't1', name: 'Nuevo', sessionId: 's1', nextRunAtMs: Date.parse('2026-06-10T08:00:00Z') });
+  });
+
+  it('setEnabled_false_sinSiguiente', () => {
+    const { service } = setup();
+    service.create(draft({ schedule: DAILY_9 }));
+
+    expect(service.setEnabled('t1', false)).toMatchObject({ enabled: false, nextRunAtMs: null });
+  });
+
+  it('setEnabled_true_recalculaDesdeAhora', () => {
+    const { service, advance } = setup();
+    service.create(draft({ schedule: DAILY_9 }));
+    service.setEnabled('t1', false);
+    advance(2 * 60 * 60_000);
+
+    const task = service.setEnabled('t1', true);
+
+    expect(task.nextRunAtMs).toBe(Date.parse('2026-06-11T07:00:00Z'));
+  });
+
+  it('takeDue_dosPendientesYUnaFutura_devuelveDosYGuardaUnaVez', () => {
+    const initial = [dueTask('b', T0 - 10), dueTask('a', T0 - 20), dueTask('c', T0 + 5000)];
+    const { service, save } = setup({}, initial);
+
+    const taken = service.takeDue();
+
+    expect(taken.map((t) => t.id)).toEqual(['a', 'b']);
+    expect(taken.every((t) => t.nextRunAtMs === NEXT_DAILY_9 && t.lastRun?.outcome === 'started')).toBe(true);
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('takeDue_segundaLlamada_vacia', () => {
+    const { service, save } = setup({}, [dueTask('a', T0 - 10)]);
+    service.takeDue();
+    save.mockClear();
+
+    expect(service.takeDue()).toEqual([]);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('runNow_noMueveLaSiguiente', () => {
+    const { service } = setup({}, [dueTask('a', NEXT_DAILY_9)]);
+
+    const task = service.runNow('a');
+
+    expect(task.nextRunAtMs).toBe(NEXT_DAILY_9);
+    expect(task.lastRun).toMatchObject({ scheduledForMs: null, outcome: 'started' });
+  });
+
+  it('reportRunFailed_guardaElError', () => {
+    const { service } = setup({}, [dueTask('a', NEXT_DAILY_9)]);
+
+    expect(service.reportRunFailed('a', 'boom').lastRun).toMatchObject({ outcome: 'failed', error: 'boom' });
+  });
+
+  it('hasDue_sinPendientes_false', () => {
+    const { service } = setup({}, [dueTask('a', NEXT_DAILY_9)]);
+
+    expect(service.hasDue()).toBe(false);
   });
 });
 
@@ -203,7 +315,7 @@ describe('TaskService.verify, remove y launchExtrasFor', () => {
     const task = service.verify('t1', ['report.md']);
 
     expect(task.verdict).toBe('verified');
-    expect(task.verifiedAtMs).toBe(1000);
+    expect(task.verifiedAtMs).toBe(T0);
     expect(task.deliverables).toHaveLength(1);
     expect(task.deliverables[0]).toMatchObject({ status: 'ok', path: resolve(WORK, 'report.md') });
   });

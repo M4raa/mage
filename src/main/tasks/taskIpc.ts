@@ -4,6 +4,7 @@ import { basename } from 'node:path';
 import { z } from 'zod';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { IpcChannel } from '@shared/ipc';
+import { taskScheduleSchema } from '@shared/taskSchedule';
 import { TASK_LIMITS, type TaskDraft } from '@shared/tasks';
 import type { TaskService } from './taskService';
 
@@ -20,6 +21,8 @@ const MAX_ID_CHARS = 200;
 const pathSchema = z.string().min(1).max(TASK_LIMITS.maxPathChars);
 const taskIdSchema = z.string().min(1).max(MAX_ID_CHARS);
 const draftSchema = z.object({
+  name: z.string().max(TASK_LIMITS.nameMaxChars),
+  schedule: taskScheduleSchema.nullable(),
   goal: z.string().max(TASK_LIMITS.goalMaxChars),
   language: z.enum(['es', 'en']),
   provider: z.enum(['claude', 'codex']),

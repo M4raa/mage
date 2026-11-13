@@ -7,7 +7,7 @@ import type { TaskService } from './taskService';
 type Listener = (event: unknown, arg: unknown) => unknown;
 
 const DONE: TaskRecord = {
-  id: 't1', goal: 'g', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/w'], documents: [], capabilities: [],
+  id: 't1', name: 'n', schedule: null, enabled: true, nextRunAtMs: null, lastRun: null, goal: 'g', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/w'], documents: [], capabilities: [],
   createdAtMs: 1, sessionId: null, conversationId: null, verifiedAtMs: 2, verdict: 'incomplete',
   deliverables: [
     { declared: 'a.md', path: '/w/a.md', status: 'ok', bytes: 1, modifiedAtMs: 1, kind: 'md' },
@@ -30,7 +30,7 @@ function setup(overrides: { save?: string | null; picked?: readonly string[] } =
   return { handlers, service, call, showSaveDialog, copyFile, pickPaths };
 }
 
-const DRAFT = { goal: 'x', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/w'], documents: [], capabilities: [] };
+const DRAFT = { name: 'n', schedule: null, goal: 'x', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/w'], documents: [], capabilities: [] };
 
 describe('registerTaskIpc', () => {
   it('register_registraLosSieteCanales', () => {

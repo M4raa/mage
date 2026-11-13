@@ -45,7 +45,7 @@ export function classifySystemWrapper(text: string): SystemWrapper {
   const output = innerOf(trimmed, 'local-command-stdout') ?? innerOf(trimmed, 'local-command-stderr');
   if (output !== null) return { kind: 'command-output', output: output.trim() };
   if (trimmed.startsWith('<command-name>') || trimmed.startsWith('<command-message>')) return commandFrom(trimmed);
-  if (trimmed.startsWith('<scheduled-task')) return scheduledTaskFrom(trimmed);
+  if (trimmed.startsWith(`<${SCHEDULED_TASK_TAG}`)) return scheduledTaskFrom(trimmed);
   if (trimmed.startsWith(`<${SESSION_RESULT_TAG}`)) return sessionResultFrom(trimmed);
   if (isWrapped(trimmed, 'task-notification')) return taskNotificationFrom(trimmed);
   return PLAIN;
@@ -80,6 +80,7 @@ function commandFrom(text: string): SystemWrapper {
   return { kind: 'command', command: args.length === 0 ? name : `${name} ${args}` };
 }
 
+const SCHEDULED_TASK_TAG = 'scheduled-task';
 const SCHEDULED_TASK = /^<scheduled-task\b([^>]*)>([\s\S]*)<\/scheduled-task>$/;
 const NAME_ATTRIBUTE = /\bname="([^"]*)"/;
 
@@ -101,6 +102,16 @@ function sessionResultFrom(text: string): SystemWrapper {
   const name = NAME_ATTRIBUTE.exec(attributes)?.[1]?.trim() ?? '';
   const conversationId = ID_ATTRIBUTE.exec(attributes)?.[1]?.trim() ?? '';
   return { kind: 'mage-session-result', name, conversationId, body: (match[2] ?? '').trim() };
+}
+
+// El primer mensaje de una ejecución de tarea programada de Mage. `>` y `"` del nombre y la etiqueta de cierre del
+// texto se neutralizan: `scheduledTaskFrom` lee el atributo con `[^>]*` y `"([^"]*)"`.
+export function scheduledTaskMessage(input: { readonly name: string; readonly text: string }): string {
+  const trimmed = input.name.trim();
+  if (trimmed.length === 0) throw new Error(`Nombre vacío para el envoltorio de tarea programada: ${JSON.stringify(input.name)}`);
+  const name = trimmed.replace(/"/g, '″').replace(/>/g, '›');
+  const body = input.text.split(`</${SCHEDULED_TASK_TAG}>`).join(`</ ${SCHEDULED_TASK_TAG}>`);
+  return `<${SCHEDULED_TASK_TAG} name="${name}">\n${body}\n</${SCHEDULED_TASK_TAG}>`;
 }
 
 // El mensaje que Mage entrega a la creadora con la respuesta de una de sus sesiones (P-038 V13). Las comillas del

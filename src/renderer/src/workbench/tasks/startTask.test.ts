@@ -4,7 +4,7 @@ import type { TaskDraft, TaskRecord } from '@shared/tasks';
 import { startTask, type StartTaskDeps } from './startTask';
 
 const draft = (over: Partial<TaskDraft> = {}): TaskDraft => ({
-  goal: '  Haz el informe  ', language: 'es', provider: 'claude', accountDir: '/acc', folders: ['/work'], documents: [], capabilities: [], ...over,
+  name: 'Informe', schedule: null, goal: '  Haz el informe  ', language: 'es', provider: 'claude', accountDir: '/acc', folders: ['/work'], documents: [], capabilities: [], ...over,
 });
 
 const okResolution = (text: string): MentionResolution => ({ text, attachments: [], outcomes: [] });

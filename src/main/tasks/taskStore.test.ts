@@ -6,7 +6,8 @@ const PATH = '/data/tasks/tasks.json';
 
 function task(id: string): TaskRecord {
   return {
-    id, goal: 'g', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/w'], documents: [], capabilities: [],
+    id, name: 'n', schedule: null, enabled: true, nextRunAtMs: null, lastRun: null,
+    goal: 'g', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/w'], documents: [], capabilities: [],
     createdAtMs: 1, sessionId: null, conversationId: null, verifiedAtMs: null, verdict: 'pending',
     deliverables: [{ declared: 'a.md', path: '/w/a.md', status: 'ok', bytes: 3, modifiedAtMs: 2, kind: 'md' }],
   };
@@ -68,6 +69,16 @@ describe('taskStore', () => {
 
     expect(loaded.map((t) => t.id)).toEqual(['a', 'b']);
     expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it('loadTasks_registroSinCamposNuevos_rellenaPorDefecto', () => {
+    const { name, schedule, enabled, nextRunAtMs, lastRun, ...old } = task('a');
+    const { fs } = memoryFs({ [PATH]: JSON.stringify({ version: TASKS_FILE_VERSION, tasks: [old] }) });
+
+    const loaded = loadTasks(fs, PATH);
+
+    expect(loaded[0]).toMatchObject({ id: 'a', name: '', schedule: null, enabled: true, nextRunAtMs: null, lastRun: null });
+    expect([name, schedule, enabled, nextRunAtMs, lastRun]).toHaveLength(5);
   });
 
   it('saveTasks_luegoLoad_mismosDatos', () => {

@@ -11985,7 +11985,7 @@ const CHECKS = [
       try {
         const antes = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
         const creada = await page.evaluate((draft) => window.mage.createTask(draft), {
-          goal: 'R verify', language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
+          name: 'R verify', schedule: null, goal: 'R verify', language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
         });
         taskId = creada.id;
         const comprobada = await page.evaluate((params) => window.mage.verifyTask(params), { taskId, declared: ['hecho.md', 'no-existe.md', '../fuera.txt'] });
@@ -12420,7 +12420,7 @@ const CHECKS = [
       try {
         return await withEnglish(page, async () => {
           const creada = await page.evaluate((draft) => window.mage.createTask(draft), {
-            goal: F36_LONG_TEXT, language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
+            name: F36_LONG_TEXT.slice(0, 80), schedule: null, goal: F36_LONG_TEXT, language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
           });
           taskId = creada.id;
           await page.reload();

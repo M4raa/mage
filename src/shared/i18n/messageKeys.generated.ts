@@ -1014,9 +1014,12 @@ export interface MessageValues {
   readonly "errors.tasks.folderMissing": { readonly "path": string | number };
   readonly "errors.tasks.goalEmpty": never;
   readonly "errors.tasks.goalTooLong": { readonly "max": string | number };
+  readonly "errors.tasks.nameEmpty": never;
+  readonly "errors.tasks.nameTooLong": { readonly "max": string | number };
   readonly "errors.tasks.noFolders": never;
   readonly "errors.tasks.notAbsolute": { readonly "path": string | number };
   readonly "errors.tasks.notADeliverable": { readonly "path": string | number };
+  readonly "errors.tasks.scheduleInPast": never;
   readonly "errors.tasks.tooMany": { readonly "max": string | number };
   readonly "errors.tasks.unknownAccount": { readonly "accountDir": string | number };
   readonly "errors.tasks.unknownProvider": { readonly "provider": string | number };

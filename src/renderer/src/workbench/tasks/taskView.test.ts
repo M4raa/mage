@@ -7,7 +7,7 @@ import {
 } from './taskView';
 
 const task = (over: Partial<TaskRecord> = {}): TaskRecord => ({
-  id: 't1', goal: 'g', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/f'], documents: [], capabilities: [],
+  id: 't1', name: 'n', schedule: null, enabled: true, nextRunAtMs: null, lastRun: null, goal: 'g', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/f'], documents: [], capabilities: [],
   createdAtMs: 0, sessionId: null, conversationId: null, deliverables: [], verifiedAtMs: null, verdict: 'pending', ...over,
 });
 const agent = (id: string, text: string): Block => ({ kind: 'agent', id, runs: [{ code: false, text }], streaming: false });

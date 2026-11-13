@@ -4,8 +4,10 @@
 // (`startTask`). Al reanudar, el `resumeSessionId` es el `conversationId` guardado.
 import { isAbsolute, resolve } from 'node:path';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
+import { nextRunAt } from '@shared/taskSchedule';
 import { TASK_LIMITS, taskVerdictOf, type TaskDraft, type TaskProvider, type TaskRecord } from '@shared/tasks';
 import { checkDeliverables, comparablePath, type DeliverableFs } from './deliverableChecker';
+import { failedRun, hasActiveSchedule, isDue, nextRunFor, startedRun } from './taskRuns';
 
 const TASK_ID_MAX_CHARS = 256;
 
@@ -46,12 +48,52 @@ export class TaskService {
 
   create(draft: TaskDraft): TaskRecord {
     const clean = this.validate(draft);
+    const now = this.deps.now();
     const record: TaskRecord = {
-      ...clean, id: this.deps.newId(), createdAtMs: this.deps.now(), sessionId: null, conversationId: null,
+      ...clean, id: this.deps.newId(), createdAtMs: now, sessionId: null, conversationId: null,
       deliverables: [], verifiedAtMs: null, verdict: 'pending',
+      enabled: true, nextRunAtMs: nextRunFor(clean.schedule, true, now), lastRun: null,
     };
     this.replaceAll([...this.all(), record]);
     return record;
+  }
+
+  // Sustituye los campos del borrador; conserva id, alta, interruptor, sesión, entregables, veredicto y última ejecución.
+  edit(taskId: string, draft: TaskDraft): TaskRecord {
+    const clean = this.validate(draft);
+    return this.update(taskId, (task) => ({ ...task, ...clean, nextRunAtMs: nextRunFor(clean.schedule, task.enabled, this.deps.now()) }));
+  }
+
+  setEnabled(taskId: string, enabled: boolean): TaskRecord {
+    return this.update(taskId, (task) => ({ ...task, enabled, nextRunAtMs: nextRunFor(task.schedule, enabled, this.deps.now()) }));
+  }
+
+  // «Ejecutar ahora»: no mueve la próxima programada.
+  runNow(taskId: string): TaskRecord {
+    return this.update(taskId, (task) => startedRun(task, this.deps.now(), null));
+  }
+
+  // Marca como lanzadas las pendientes (y adelanta su próxima) en UN guardado; una segunda llamada ya no las devuelve.
+  takeDue(): readonly TaskRecord[] {
+    const now = this.deps.now();
+    const due = this.all().filter((task) => isDue(task, now)).sort((a, b) => (a.nextRunAtMs ?? 0) - (b.nextRunAtMs ?? 0));
+    if (due.length === 0) return [];
+    const started = new Map(due.map((task) => [task.id, startedRun(task, now, task.nextRunAtMs)]));
+    this.replaceAll(this.all().map((task) => started.get(task.id) ?? task));
+    return due.map((task) => started.get(task.id) as TaskRecord);
+  }
+
+  reportRunFailed(taskId: string, error: string): TaskRecord {
+    return this.update(taskId, (task) => failedRun(task, this.deps.now(), error));
+  }
+
+  hasDue(): boolean {
+    const now = this.deps.now();
+    return this.all().some((task) => isDue(task, now));
+  }
+
+  hasActiveSchedule(): boolean {
+    return hasActiveSchedule(this.all());
   }
 
   claimForLaunch(launch: TaskLaunch): TaskRecord | null {
@@ -126,6 +168,10 @@ export class TaskService {
 
   // Valida el borrador y devuelve sus campos limpios (objetivo recortado, sin duplicados).
   private validate(draft: TaskDraft): TaskDraft {
+    const name = draft.name.trim();
+    if (name.length === 0) throw new UserFacingError(localized('errors.tasks.nameEmpty'));
+    if (name.length > TASK_LIMITS.nameMaxChars) throw new UserFacingError(localized('errors.tasks.nameTooLong', { max: TASK_LIMITS.nameMaxChars }));
+    if (draft.schedule !== null && nextRunAt(draft.schedule, this.deps.now()) === null) throw new UserFacingError(localized('errors.tasks.scheduleInPast'));
     const goal = draft.goal.trim();
     if (goal.length === 0) throw new UserFacingError(localized('errors.tasks.goalEmpty'));
     if (goal.length > TASK_LIMITS.goalMaxChars) throw new UserFacingError(localized('errors.tasks.goalTooLong', { max: TASK_LIMITS.goalMaxChars }));
@@ -138,7 +184,7 @@ export class TaskService {
     this.assertCount(draft.capabilities, TASK_LIMITS.maxCapabilities);
     this.assertPaths(folders, this.deps.isDirectory, 'errors.tasks.folderMissing');
     this.assertPaths(documents, this.deps.isFile, 'errors.tasks.documentMissing');
-    return { ...draft, goal, folders, documents };
+    return { ...draft, name, goal, folders, documents };
   }
 
   private assertAccount(draft: TaskDraft): void {

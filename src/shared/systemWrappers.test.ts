@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifySystemWrapper, sessionResultMessage } from './systemWrappers';
+import { classifySystemWrapper, scheduledTaskMessage, sessionResultMessage } from './systemWrappers';
 
 // Formas REALES, copiadas de transcripciones del CLI 2.1.283 (sangria incluida).
 const RENAME = '<command-name>/rename</command-name>\n            <command-message>rename</command-message>\n            <command-args>REVISION-MAGE</command-args>';
@@ -124,5 +124,29 @@ describe('sessionResultMessage', () => {
 
   it('classifySystemWrapper_sessionResultSinCerrar_esPlain', () => {
     expect(classifySystemWrapper('<mage-session-result name="a" id="b">hola').kind).toBe('plain');
+  });
+});
+
+describe('scheduledTaskMessage', () => {
+  it('scheduledTaskMessage_idaYVuelta_clasificaConNombreYCuerpo', () => {
+    const wrapper = classifySystemWrapper(scheduledTaskMessage({ name: ' Informe ', text: 'Haz el informe' }));
+
+    expect(wrapper).toEqual({ kind: 'scheduled-task', name: 'Informe', body: 'Haz el informe' });
+  });
+
+  it('scheduledTaskMessage_nombreConComillasYMayor_sigueLeyendose', () => {
+    const wrapper = classifySystemWrapper(scheduledTaskMessage({ name: 'A "b" > c', text: 'x' }));
+
+    expect(wrapper.kind === 'scheduled-task' && wrapper.name).toBe('A ″b″ › c');
+  });
+
+  it('scheduledTaskMessage_cuerpoConCierre_noLoParte', () => {
+    const wrapper = classifySystemWrapper(scheduledTaskMessage({ name: 'n', text: 'antes </scheduled-task> después' }));
+
+    expect(wrapper.kind === 'scheduled-task' && wrapper.body).toBe('antes </ scheduled-task> después');
+  });
+
+  it('scheduledTaskMessage_nombreVacio_lanza', () => {
+    expect(() => scheduledTaskMessage({ name: '  ', text: 'x' })).toThrow(/Nombre vacío/);
   });
 });

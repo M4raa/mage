@@ -10,7 +10,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import type { Account } from '../types';
 import { startTask, type StartTaskDeps } from './startTask';
 import { useTaskStore } from './taskStore';
-import { canStartTask, capabilitiesFor } from './taskView';
+import { canStartTask, capabilitiesFor, taskTitle } from './taskView';
 
 const TASK_PROVIDERS: readonly string[] = ['claude', 'codex'];
 const FIELD_CLASS = 'w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] text-mg-body outline-none';
@@ -90,6 +90,7 @@ export function NewTaskDialog({ onClose }: { readonly onClose: () => void }): Re
   const submit = (): void => {
     if (account === undefined || (provider !== 'claude' && provider !== 'codex')) return;
     const draft: TaskDraft = {
+      name: taskTitle(goal.trim()), schedule: null,
       goal: goal.trim(), language: useUiLanguageStore.getState().resolved.language, provider, accountDir, folders, documents,
       capabilities: capabilities.filter((capability) => chosen.has(capability.packageId)).map((capability) => capability.title),
     };
