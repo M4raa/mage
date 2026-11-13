@@ -3420,6 +3420,15 @@ describe('adoptLiveSession (U17)', () => {
 
       expect(refresh).not.toHaveBeenCalled();
     });
+
+    it('rewindTo_aplicado_guardaLaRamaDescartada', async () => {
+      const rewindApply = vi.fn().mockResolvedValue({ draft: 'uno', returnedQueue: [], filesRestored: false, copyThreadId: null, projection: { entries: [], errors: [], isFinal: true, totalLinesSoFar: 0, bytesReadSoFar: 0, rawLineNumber: 0 }, retried: null });
+      const { store } = mountedRewind(rewindApply);
+
+      await store.getState().rewindTo('rw', 'b1', { restoreFiles: false, saveCopy: false, action: 'rewind' });
+
+      expect(store.getState().discardedBranchByChat.rw?.map((b) => b.id)).toEqual(['discarded:b1']);
+    });
   });
 
   describe('init', () => {

@@ -7,6 +7,7 @@ import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion
 import type { AdoptableSession, CloseAnswer, DivergeResult, NotificationTarget, PermissionMode, PermissionModesByProviderView, RewindAction, RewindPlan, RewindPointRef, SessionEventPayload } from '@shared/ipc';
 import type { TranscriptBatch } from '@shared/transcripts';
 import { divergeTitle, rewindPointOf } from './rewindActions';
+import { discardedBranchOf } from './discardedBranch';
 import { TRANSCRIPT_BLOCK_ID_PREFIX, transcriptToBlocks } from './transcriptToBlocks';
 import { defaultModeOf, hasPermissionModes, permissionCycleForProvider } from './stepSliderModel';
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
@@ -284,6 +285,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // Panel de Actividad (P-026 3.4): subagente por el que filtra cada pestaña (su `tool_use_id`). Sin
   // entrada, el panel enseña todos los pasos.
   readonly activitySubagentByChat: Readonly<Record<string, string>>;
+  // Rama descartada del último rebobinado (punto 14 de P-043), por pestaña: Actividad la pinta atenuada. Sin persistir.
+  readonly discardedBranchByChat: Readonly<Record<string, readonly Block[]>>;
   // Abre el panel de Actividad, filtrado a un subagente o sin filtro (null).
   openActivity: (tabId: string, subagentToolUseId: string | null) => void;
   // Subagentes que el usuario quito del dock (P-028 37c), por su `tool_use_id`. Solo del DOCK: siguen en
@@ -1603,6 +1606,7 @@ export function createWorkbenchStore(mage: MageClient) {
     toolsByChat: {},
     extensionsByChat: {},
     activitySubagentByChat: {},
+    discardedBranchByChat: {},
     dismissedSubagentsByChat: {},
     highlightedSessionId: null,
     gitByCwd: {},
@@ -1837,6 +1841,7 @@ export function createWorkbenchStore(mage: MageClient) {
           toolsByChat: without(s.toolsByChat, tabId),
           extensionsByChat: without(s.extensionsByChat, tabId),
           activitySubagentByChat: without(s.activitySubagentByChat, tabId),
+          discardedBranchByChat: without(s.discardedBranchByChat, tabId),
           dismissedSubagentsByChat: without(s.dismissedSubagentsByChat, tabId),
           draftByChat: without(s.draftByChat, tabId),
           queuedByChat: without(s.queuedByChat, tabId),
@@ -4043,10 +4048,13 @@ function pendingAttachmentsOf(attachments: readonly ImageAttachment[]): PromptDr
 async function applyRewind(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string, blockId: string, options: RewindOptions): Promise<void> {
   const { sessionId, point, attachments } = rewindTargetOf(get(), tabId, blockId);
   const { action, restoreFiles, saveCopy } = options;
+  const discarded = discardedBranchOf(blocksOf(get(), tabId), blockId);
   const result = await mage.rewindApply({
     sessionId, point, action, restoreFiles, saveCopy,
     ...(action === 'retry' && attachments.length > 0 ? { attachments } : {}),
   });
+  // ponytail: solo la rama del último rebobinado; una lista por rebobinado si hace falta ver varias.
+  set((s) => ({ discardedBranchByChat: { ...s.discardedBranchByChat, [tabId]: discarded } }));
   adoptProjection(set, tabId, result.projection);
   // En `rewind` el mensaje vuelve al cuadro de texto; en `retry` ya salió, salvo que main no pudiera enviarlo
   // (`retried` null): entonces su texto también vuelve, para no perderlo.
