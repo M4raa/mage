@@ -136,6 +136,8 @@ import { nodeCapabilityFs } from './capabilities/capabilityFs';
 import type { CapabilityEngine } from './capabilities/capabilityPackage';
 import { bundledContents, loadBundledCatalog } from './capabilities/catalog/libraryCatalog';
 import { registerLibraryIpc } from './capabilities/library/libraryIpc';
+import { registerCapabilitiesIpc } from './capabilities/overview/capabilitiesIpc';
+import { managedSettingsDir, readCapabilitiesOverview } from './capabilities/overview/capabilitiesOverview';
 import { BROWSER_STATE_CHANNEL } from '@shared/browser';
 import { registerBrowserIpc } from './browser/browserIpc';
 import { BROWSER_SWEEP_INTERVAL_MS, BrowserRegistry } from './browser/browserRegistry';
@@ -4182,11 +4184,23 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
     service: getLibraryService,
   });
+  registerCapabilitiesIpcFromMain();
   registerBrowserIpcFromMain();
   wireTaskIpc();
   ipcMain.handle(IpcChannel.PromptImprove, (_e, params: ImprovePromptParams): Promise<string> =>
     promptService.improve(params.draft, params.accountDir),
   );
+}
+
+// Capacidades (DEVOLUCION-093): skills, plugins y políticas de cada cuenta de Claude, solo lectura. Con el HOME de prueba,
+// los ajustes gestionados se leen de una carpeta dentro de él (managedSettingsDir).
+function registerCapabilitiesIpcFromMain(): void {
+  const managedDir = managedSettingsDir(process.platform, decideTestHome({ env: process.env, isPackaged: app.isPackaged }));
+  registerCapabilitiesIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
+    overview: (accountDir) => readCapabilitiesOverview({ fs: nodeCapabilityFs(), managedDir }, accountDir),
+    claudeAccountDirs: () => listAllAccounts().filter((account) => account.providerId === 'claude').map((account) => account.configDir),
+  });
 }
 
 // Navegador de Mage (F11b.3): su IPC va aparte para no engordar el registro de arriba.

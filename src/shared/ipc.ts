@@ -23,6 +23,7 @@ import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
 import type { TranscriptBatch, TranscriptTailPosition } from './transcripts';
 import type { MemoryFile } from './memory';
+import type { CapabilitiesOverview } from './capabilities';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from './conversations';
 import type { PersistedWorkspace } from './state';
 import type { AppSettings } from './settings';
@@ -346,6 +347,8 @@ export const IpcChannel = {
   LibraryView: 'library:view',
   LibraryPreview: 'library:preview',
   LibraryApply: 'library:apply',
+  // Capacidades (DEVOLUCION-093): skills, plugins y políticas de una cuenta de Claude, solo lectura.
+  CapabilitiesOverview: 'capabilities:overview',
   // Modo de tareas (F8).
   TasksList: 'tasks:list',
   TasksCreate: 'tasks:create',
@@ -1389,6 +1392,7 @@ export interface MageApi {
   libraryView(): Promise<LibraryView>;
   libraryPreview(target: LibraryTarget): Promise<LibraryPreviewView>;
   libraryApply(params: LibraryApplyParams): Promise<LibraryActionResult>;
+  capabilitiesOverview(accountDir: string): Promise<CapabilitiesOverview>;
   // --- Navegador de Mage (F11b.3) ---
   browserList(): Promise<readonly BrowserEntryState[]>;
   browserOpen(sessionId: string): Promise<readonly BrowserEntryState[]>;
