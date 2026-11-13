@@ -1541,6 +1541,7 @@
   "prompt.ultracode.label": { "description": "Nombre del interruptor Ultracode (submenú de esfuerzo del menú del modelo, y chip). Nombre de producto: no se traduce.", "usage": "src/renderer/src/workbench/components/ModelMenu.tsx", "maxLength": 16 },
   "prompt.ultracode.tip": { "description": "Tooltip del interruptor Ultracode: qué hace, que gasta más uso y cuándo se aplica.", "usage": "src/renderer/src/workbench/components/ModelMenu.tsx" },
   "prompt.ultracode.changed": { "description": "Aviso (toast) al cambiar Ultracode. {state} es on (activado) u off.", "usage": "src/renderer/src/workbench/components/PromptBar.tsx", "variables": {"state":"string"} },
+  "scheduledTasks.error.runFailed": { "description": "Título del aviso de error cuando una tarea programada de Mage no se pudo lanzar al llegar su hora. Le sigue el motivo.", "usage": "src/renderer/src/workbench/tasks/taskActions.ts:60" },
   "settings.about.chromiumSeparate": { "description": "Frase previa al enlace que abre LICENSES.chromium.html.", "usage": "src/renderer/src/workbench/components/SettingsView.tsx:525" },
   "settings.about.license": { "description": "Licencia de Mage. Le sigue el nombre de fichero LICENSE (sin traducir) y un punto.", "usage": "src/renderer/src/workbench/components/SettingsView.tsx:509" },
   "settings.about.noticesError": { "description": "Error al leer los avisos de terceros. {error} es el mensaje técnico.", "usage": "src/renderer/src/workbench/components/SettingsView.tsx:546", "variables": {"error":"string"} },

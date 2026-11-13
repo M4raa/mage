@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useT } from '../../i18n/uiLanguage';
 import { SectionLabel } from '../components/sidebar/SidebarGroups';
 import { reportActionError } from '../notificationStore';
 import { useWorkbenchStore } from '../workbenchStore';
 import { NewTaskDialog } from './NewTaskDialog';
+import { openTaskConversation } from './taskActions';
 import { useTaskStore } from './taskStore';
-import { startTaskWatcher } from './taskWatcher';
 import { taskOfTab, taskPhase, taskTitle } from './taskView';
 import type { TaskRecord } from '@shared/tasks';
 
@@ -14,11 +14,6 @@ export function TasksSection(): React.JSX.Element {
   const t = useT();
   const tasks = useTaskStore((s) => s.tasks);
   const [dialogOpen, setDialogOpen] = useState(false);
-
-  useEffect(() => {
-    startTaskWatcher();
-    void useTaskStore.getState().load().catch((err: unknown) => reportActionError(t('tasks.error.verifyFailed'), err, 'tasks'));
-  }, [t]);
 
   return (
     <section data-tasks-section="true" className="flex flex-col gap-px">
@@ -37,22 +32,6 @@ export function TasksSection(): React.JSX.Element {
   );
 }
 
-// Abre la conversación de la tarea: su pestaña si está abierta; si no, la del historial.
-function openTask(task: TaskRecord, translate: ReturnType<typeof useT>): void {
-  const state = useWorkbenchStore.getState();
-  const tab = state.tabs.find((candidate) => taskOfTab([task], candidate, state.sessionIdByChat[candidate.id]) !== undefined);
-  if (tab !== undefined) {
-    state.setActiveTab(tab.id);
-    return;
-  }
-  const entry = state.allConversationHistory.find((candidate) => task.conversationId !== null && candidate.item.sessionId === task.conversationId);
-  if (entry !== undefined) {
-    state.openConversation(entry.item, task.accountDir);
-    return;
-  }
-  reportActionError(translate('tasks.error.conversationNotFound'), new Error(`conversationId=${String(task.conversationId)}`), 'tasks');
-}
-
 function TaskRow({ task }: { readonly task: TaskRecord }): React.JSX.Element {
   const t = useT();
   const tabId = useWorkbenchStore((s) => s.tabs.find((tab) => taskOfTab([task], tab, s.sessionIdByChat[tab.id]) !== undefined)?.id);
@@ -64,7 +43,7 @@ function TaskRow({ task }: { readonly task: TaskRecord }): React.JSX.Element {
   };
   return (
     <div data-task-row={task.id} data-task-phase={phase} className="group flex items-center gap-[4px] rounded-[6px] hover:bg-mg-hover">
-      <button onClick={() => openTask(task, t)} className="flex min-w-0 flex-1 flex-col gap-[1px] p-[4px_9px] text-left">
+      <button onClick={() => openTaskConversation(task, t)} className="flex min-w-0 flex-1 flex-col gap-[1px] p-[4px_9px] text-left">
         <span className="truncate text-mg-body" title={taskTitle(task.goal)}>{taskTitle(task.goal)}</span>
         <span className="text-[10px] text-mg-muted">{t(`tasks.phase.${phase}`)}</span>
       </button>

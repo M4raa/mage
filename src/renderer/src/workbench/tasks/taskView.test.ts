@@ -3,7 +3,7 @@ import type { TaskRecord } from '@shared/tasks';
 import type { SidebarRow } from '../sidebarModel';
 import type { Block, Tab } from '../types';
 import {
-  buildTaskIndex, canStartTask, capabilitiesFor, declaredDeliverablesOf, isTaskRow, planOf, shouldVerify, taskOfTab, taskPhase, taskTitle,
+  buildTaskIndex, canStartTask, capabilitiesFor, declaredDeliverablesOf, isTaskRow, planOf, shouldVerify, taskDisplayName, taskOfTab, taskPhase, taskTitle,
 } from './taskView';
 
 const task = (over: Partial<TaskRecord> = {}): TaskRecord => ({
@@ -69,6 +69,13 @@ describe('taskPhase', () => {
   });
   it('taskPhase_sinComprobar_unverified', () => {
     expect(taskPhase({ status: 'idle', pendingCount: 0, task: task() })).toBe('unverified');
+  });
+});
+
+describe('taskDisplayName', () => {
+  it('taskDisplayName_sinNombre_primeraLineaDelObjetivo', () => {
+    expect(taskDisplayName({ name: '', goal: '\n Haz esto \nluego' })).toBe('Haz esto');
+    expect(taskDisplayName({ name: ' Informe ', goal: 'x' })).toBe('Informe');
   });
 });
 

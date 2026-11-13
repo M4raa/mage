@@ -79,6 +79,12 @@ export function taskTitle(goal: string): string {
   return `${first.slice(0, TITLE_MAX_CHARS - 1)}${ELLIPSIS}`;
 }
 
+// Nombre que se pinta de una tarea: el suyo o, en los registros antiguos (name ''), la primera línea del objetivo.
+export function taskDisplayName(task: Pick<TaskRecord, 'name' | 'goal'>): string {
+  const name = task.name.trim();
+  return name.length > 0 ? name : taskTitle(task.goal);
+}
+
 const sameList = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((value, i) => value === b[i]);
 
 // Comprobar cuando el turno acaba y el manifiesto es distinto del ya comprobado.

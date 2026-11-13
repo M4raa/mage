@@ -8,35 +8,13 @@ import { describeError } from '../describeError';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
 import { useWorkbenchStore } from '../workbenchStore';
 import type { Account } from '../types';
-import { startTask, type StartTaskDeps } from './startTask';
-import { useTaskStore } from './taskStore';
+import { startTask } from './startTask';
+import { realStartTaskDeps } from './taskActions';
 import { canStartTask, capabilitiesFor, taskTitle } from './taskView';
 
 const TASK_PROVIDERS: readonly string[] = ['claude', 'codex'];
 const FIELD_CLASS = 'w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] text-mg-body outline-none';
 const SMALL_BUTTON_CLASS = 'rounded-[6px] border border-mg-border-ctrl px-[8px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover';
-
-// Dependencias reales de `startTask`: el store de tareas y el del workbench, leídos en cada llamada.
-function realDeps(): StartTaskDeps {
-  const store = (): ReturnType<typeof useWorkbenchStore.getState> => useWorkbenchStore.getState();
-  return {
-    createTask: (draft) => useTaskStore.getState().create(draft),
-    reloadTasks: () => useTaskStore.getState().load(),
-    activeAccountId: () => store().activeAccountId,
-    setActiveAccount: (accountId) => store().setActiveAccount(accountId),
-    createConversation: (folder) => store().createConversation(folder),
-    activeTabId: () => store().activeTabId,
-    attachTask: (tabId, taskId) => store().attachTaskToTab(tabId, taskId),
-    ensureSession: (tabId) => store().ensureSession(tabId),
-    tabMentionContext: (tabId) => {
-      const tab = store().tabs.find((candidate) => candidate.id === tabId);
-      if (tab === undefined) throw new Error(`No hay pestaña ${JSON.stringify(tabId)} para la tarea`);
-      return { accountDir: tab.resolvedConfigDir ?? tab.accountId, provider: tab.provider };
-    },
-    resolveMentions: (params) => window.mage.resolveMentions(params),
-    sendMessageToTab: (tabId, text, attachments) => store().sendMessageToTab(tabId, text, attachments),
-  };
-}
 
 const taskAccounts = (accounts: readonly Account[]): readonly Account[] => accounts.filter((account) => TASK_PROVIDERS.includes(account.providerId));
 
@@ -96,7 +74,7 @@ export function NewTaskDialog({ onClose }: { readonly onClose: () => void }): Re
     };
     setBusy(true);
     setError(null);
-    startTask(draft, realDeps()).then(onClose).catch((err: unknown) => {
+    startTask(draft, realStartTaskDeps()).then(onClose).catch((err: unknown) => {
       setError(`${t('tasks.error.startFailed')}: ${describeError(err)}`);
       setBusy(false);
     });

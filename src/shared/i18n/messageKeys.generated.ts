@@ -1838,6 +1838,7 @@ export interface MessageValues {
   readonly "prompt.ultracode.changed": { readonly "state": string };
   readonly "prompt.ultracode.label": never;
   readonly "prompt.ultracode.tip": never;
+  readonly "scheduledTasks.error.runFailed": never;
   readonly "settings.about.chromiumSeparate": never;
   readonly "settings.about.license": never;
   readonly "settings.about.noticesError": { readonly "error": string | number };

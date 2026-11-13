@@ -187,6 +187,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   handoffOpen: boolean; // modal de prompt handoff (preview + copiar / nuevo chat) abierto
   settingsOpen: boolean; // pantalla de Configuracion de la app (M2.3) abierta
   accountsUsageOpen: boolean; // pantalla «Cuentas y consumo» (P-038 V11) abierta
+  // el espacio de trabajo terminó de restaurarse (bien o mal): a partir de aquí se pueden abrir conversaciones de tareas programadas
+  workspaceReady: boolean;
   // Seccion con la que se abre Configuracion (P-028, 41: «Añadir cuenta» del gateway lleva a
   // «Proveedores y modelos»). null = la de siempre. La valida SettingsView contra su lista.
   settingsSection: string | null;
@@ -1501,6 +1503,7 @@ export function createWorkbenchStore(mage: MageClient) {
     accountSwitchPrompt: null,
     settingsOpen: false,
     accountsUsageOpen: false,
+    workspaceReady: false,
     settingsSection: null,
     releaseNotesVersion: null,
     appVersion: '',
@@ -1978,6 +1981,13 @@ export function createWorkbenchStore(mage: MageClient) {
         // que es lo que `adoptTab` necesita para no descartarla.
         .then(() => get().adoptPendingTabs())
         .then(() => adoptHostSessionsIfMain(mage, get));
+      void workspaceRestored.then(
+        () => set({ workspaceReady: true }),
+        (err: unknown) => {
+          console.warn('El espacio de trabajo no se restauró del todo:', describeError(err));
+          set({ workspaceReady: true });
+        },
+      );
       void workspaceRestored
         .then(() => get().refreshActiveUsage())
         .then(() => get().loadConversationHistory()); // historial de la cuenta activa (M2.6)

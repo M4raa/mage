@@ -8,6 +8,9 @@ export interface TaskApi {
   readonly createTask: (draft: TaskDraft) => Promise<TaskRecord>;
   readonly verifyTask: (params: { taskId: string; declared: readonly string[] }) => Promise<TaskRecord>;
   readonly removeTask: (taskId: string) => Promise<void>;
+  readonly editTask: (params: { taskId: string; draft: TaskDraft }) => Promise<TaskRecord>;
+  readonly setTaskEnabled: (params: { taskId: string; enabled: boolean }) => Promise<TaskRecord>;
+  readonly runTaskNow: (taskId: string) => Promise<TaskRecord>;
 }
 
 interface TaskState {
@@ -17,6 +20,9 @@ interface TaskState {
   create: (draft: TaskDraft) => Promise<TaskRecord>;
   verify: (taskId: string, declared: readonly string[]) => Promise<void>;
   remove: (taskId: string) => Promise<void>;
+  edit: (taskId: string, draft: TaskDraft) => Promise<TaskRecord>;
+  setEnabled: (taskId: string, enabled: boolean) => Promise<void>;
+  runNow: (taskId: string) => Promise<TaskRecord>;
 }
 
 // Sustituye por id (o añade al principio si es nueva).
@@ -46,6 +52,20 @@ export function createTaskStore(api: TaskApi) {
       await api.removeTask(taskId);
       set({ tasks: get().tasks.filter((task) => task.id !== taskId) });
     },
+    edit: async (taskId, draft) => {
+      const task = await api.editTask({ taskId, draft });
+      set({ tasks: upsertTask(get().tasks, task) });
+      return task;
+    },
+    setEnabled: async (taskId, enabled) => {
+      const task = await api.setTaskEnabled({ taskId, enabled });
+      set({ tasks: upsertTask(get().tasks, task) });
+    },
+    runNow: async (taskId) => {
+      const task = await api.runTaskNow(taskId);
+      set({ tasks: upsertTask(get().tasks, task) });
+      return task;
+    },
   }));
 }
 
@@ -54,4 +74,7 @@ export const useTaskStore = createTaskStore({
   createTask: (draft) => window.mage.createTask(draft),
   verifyTask: (params) => window.mage.verifyTask(params),
   removeTask: (taskId) => window.mage.removeTask(taskId),
+  editTask: (params) => window.mage.editTask(params),
+  setTaskEnabled: (params) => window.mage.setTaskEnabled(params),
+  runTaskNow: (taskId) => window.mage.runTaskNow(taskId),
 });
