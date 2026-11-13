@@ -315,7 +315,6 @@
   "app.widget.statusError": "error",
   "app.widget.statusFinished": "terminado",
   "app.widget.statusIdle": "en espera",
-  "app.widget.statusNeedsPermission": "permiso",
   "app.widget.statusReadOnly": "solo lectura",
   "app.widget.statusStreaming": "trabajando",
   "app.widget.stop": "Detener",

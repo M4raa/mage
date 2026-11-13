@@ -317,7 +317,6 @@ export interface MessageValues {
   readonly "app.widget.statusError": never;
   readonly "app.widget.statusFinished": never;
   readonly "app.widget.statusIdle": never;
-  readonly "app.widget.statusNeedsPermission": never;
   readonly "app.widget.statusReadOnly": never;
   readonly "app.widget.statusStreaming": never;
   readonly "app.widget.stop": never;
