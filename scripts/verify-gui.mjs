@@ -14350,6 +14350,7 @@ async function measurePluginsPage(page, { cuenta, runDir }) {
   const botonEnRaro = await page.locator('[data-discover-plugin="vg-raro@vg-market"] [data-plugin-install]').count();
   const sinCatalogo = await page.locator('[data-marketplace-missing="vg-missing"]').count();
   const biblioteca = await page.locator('[data-library-section]').count();
+  const avisoCompartido = await page.locator('[data-plugins-shared-warning]').count();
   await page.locator('[data-capability-choice="category"]').selectOption('productivity');
   const trasCategoria = await lista();
   await page.locator('[data-capability-choice="category"]').selectOption('');
@@ -14359,8 +14360,9 @@ async function measurePluginsPage(page, { cuenta, runDir }) {
     activado === 'true' &&
     JSON.stringify(orden) === JSON.stringify(['vg-popular@vg-market', 'vg-raro@vg-market', 'vgplug@vg-market']) &&
     instalado === 'true' && botonEnInstalado === 0 && botonEnRaro === 1 && sinCatalogo === 1 && biblioteca === 1 &&
+    avisoCompartido === 1 &&
     JSON.stringify(trasCategoria) === JSON.stringify(['vg-popular@vg-market']);
-  return { ok, activado, orden, instalado, botonEnInstalado, botonEnRaro, sinCatalogo, biblioteca, trasCategoria };
+  return { ok, activado, orden, instalado, botonEnInstalado, botonEnRaro, sinCatalogo, biblioteca, avisoCompartido, trasCategoria };
 }
 
 // MCP y conectores: la tabla de Conectores (cuatro columnas, «Claude in Chrome» incluido) y el Descubrir con el directorio.
