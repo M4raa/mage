@@ -51,6 +51,7 @@ import { useGlobalKeybindings } from './workbench/keybindings/useGlobalKeybindin
 import { useT } from './i18n/uiLanguage';
 import { realScheduledRunsDeps } from './workbench/tasks/taskActions';
 import { startScheduledRuns } from './workbench/tasks/taskRunner';
+import { startIdleSessionCloser } from './workbench/idleSessionCloser';
 import { useTaskStore } from './workbench/tasks/taskStore';
 import { startTaskWatcher } from './workbench/tasks/taskWatcher';
 
@@ -204,6 +205,8 @@ export function App(): React.JSX.Element {
   // Tareas programadas: con el espacio de trabajo ya restaurado, recoge y lanza las que main marca como pendientes.
   const workspaceReady = useWorkbenchStore((s) => s.workspaceReady);
   useEffect(() => (workspaceReady ? startScheduledRuns(realScheduledRunsDeps()) : undefined), [workspaceReady]);
+  // Punto 23 (D2): suelta el proceso de las pestañas inactivas fuera de la vista de ESTA ventana.
+  useEffect(() => (workspaceReady ? startIdleSessionCloser() : undefined), [workspaceReady]);
   // Layout de paneles acoplables (F6 Fase 4): carga async por IPC: NUNCA roba el foco al hidratar
   // (§6) — el store ya pinta con los defaults sincronos del registro hasta que esto resuelva.
   useEffect(() => initPanelLayout(), [initPanelLayout]);

@@ -10,6 +10,7 @@ import { useTaskStore } from './tasks/taskStore';
 import { toPersistedWorkspace } from './workspaceView';
 import { t } from '../i18n/uiLanguage';
 import { usageHistorySource } from './usageHistorySource';
+import { sweepIdleSessions } from './idleSessionCloser';
 
 // Asidero SOLO de desarrollo para `pnpm verify:gui`: deja medir el DOM del chat sin gastar un turno
 // real ni spawnear el CLI. Sin el, el harness no puede hidratar una conversacion (el store de Zustand
@@ -50,6 +51,8 @@ export interface MageDevBridge {
   readonly t: typeof t;
   // DEVOLUCION-095: el harness siembra el historial de «Cuentas y consumo» sustituyendo `load` (y lo devuelve al acabar).
   readonly usageHistorySource: typeof usageHistorySource;
+  // Punto 23: el harness barre unas pestañas concretas con un reloj adelantado.
+  readonly sweepIdleSessions: typeof sweepIdleSessions;
 }
 
 (window as unknown as { __mageDev?: MageDevBridge }).__mageDev = {
@@ -71,4 +74,5 @@ export interface MageDevBridge {
   taskStore: useTaskStore,
   t,
   usageHistorySource,
+  sweepIdleSessions,
 };

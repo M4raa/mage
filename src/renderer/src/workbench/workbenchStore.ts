@@ -664,6 +664,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // bloques (no pisa una conversacion viva). Idempotente.
   hydrateBlocks: (tabId: string, blocks: readonly Block[]) => void;
   ensureSession: (tabId: string) => Promise<string>;
+  // Punto 23: suelta el proceso de una pestaña inactiva; la pestaña se queda.
+  releaseIdleSession: (tabId: string) => Promise<void>;
   // F8: apunta el id de la tarea que viajará en el `createSession` de la pestaña (solo el primero).
   attachTaskToTab: (tabId: string, taskId: string) => void;
   // `attachments` (2.12.1): imagenes del mensaje. Vacio o ausente = mensaje de solo texto, y
@@ -2796,6 +2798,8 @@ export function createWorkbenchStore(mage: MageClient) {
       return creation;
     },
 
+    releaseIdleSession: (tabId) => releaseIdleTabSession(mage, get, set, tabId),
+
     // Envia un mensaje del usuario en la pestana activa: bloque optimista + sesion + envio al motor.
     sendActiveMessage: (text, attachments = [], options = {}) => get().sendMessageToTab(get().activeTabId, text, attachments, options),
 
@@ -3286,6 +3290,13 @@ function settleElicitation(state: WorkbenchState, tabId: string, requestId: stri
 async function releaseTabSessionForMigration(mage: MageClient, get: () => WorkbenchState, set: SetFn, target: { readonly tabId: string; readonly conversationId: string }): Promise<void> {
   const { tabId, conversationId } = target;
   const live = get().sessionIdByChat[tabId];
+  detachLiveSession(set, tabId, conversationId);
+  if (live === undefined) return;
+  if (await closeSessionInMain(mage, live)) await mage.stop(live);
+}
+
+// La pestaña se queda apuntando a su conversación (`resumeSessionId`) y olvida su estado de motor.
+function detachLiveSession(set: SetFn, tabId: string, conversationId: string): void {
   set((s) => ({
     tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: conversationId } : t)),
     sessionIdByChat: without(s.sessionIdByChat, tabId),
@@ -3296,8 +3307,18 @@ async function releaseTabSessionForMigration(mage: MageClient, get: () => Workbe
     queuedByChat: without(s.queuedByChat, tabId),
     steeringByChat: without(s.steeringByChat, tabId),
   }));
-  if (live === undefined) return;
-  if (await closeSessionInMain(mage, live)) await mage.stop(live);
+}
+
+// Punto 23 (D2): suelta el proceso de una pestaña inactiva sin cerrarla; escribir la reanuda (`ensureSession` con `resumeSessionId`).
+// ponytail: sin `mage.stop`; si main contesta `background` (algo empezó justo ahora), queda en segundo plano como una pestaña cerrada.
+async function releaseIdleTabSession(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string): Promise<void> {
+  const tab = get().tabs.find((t) => t.id === tabId);
+  const live = get().sessionIdByChat[tabId];
+  if (tab === undefined || live === undefined) return;
+  const conversationId = conversationIdOfTab(tab, live);
+  if (conversationId === undefined) return;
+  detachLiveSession(set, tabId, conversationId);
+  await closeSessionInMain(mage, live);
 }
 
 // La pestaña de la conversación migrada ocupa el sitio exacto de la vieja, con su título y su borrador; después la vieja
