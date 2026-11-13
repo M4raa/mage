@@ -2796,6 +2796,7 @@ const CHECKS = [
     // la guarda y el renderer nuevo la recoge al acabar de restaurar. Se mide en la ventana NUEVA por
     // CDP que la pestaña esta alli con su titulo, y en la de origen que ya no. No se envia nada ni se
     // arranca ninguna sesion; la ventana nueva se cierra al final (una secundaria no pregunta).
+    // Espera al montaje de la ventana nueva y sondea el origen (P-043, 43).
     name: 'P-028 36: mover una pestaña a una ventana nueva la entrega alli y la quita de aqui',
     async run(page) {
       const before = countMainPages(page);
@@ -2823,10 +2824,16 @@ const CHECKS = [
           if (nueva === null) await page.waitForTimeout(200);
         }
         if (nueva !== null) {
-          await nueva.locator('[data-tab-id]').filter({ hasText: title }).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).catch(() => {});
-          medido.enLaNueva = await nueva.locator('[data-tab-id]').filter({ hasText: title }).count();
+          // Intermitente medido (enLaNueva: 0): la ventana nueva aún no había montado su workbench.
+          medido.montada = await nueva.waitForFunction((marca) => performance.getEntriesByName(marca).length > 0, WORKBENCH_MOUNTED_MARK, { timeout: CONFIG.actionTimeoutMs * 2 }).then(() => true, () => false);
+          const pestana = nueva.locator('[data-tab-id]').filter({ hasText: title });
+          medido.llego = await pestana.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs * 2 }).then(() => true, () => false);
+          medido.enLaNueva = await pestana.count();
+          medido.urlNueva = nueva.url();
+          medido.pestanasNueva = await nueva.locator('[data-tab-id]').allTextContents();
         }
-        medido.enElOrigen = await page.evaluate((id) => window.__mageDev.store.getState().tabs.some((t) => t.id === id), tabId);
+        // El origen la quita cuando main confirma la entrega: se sondea hasta el plazo, no se lee una vez.
+        medido.enElOrigen = await page.waitForFunction((id) => !window.__mageDev.store.getState().tabs.some((t) => t.id === id), tabId, { timeout: CONFIG.actionTimeoutMs }).then(() => false, () => true);
       } catch (error) {
         medido.fallo = error.message;
       } finally {
