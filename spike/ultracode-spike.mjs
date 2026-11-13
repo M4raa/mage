@@ -1,7 +1,7 @@
 // Mage — Spike: ¿activa `--settings {"ultracode":true}` Ultracode en el CLI headless?
 // Lanza DOS veces `claude` (modelo sonnet, esfuerzo low): A sin --settings, B con ella. A cada una le manda
 // «Responde solo: hola», espera el `result` y cierra stdin. Guarda el evento `system/init` (sin claves de
-// credenciales ni de identidad) y las diferencias entre A y B en --out (por defecto audit/informes/evidencias-057).
+// credenciales ni de identidad) y las diferencias entre A y B en --out (por defecto, una carpeta nueva en el temporal del sistema).
 // Gasta DOS turnos reales; no es codigo de produccion.
 //
 // La señal de que Ultracode está activo no está en el init: es la entrada `attachment` `ultra_effort_enter`
@@ -12,7 +12,9 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
-import path from 'node:path';
+import path, { join } from 'node:path';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const TURN_TIMEOUT_MS = 180_000;
 const PROMPT = 'Responde solo: hola';
@@ -26,7 +28,7 @@ const SENSITIVE_KEY = /token|oauth|userid|machineid|email|account/i;
 const CREDENTIAL_ENV = /^(ANTHROPIC_|GEMINI_|GOOGLE_API|OPENAI_|CODEX_)/;
 
 const outDir = process.argv.find((arg) => arg.startsWith('--out='))?.slice('--out='.length)
-  ?? path.join(process.cwd(), 'audit', 'informes', 'evidencias-057');
+  ?? mkdtempSync(join(tmpdir(), 'mage-ultracode-spike-'));
 
 function resolveClaudeBinary() {
   if (process.env.MAGE_CLAUDE_BIN) return process.env.MAGE_CLAUDE_BIN;

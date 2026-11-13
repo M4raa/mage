@@ -246,7 +246,7 @@ export interface AppSettings {
   readonly idleCloseMinutes: number;
   // Delegacion entre conversaciones (U10): profundidad maxima de la cadena de creadoras.
   readonly delegation: DelegationSettings;
-  // D3 (INFORME-051 H1, b): `mage chat` puede contestar permisos. Default false.
+  // Revisión de seguridad, H1 (b): `mage chat` puede contestar permisos. Default false.
   readonly hostPermissionAnswers: boolean;
 }
 

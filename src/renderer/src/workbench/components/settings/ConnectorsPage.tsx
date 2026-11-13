@@ -15,7 +15,7 @@ import { LibrarySection } from './LibrarySection';
 import { McpSection } from './McpSection';
 import { MCP_BUTTON_CLASS } from './mcpStyles';
 
-// «MCP y conectores» (DEVOLUCION-094, D-6): la cabecera común va FUERA de `[data-mcp-section]` porque «P-038 V12» mide que
+// «MCP y conectores»: la cabecera común va FUERA de `[data-mcp-section]` porque «P-038 V12» mide que
 // el primer tablist de la sección viene después de la tarjeta del MCP de Mage y diez comprobaciones usan `[data-mcp-tab]`
 // y los botones de su barra; por eso «Añadir ▾» no se duplica aquí. «Tuyos» es `McpSection` tal cual.
 const CONNECTOR_LIBRARY_KINDS: readonly LibraryKind[] = ['mcp'];

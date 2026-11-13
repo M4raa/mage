@@ -6,7 +6,7 @@ import { activeFormatLocale } from '../../i18n/format';
 
 // Secciones del detalle de «Cuentas y consumo» (P-039 F6): cifras, mapa de horas y, en modo admin, herramientas y picos
 // de ventana. Solo pintan: las cuentas salen de `accountMetrics`. El gráfico por día y las barras viven en
-// UsageDailyChart.tsx y UsageBreakdowns.tsx (DEVOLUCION-095).
+// UsageDailyChart.tsx y UsageBreakdowns.tsx.
 
 export function Kpi({ label, value, hint, tip, data }: { readonly label: string; readonly value: string; readonly hint?: string; readonly tip?: string; readonly data?: string }): React.JSX.Element {
   return (

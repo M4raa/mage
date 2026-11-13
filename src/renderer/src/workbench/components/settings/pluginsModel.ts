@@ -1,4 +1,4 @@
-// Modelo PURO de la página Plugins (DEVOLUCION-094): filtros, orden y categorías de «Tuyos» y «Descubrir».
+// Modelo PURO de la página Plugins: filtros, orden y categorías de «Tuyos» y «Descubrir».
 import type { DiscoverPluginView, InstalledPluginView } from '@shared/capabilities';
 
 export const INSTALLED_FILTERS = ['all', 'user', 'project', 'disabled'] as const;

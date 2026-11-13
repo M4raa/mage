@@ -29,7 +29,7 @@ import {
   type SkillSort,
 } from './skillsModel';
 
-// Página Skills de Capacidades (DEVOLUCION-093): las skills de UNA cuenta de Claude con su ORIGEN (D-3). Sale de la
+// Página Skills de Capacidades: las skills de UNA cuenta de Claude con su ORIGEN. Sale de la
 // caché del catálogo de comandos, que llena cada sesión al arrancar, y de los plugins instalados.
 
 const FILTER_LABELS = {

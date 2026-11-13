@@ -75,7 +75,7 @@ export interface SessionMcp {
   close(): Promise<void>;
 }
 
-// INFORME-052 obs. 4: la espera a los MCP se corta con Escape o «Parar». Un `ready` que falla sigue fallando.
+// La espera a los MCP se corta con Escape o «Parar». Un `ready` que falla sigue fallando.
 function untilReadyOrAborted(ready: Promise<void>, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {

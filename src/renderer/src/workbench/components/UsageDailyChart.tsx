@@ -18,7 +18,7 @@ import {
 import { useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale } from '../../i18n/format';
 
-// ¿Cómo voy? (DEVOLUCION-095): consumo por día del periodo en columnas apiladas por modelo o por cuenta, en coste o en
+// ¿Cómo voy? Consumo por día del periodo en columnas apiladas por modelo o por cuenta, en coste o en
 // tokens. Una sola escala; leyenda con el total de cada serie; tooltip por día; la tabla es la alternativa accesible.
 
 const CHART_PX = 140;

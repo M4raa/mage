@@ -54,7 +54,7 @@ export interface AccountMetrics {
   readonly utilization: Utilization;
   readonly value: PlanValue | null;
   readonly dailyCost: readonly { readonly day: DayKey; readonly costMicroUsd: number; readonly tokens: number }[];
-  // El mapa y los proyectos se enseñan siempre (DEVOLUCION-095); las herramientas y las ventanas, solo en modo admin.
+  // El mapa y los proyectos se enseñan siempre; las herramientas y las ventanas, solo en modo admin.
   readonly heatmap: readonly (readonly number[])[]; // [día de la semana 0=domingo][hora] -> turnos
   readonly streak: { readonly longest: number; readonly current: number };
   readonly tools: readonly (readonly [string, number])[];

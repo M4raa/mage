@@ -49,7 +49,7 @@ export interface MageDevBridge {
   readonly taskStore: typeof useTaskStore;
   // verify:gui: textos en el idioma activo desde las funciones que corren en el renderer (Z06).
   readonly t: typeof t;
-  // DEVOLUCION-095: el harness siembra el historial de «Cuentas y consumo» sustituyendo `load` (y lo devuelve al acabar).
+  // El harness siembra el historial de «Cuentas y consumo» sustituyendo `load` (y lo devuelve al acabar).
   readonly usageHistorySource: typeof usageHistorySource;
   // Punto 23: el harness barre unas pestañas concretas con un reloj adelantado.
   readonly sweepIdleSessions: typeof sweepIdleSessions;

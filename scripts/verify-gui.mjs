@@ -1030,7 +1030,7 @@ const CHECKS = [
     },
   },
   {
-    // P-038 V12 y DEVOLUCION-094: Servidores y Extensiones con la MISMA fila (punto de estado, etiquetas del mismo tamaño,
+    // P-038 V12: Servidores y Extensiones con la MISMA fila (punto de estado, etiquetas del mismo tamaño,
     // acciones en «⋯»), Conectores en TABLA como Claude Desktop, la explicación plegada tras «ⓘ» y el MCP de Mage arriba
     // como tarjeta con su interruptor.
     name: 'P-038 V12: MCP y conectores homogéneo, con el MCP de Mage arriba',
@@ -9458,7 +9458,7 @@ const CHECKS = [
     },
   },
   {
-    // DEVOLUCION-095: historial SEMBRADO (no lee transcripciones) y ventanas sembradas. Mide columnas, totales, series, filas
+    // Historial SEMBRADO (no lee transcripciones) y ventanas sembradas. Mide columnas, totales, series, filas
     // ordenadas, reparto de tokens, acierto de caché, mapa de horas y medidores contra la siembra. Capturas en oscuro y en
     // claro. No spawnea ningún CLI ni pulsa Enter.
     name: 'Métricas: «Cuentas y consumo» responde las cinco preguntas con datos sembrados',
@@ -12206,7 +12206,7 @@ const CHECKS = [
     },
   },
   {
-    // DEVOLUCION-093: «Capacidades». Skills con su ORIGEN (catálogo con skills sembradas) y Organización con las políticas
+    // «Capacidades». Skills con su ORIGEN (catálogo con skills sembradas) y Organización con las políticas
     // FALSAS del HOME de prueba (policy-limits, remote-settings, managed-settings y un drop-in). Mide que ningún valor
     // secreto sembrado llega al DOM. No lanza ningún CLI ni pulsa Enter. Abre Configuración y la cierra (error 5);
     // autosuficiente con --only=Capacidades (error 8). Siembra y deshace lo suyo.
@@ -12229,7 +12229,7 @@ const CHECKS = [
     },
   },
   {
-    // DEVOLUCION-094: Plugins (los instalados y Descubrir de un marketplace FALSO del HOME de prueba, ordenado por instalaciones)
+    // Plugins (los instalados y Descubrir de un marketplace FALSO del HOME de prueba, ordenado por instalaciones)
     // y «MCP y conectores» con la tabla de Conectores y su Descubrir. NO pulsa Instalar: lanzaría el CLI. Sin Enter. Abre
     // Configuración y la cierra (error 5); autosuficiente con --only=Capacidades: Plugins (error 8). Siembra y deshace lo suyo.
     name: 'Capacidades: Plugins (tuyos y descubrir) y MCP y conectores en tabla, sin instalar nada',
@@ -14241,7 +14241,7 @@ const CAPABILITY_SKILLS = [
   { name: 'vgserver:prompt (MCP)', description: 'Prompt de un MCP de prueba', argumentHint: null, aliases: [] },
 ];
 
-// DEVOLUCION-093: políticas, plugin instalado, ajustes gestionados y skills FALSOS en el HOME de prueba. Devuelve lo que hay que deshacer.
+// Políticas, plugin instalado, ajustes gestionados y skills FALSOS en el HOME de prueba. Devuelve lo que hay que deshacer.
 function seedCapabilitiesFixture(cuenta, userDataDir) {
   const managed = path.join(HARNESS_HOME, 'managed-settings');
   const files = {
@@ -14285,7 +14285,7 @@ function restoreCapabilitiesFixture({ files, dirs, catalogPath, catalogBefore })
   else fs.writeFileSync(catalogPath, catalogBefore, 'utf-8');
 }
 
-// DEVOLUCION-094: un marketplace FALSO con tres plugins, uno instalado y activado, otro sin manifiesto y la caché de instalaciones. Devuelve lo que hay que deshacer.
+// Un marketplace FALSO con tres plugins, uno instalado y activado, otro sin manifiesto y la caché de instalaciones. Devuelve lo que hay que deshacer.
 function seedPluginsFixture(cuenta) {
   const market = path.join(HARNESS_HOME, 'vg-market');
   const plugins = path.join(cuenta, 'plugins');

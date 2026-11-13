@@ -1,4 +1,4 @@
-// Frontera IPC de Capacidades (DEVOLUCION-093 y 094). Valida con Zod y delega. Solo se tocan cuentas de Claude que
+// Frontera IPC de Capacidades. Valida con Zod y delega. Solo se tocan cuentas de Claude que
 // Mage conoce: el renderer no puede pedir que se lea ni se ejecute nada en una ruta cualquiera.
 import { z } from 'zod';
 import type { CapabilitiesOverview, PluginActionParams, PluginCatalogView } from '@shared/capabilities';

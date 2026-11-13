@@ -34,7 +34,7 @@ import {
   type InstalledFilter,
 } from './pluginsModel';
 
-// Página Plugins de Capacidades (DEVOLUCION-094): «Tuyos» = installed_plugins.json de la cuenta; «Descubrir» = los
+// Página Plugins de Capacidades: «Tuyos» = installed_plugins.json de la cuenta; «Descubrir» = los
 // marketplaces que ya conoce el CLI (D-3). Toda acción la hace el CLI de la cuenta (D-4) y se aplica en su siguiente
 // conversación.
 

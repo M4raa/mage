@@ -126,7 +126,7 @@ function ClaudeAccountGroup({ group }: { readonly group: McpConnectorGroup }): R
   );
 }
 
-// DEVOLUCION-094 (D-7): TABLA como la de Claude Desktop. Conserva los atributos que mide verify:gui.
+// TABLA como la de Claude Desktop. Conserva los atributos que mide verify:gui.
 const CHIP_LABELS = { custom: 'capabilities.connectors.chip.custom', included: 'capabilities.connectors.chip.included' } as const;
 const HEAD_CELL = 'py-[5px] pr-[10px] font-semibold';
 

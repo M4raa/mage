@@ -38,7 +38,7 @@ const ACTION_KEYS = {
 
 type Notice = { readonly kind: 'result'; readonly result: LibraryActionResult } | { readonly kind: 'error'; readonly text: string };
 
-// Incrustada (DEVOLUCION-093): con `kinds` solo esos tipos, sin introducción ni filtro; con `accountDir` la cuenta la fija la página, sin selector.
+// Incrustada: con `kinds` solo esos tipos, sin introducción ni filtro; con `accountDir` la cuenta la fija la página, sin selector.
 export function LibrarySection({ kinds, accountDir: fixedAccountDir }: { readonly kinds?: readonly LibraryKind[]; readonly accountDir?: string } = {}): React.JSX.Element {
   const t = useT();
   const [view, setView] = useState<LibraryView | null>(null);

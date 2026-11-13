@@ -11,7 +11,7 @@ import { Icon } from './Icon';
 import { useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale } from '../../i18n/format';
 
-// Secciones de «Cuentas y consumo» (DEVOLUCION-095): cuánto queda (ventanas o presupuesto), qué consume más y en qué se
+// Secciones de «Cuentas y consumo»: cuánto queda (ventanas o presupuesto), qué consume más y en qué se
 // van los tokens. Solo pintan: los números salen de usageCharts.ts y accountMetrics.ts.
 
 const money = (microUsd: number): string => formatMicroUsd(microUsd, activeFormatLocale());

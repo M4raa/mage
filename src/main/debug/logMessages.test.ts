@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-// H8 (INFORME-051): el `message` del LogBus no se redacta (logBus.ts:45). Ninguna plantilla de `log(…)` de main puede
+// H8 (revisión de seguridad): el `message` del LogBus no se redacta (logBus.ts:45). Ninguna plantilla de `log(…)` de main puede
 // interpolar entorno, cabeceras ni nada con nombre de secreto. Lo que haga falta va en `data`, que sí se redacta por
 // nombre de campo.
 const LOG_TEMPLATE = /\b\w*[lL]og\??\.?\(\s*'(?:debug|info|warn|error)',\s*`((?:[^`\\]|\\.)*)`/g;

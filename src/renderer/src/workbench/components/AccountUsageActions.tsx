@@ -48,7 +48,7 @@ function Chip({ children, warn = false }: { readonly children: React.ReactNode; 
 }
 
 // Precio mensual del plan (P-039 D6): se guarda al salir del campo o con Enter; vacío lo quita. En una cuenta de API es
-// su presupuesto mensual (DEVOLUCION-095, D-6): mismo ajuste.
+// su presupuesto mensual: mismo ajuste.
 function PlanPriceField({ account }: { readonly account: Account }): React.JSX.Element {
   const t = useT();
   const saved = useWorkbenchStore((s) => s.settings.planPriceMicroUsdByAccount[account.id]);

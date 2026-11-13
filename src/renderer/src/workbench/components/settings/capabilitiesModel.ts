@@ -1,6 +1,6 @@
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 
-// Lógica pura de las páginas de Capacidades (DEVOLUCION-093): qué cuenta de Claude se enseña y cómo se nombran las políticas.
+// Lógica pura de las páginas de Capacidades: qué cuenta de Claude se enseña y cómo se nombran las políticas.
 
 // La cuenta elegida si existe; si no, la activa si es de Claude; si no, la primera.
 export function pickClaudeAccount(ids: readonly string[], picked: string | null, active: string): string | null {

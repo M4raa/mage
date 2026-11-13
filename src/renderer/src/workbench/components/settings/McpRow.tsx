@@ -56,7 +56,7 @@ export interface RowMenuItem {
 }
 
 // «⋯» con las acciones secundarias de una fila. Los elementos conservan el nombre accesible que tenían como botones.
-// Con `buttonLabel` el botón es un «Añadir ▾» con rótulo (DEVOLUCION-093); sin él, el «⋯» de siempre.
+// Con `buttonLabel` el botón es un «Añadir ▾» con rótulo; sin él, el «⋯» de siempre.
 export function RowMenu({ label, items, buttonLabel }: { readonly label: string; readonly items: readonly RowMenuItem[]; readonly buttonLabel?: string }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   useLocalPopover(open);

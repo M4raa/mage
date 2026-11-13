@@ -4,7 +4,7 @@ import { addModelUsage, EMPTY_MODEL_USAGE, modelUsageTokens, type AccountUsageHi
 import { planValueOf } from './accountMetrics';
 import { severityForPct, type UsageSeverity } from './usageView';
 
-// Gráficos de «Cuentas y consumo» (DEVOLUCION-095). PURO: da forma al historial que manda main (días LOCALES
+// Gráficos de «Cuentas y consumo». PURO: da forma al historial que manda main (días LOCALES
 // `YYYY-MM-DD`) y a las ventanas de uso. Un DayKey es una fecha de calendario: la aritmética y el formato van en UTC
 // sobre esa fecha, así que un cambio de hora nunca repite ni salta una columna. Tokens y micro-USD, enteros.
 

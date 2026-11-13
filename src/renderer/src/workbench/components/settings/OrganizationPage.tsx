@@ -9,7 +9,7 @@ import { allowedKey, entryValueKey, policyLabelKey } from './capabilitiesModel';
 import { CAPABILITY_PAGE_CLASS, CapabilityHeader, NOOP } from './CapabilityPage';
 import { MCP_BUTTON_CLASS } from './mcpStyles';
 
-// Página Organización de Capacidades (DEVOLUCION-093, U-4): SOLO LECTURA de las políticas de cada cuenta de Claude y de
+// Página Organización de Capacidades: SOLO LECTURA de las políticas de cada cuenta de Claude y de
 // los ajustes gestionados del equipo. Editar no se hace en Mage: el enlace abre la consola de administración (D-6).
 
 export const ADMIN_CONSOLE_URL = 'https://claude.ai/admin-settings';

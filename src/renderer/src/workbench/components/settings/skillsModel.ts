@@ -1,4 +1,4 @@
-// Origen de cada skill de una cuenta de Claude (DEVOLUCION-093, D-3), medido con Claude Code 2.1.319 en
+// Origen de cada skill de una cuenta de Claude, medido con Claude Code 2.1.319 en
 // command-catalog.json, 6 cuentas. La señal más fiable es el sufijo que el CLI pone a la DESCRIPCIÓN. Regla, en orden:
 //  - un nombre que acaba en « (MCP)» es un prompt de un servidor MCP, no una skill: fuera;
 //  - «(claude.ai sync)» → organización (ANTES que el prefijo: solo 3 de 26 llevan `anthropic-skills:`);

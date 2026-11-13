@@ -349,7 +349,7 @@ export const IpcChannel = {
   LibraryView: 'library:view',
   LibraryPreview: 'library:preview',
   LibraryApply: 'library:apply',
-  // Capacidades (DEVOLUCION-093): skills, plugins y políticas de una cuenta de Claude, solo lectura.
+  // Capacidades: skills, plugins y políticas de una cuenta de Claude, solo lectura.
   CapabilitiesOverview: 'capabilities:overview',
   CapabilitiesPluginCatalog: 'capabilities:pluginCatalog',
   CapabilitiesPluginAction: 'capabilities:pluginAction',

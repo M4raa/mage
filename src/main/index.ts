@@ -4198,7 +4198,7 @@ function registerPromptIpc1(deps: IpcDependencies): void {
   );
 }
 
-// Capacidades (DEVOLUCION-093): skills, plugins y políticas de cada cuenta de Claude, solo lectura. Con el HOME de prueba,
+// Capacidades: skills, plugins y políticas de cada cuenta de Claude, solo lectura. Con el HOME de prueba,
 // los ajustes gestionados se leen de una carpeta dentro de él (managedSettingsDir).
 function registerCapabilitiesIpcFromMain(): void {
   const managedDir = managedSettingsDir(process.platform, decideTestHome({ env: process.env, isPackaged: app.isPackaged }));

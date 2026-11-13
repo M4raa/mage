@@ -236,7 +236,7 @@ function Detail({ history, accountId, account, period }: { readonly history: Usa
   );
 }
 
-// Una pregunta de la pantalla (DEVOLUCION-095): la pregunta es el título y el nombre accesible de la sección.
+// Una pregunta de la pantalla: la pregunta es el título y el nombre accesible de la sección.
 function Question({ id, title, children }: { readonly id: string; readonly title: string; readonly children: React.ReactNode }): React.JSX.Element {
   return (
     <section data-usage-question={id} aria-label={title} className="flex flex-col gap-[8px] border-t border-mg-border-subtle pt-[12px]">

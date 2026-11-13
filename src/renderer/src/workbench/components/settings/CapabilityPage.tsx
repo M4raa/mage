@@ -7,7 +7,7 @@ import { Icon, type IconName } from '../Icon';
 import { pickClaudeAccount } from './capabilitiesModel';
 import { MetaChip, RowMenu, type RowMenuItem } from './McpRow';
 
-// Piezas comunes de las páginas de Capacidades (DEVOLUCION-093), con la estructura de los ajustes de Claude Desktop:
+// Piezas comunes de las páginas de Capacidades, con la estructura de los ajustes de Claude Desktop:
 // cabecera con «Tuyos»/«Descubrir», buscador, cuenta, filtro, orden y «Añadir ▾», y debajo una lista densa. El título ya
 // lo pinta la barra del diálogo (SettingsView), así que aquí no se repite.
 
