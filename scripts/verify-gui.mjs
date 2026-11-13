@@ -2866,6 +2866,47 @@ const CHECKS = [
     },
   },
   {
+    // D9 (13-11): un enlace soltado SOBRE EL PROMPT inserta su URL; en el resto de la ventana sigue bloqueado
+    // (documentDropGuard.ts, H2). Arrastre sintético con un DataTransfer propio: no navega ni envía nada.
+    name: 'D9: un enlace soltado sobre el prompt inserta la URL; fuera sigue bloqueado',
+    state: { tabs: 1 },
+    async run(page) {
+      const prompt = page.getByRole('textbox', { name: ui('prompt.editor.ariaLabel') });
+      await prompt.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await clearPrompt(page);
+      const url = 'https://example.com/vg-d9';
+      const medido = await page.evaluate((enlace) => {
+        const editores = document.querySelectorAll('[data-prompt-editor="true"] .cm-content');
+        const lateral = document.querySelector('[data-chat-sidebar="true"]');
+        if (editores.length !== 1 || lateral === null) return { editores: editores.length, lateral: lateral !== null };
+        const caja = editores[0].getBoundingClientRect();
+        const arrastre = (destino, tipo) => {
+          const datos = new DataTransfer();
+          datos.setData('text/uri-list', enlace);
+          datos.setData('text/plain', enlace);
+          const evento = new DragEvent(tipo, { dataTransfer: datos, bubbles: true, cancelable: true, clientX: caja.left + 4, clientY: caja.top + caja.height / 2 });
+          destino.dispatchEvent(evento);
+          return { cancelado: evento.defaultPrevented, efecto: datos.dropEffect };
+        };
+        const antes = location.href;
+        const sobrePrompt = arrastre(editores[0], 'dragover');
+        arrastre(editores[0], 'drop');
+        const fuera = arrastre(lateral, 'dragover');
+        arrastre(lateral, 'drop');
+        return { editores: 1, lateral: true, sobrePrompt, fuera, mismaUrl: location.href === antes };
+      }, url);
+      await page.waitForTimeout(CONFIG.settleMs);
+      medido.documento = await promptDocument(page);
+      await clearPrompt(page);
+      // `efecto` se anota pero no se exige: el DataTransfer sintético no conserva `dropEffect` (medido: 'none' en los dos).
+      const ok = medido.sobrePrompt?.cancelado === true
+        && medido.documento.split(url).length === 2
+        && medido.fuera?.cancelado === true
+        && medido.mismaUrl === true;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
     // Input rico (M3), la otra mitad que seguia siendo manual: Shift+Enter continua la lista con el
     // marcador siguiente, y en un item VACIO sale de la lista. Shift+Enter NO envia (el envio es Enter a
     // secas), asi que aqui no se dispara ningun turno.
