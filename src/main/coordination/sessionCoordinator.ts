@@ -1,4 +1,4 @@
-import type { CreateSessionParams, SendMessageParams, SessionEventPayload } from '@shared/ipc';
+import type { CreateSessionParams, SendMessageParams, SessionEventPayload, SessionIdleState } from '@shared/ipc';
 import type { MageEvent, PermissionDecision, PermissionRequest } from '@shared/events';
 import { foreignText, localized, localizedFromError, UserFacingError } from '@shared/i18n/localizedText';
 import { z } from 'zod';
@@ -230,6 +230,13 @@ export class SessionCoordinator {
   // Clientes suscritos ademas del que la creo (U17: la terminal, el MCP o una ventana que la adopto).
   subscriberCount(sessionId: string): number {
     return this.require(sessionId).listeners.size - 1;
+  }
+
+  // Punto 23 (D2): lo que solo sabe main para soltar el proceso de una pestaña inactiva: el keep-alive en marcha o
+  // programado (`cancelKeepAlive` solo existe con la decisión `wait`) y los clientes además de su ventana.
+  idleState(sessionId: string): SessionIdleState {
+    const tracked = this.require(sessionId);
+    return { keepAliveActive: tracked.keepAlive !== null || tracked.cancelKeepAlive !== null, otherClients: this.subscriberCount(sessionId) };
   }
 
   snapshot(sessionId: string): ConversationSnapshot {

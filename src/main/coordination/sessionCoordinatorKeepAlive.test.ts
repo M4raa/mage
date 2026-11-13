@@ -268,6 +268,23 @@ describe('SessionCoordinator: keep-alive de la cache (F4.6)', () => {
     expect(h.sessions.engineRequest).not.toHaveBeenCalled();
   });
 
+  it('idleState_sesionRecienCreada_sinKeepAliveNiOtrosClientes', () => {
+    const h = harness();
+
+    const state = h.coordinator.idleState(h.id);
+
+    expect(state).toEqual({ keepAliveActive: false, otherClients: 0 });
+  });
+
+  it('idleState_keepAliveProgramado_activo', () => {
+    const h = harness();
+    primeBigTurn(h);
+
+    const state = h.coordinator.idleState(h.id);
+
+    expect(state.keepAliveActive).toBe(true);
+  });
+
   it('keepAlive_apiKeyAccountDefault_notScheduled', () => {
     const h = harness({ apiKey: true });
 

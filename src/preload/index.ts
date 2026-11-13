@@ -117,6 +117,7 @@ const api: MageApi = {
   stop: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionStop, sessionId),
   closeSession: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionClose, sessionId),
   getSessionSnapshot: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionSnapshot, sessionId),
+  getSessionIdleState: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionIdleState, sessionId),
   listAdoptableSessions: () => ipcRenderer.invoke(IpcChannel.SessionsAdoptable),
   attachSession: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionAttach, sessionId),
   getScratchDir: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchDir),

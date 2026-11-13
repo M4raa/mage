@@ -21,6 +21,7 @@ function setup(over: Partial<SessionIpcDeps> = {}) {
     stop: vi.fn(),
     close: vi.fn().mockReturnValue({ background: true }),
     snapshot: vi.fn().mockReturnValue({ sessionId: 's1', lastSeq: 3 }),
+    idleState: vi.fn().mockReturnValue({ keepAliveActive: false, otherClients: 0 }),
   };
   const rewind = {
     plan: vi.fn().mockResolvedValue({ unavailable: null }),
@@ -59,7 +60,7 @@ describe('registerSessionIpc', () => {
 
     expect([...handlers.keys()].sort()).toEqual([
       IpcChannel.SessionAnswerElicitation, IpcChannel.SessionAnswerPermission, IpcChannel.SessionClose, IpcChannel.SessionAttach, IpcChannel.SessionCreate, IpcChannel.SessionDiverge, IpcChannel.SessionGetScratchDir,
-      IpcChannel.SessionInterrupt, IpcChannel.SessionQueueRemove, IpcChannel.SessionQueueTake, IpcChannel.SessionQueueUpdate, IpcChannel.SessionRewindApply, IpcChannel.SessionRewindPlan, IpcChannel.SessionSendMessage, IpcChannel.SessionSetEffort, IpcChannel.SessionSetModel,
+      IpcChannel.SessionIdleState, IpcChannel.SessionInterrupt, IpcChannel.SessionQueueRemove, IpcChannel.SessionQueueTake, IpcChannel.SessionQueueUpdate, IpcChannel.SessionRewindApply, IpcChannel.SessionRewindPlan, IpcChannel.SessionSendMessage, IpcChannel.SessionSetEffort, IpcChannel.SessionSetModel,
       IpcChannel.SessionSetPermissionMode, IpcChannel.SessionSnapshot, IpcChannel.SessionStop, IpcChannel.SessionStopTask, IpcChannel.SessionsAdoptable,
     ].sort());
   });

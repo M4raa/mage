@@ -120,6 +120,8 @@ export const IpcChannel = {
   SessionClose: 'session:close',
   // F2.1: instantanea de solo lectura de una sesion viva (identidad, estado y ultima secuencia).
   SessionSnapshot: 'session:snapshot',
+  // Punto 23 (D2): si el keep-alive está en marcha y cuántos clientes más siguen la sesión.
+  SessionIdleState: 'session:idleState',
   // U17: sesiones del host (terminal/MCP) sin ventana, y adoptar una como pestaña.
   SessionsAdoptable: 'sessions:adoptable',
   SessionAttach: 'session:attach',
@@ -496,6 +498,8 @@ export interface RewindPlan {
   readonly pendingCount: number;
   readonly canSaveCopy: boolean;                           // Codex, no en 'diverge' (U3)
 }
+export interface SessionIdleState { readonly keepAliveActive: boolean; readonly otherClients: number }
+
 export interface RewindApplyParams {
   readonly sessionId: string; readonly point: RewindPointRef; readonly action: 'rewind' | 'retry';
   readonly restoreFiles: boolean; readonly saveCopy: boolean; readonly attachments?: readonly ImageAttachment[];
@@ -1038,6 +1042,7 @@ export interface MageApi {
   closeSession(sessionId: string): Promise<CloseReceipt>;
   // Instantanea de una sesion viva (F2.1). Rechaza si la sesion no existe.
   getSessionSnapshot(sessionId: string): Promise<ConversationSnapshot>;
+  getSessionIdleState(sessionId: string): Promise<SessionIdleState>;
   // Carpeta scratch temporal (cross-platform) para el cwd de la sesion de prueba (Fase B).
   getScratchDir(): Promise<string>;
   // Raiz de los directorios de borrador. NO crea nada: `getScratchDir` acuña una carpeta nueva en cada
