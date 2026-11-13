@@ -15590,8 +15590,10 @@ async function measureHostTab(instance, { profile, codexHome, runDir, setClient 
   }, sessionId);
   await page.screenshot({ path: path.join(runDir, 'host-tab.png') });
   const ctx = { client, page, sessionId, tabId: adoptada.tabId };
-  const primero = await answerFromHost(ctx);
-  const segundo = await answerFromWindow(ctx, primero.requestId);
+  const { primero, segundo } = await withHostPermissionAnswers(page, async () => {
+    const desdeHost = await answerFromHost(ctx);
+    return { primero: desdeHost, segundo: await answerFromWindow(ctx, desdeHost.requestId) };
+  });
   const hidratada = await measureAdoptedDuplicates(page, adoptada.tabId);
   await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), adoptada.tabId);
   const lista = await client.call('sessions.list');
@@ -15621,6 +15623,19 @@ async function measureAdoptedDuplicates(page, tabId) {
     return { duplicados: [...firmas.values()].filter((n) => n > 1).length, bloques: bloques.length };
   }, tabId);
   return { idle, ...duplicados };
+}
+
+// D3 (13-11): contestar permisos desde la terminal sale APAGADO y main lo lee en cada llamada. La prueba lo enciende en
+// la instancia que contesta y lo devuelve a su valor al acabar, haya fallado o no.
+async function withHostPermissionAnswers(page, run) {
+  const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.hostPermissionAnswers);
+  await page.evaluate(() => window.__mageDev.store.getState().setHostPermissionAnswers(true));
+  await page.waitForTimeout(CONFIG.settleMs);
+  try {
+    return await run();
+  } finally {
+    await page.evaluate((valor) => window.__mageDev.store.getState().setHostPermissionAnswers(valor), previo);
+  }
 }
 
 // Pasos 5 y 6: el permiso 1 se contesta por el host y la pestaña lo retira.
