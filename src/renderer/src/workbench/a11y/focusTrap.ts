@@ -27,3 +27,11 @@ export function shouldRestoreFocus<T>(focused: T | null, lostTargets: readonly T
   if (focused === null || lostTargets.includes(focused)) return true;
   return isInsidePanel(focused);
 }
+
+// Disparador de un menú, desplegable o popover ABIERTO (ARIA).
+export const OPEN_POPUP_TRIGGER_SELECTOR = '[aria-haspopup]:not([aria-haspopup="false"])[aria-expanded="true"]';
+
+// ¿Hay un menú abierto dentro del panel? Entonces el Escape es suyo y no del diálogo.
+export function hasOpenPopupTrigger(panel: Pick<ParentNode, 'querySelector'>): boolean {
+  return panel.querySelector(OPEN_POPUP_TRIGGER_SELECTOR) !== null;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTrapTarget, shouldRestoreFocus } from './focusTrap';
+import { hasOpenPopupTrigger, OPEN_POPUP_TRIGGER_SELECTOR, resolveTrapTarget, shouldRestoreFocus } from './focusTrap';
 
 describe('resolveTrapTarget', () => {
   it('resolveTrapTarget_tabEnElUltimo_envuelveAlPrimero', () => {
@@ -55,5 +55,22 @@ describe('shouldRestoreFocus', () => {
 
   it('shouldRestoreFocus_focoEnOtroDialogo_noLoRoba', () => {
     expect(shouldRestoreFocus(otherDialog, [body], isInside)).toBe(false);
+  });
+});
+
+describe('hasOpenPopupTrigger', () => {
+  it('hasOpenPopupTrigger_disparadorAbierto_true', () => {
+    const panel = { querySelector: (selector: string) => (selector === OPEN_POPUP_TRIGGER_SELECTOR ? {} : null) };
+    expect(hasOpenPopupTrigger(panel as unknown as ParentNode)).toBe(true);
+  });
+
+  it('hasOpenPopupTrigger_ninguno_false', () => {
+    const panel = { querySelector: () => null };
+    expect(hasOpenPopupTrigger(panel as unknown as ParentNode)).toBe(false);
+  });
+
+  it('OPEN_POPUP_TRIGGER_SELECTOR_exigeHaspopupYExpanded', () => {
+    expect(OPEN_POPUP_TRIGGER_SELECTOR).toContain('[aria-haspopup]');
+    expect(OPEN_POPUP_TRIGGER_SELECTOR).toContain('[aria-expanded="true"]');
   });
 });
