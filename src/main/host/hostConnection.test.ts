@@ -6,7 +6,7 @@ import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostConnectionDeps, type McpTunnelHandle, type HostSessions, type HostTransport } from './hostConnection';
 import type { HostControl } from './hostControl';
 import type { HostMode } from './hostServer';
-import { BypassPermissionsBlockedError, TrustRequiredError, UnknownAccountError } from './hostErrors';
+import { BypassPermissionsBlockedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError } from './hostErrors';
 import { HOST_PROTOCOL, HostErrorCode } from './hostProtocol';
 import { challengeProof } from './hostToken';
 
@@ -41,6 +41,7 @@ function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<
     listAccounts: vi.fn(() => []),
     createApiAccount: vi.fn(() => ({ id: '/h/k', name: 'K', provider: 'claude' as const, billing: 'api-key' as const })),
     requestQuit: vi.fn(),
+    guardPermissionAnswer: vi.fn(),
     ...options.control,
   };
   const rewind: HostConnectionDeps['rewind'] = { points: vi.fn(async () => []), plan: vi.fn(), apply: vi.fn(), ...options.rewind };
@@ -330,6 +331,18 @@ describe('HostConnection — métodos', () => {
 
     expect(h.sessions.answerPermission).toHaveBeenCalledWith('s1', 'r1', { behavior: 'deny', message: 'no' });
     expect(h.lines()[1]!.result).toEqual({ status: 'accepted' });
+  });
+
+  it('sessionAnswerPermission_desactivado_errorMenos32012SinLlegarAlCoordinador', () => {
+    const h = harness({ control: { guardPermissionAnswer: vi.fn(() => { throw new PermissionAnswersDisabledError(); }) } });
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.answerPermission', params: { sessionId: 's1', requestId: 'r1', decision: { behavior: 'allow' } } });
+    const reply = h.lines()[1]!;
+
+    expect(reply.error.code).toBe(HostErrorCode.PermissionAnswersDisabled);
+    expect(reply.error.data.localized.key).toBe('errors.host.permissionAnswersDisabled');
+    expect(h.sessions.answerPermission).not.toHaveBeenCalled();
   });
 
   it('session.subscribe_devuelveInstantaneaYLosEventosLlegaanComoNotificaciones', () => {

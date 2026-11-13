@@ -43,6 +43,7 @@ const VALID: AppSettings = {
   hiddenAccounts: ['C:/cuentas/.claude-x'],
   claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
   artifactEnabled: true,
+  hostPermissionAnswers: false,
   ghNoticeDismissed: true,
   autoArchiveOnPrClose: true,
   agyCommandRules: { allow: ['git status'], deny: ['rm -rf build'] },
@@ -505,5 +506,26 @@ describe('SettingsStore — Artifact (D5)', () => {
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify(VALID) }));
 
     expect(store.load().artifactEnabled).toBe(true);
+  });
+});
+
+describe('SettingsStore — permisos desde la terminal (D3)', () => {
+  it('load_sinCampoHostPermissionAnswers_apagado', () => {
+    const { hostPermissionAnswers: _omitted, ...withoutField } = VALID;
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify(withoutField) }));
+
+    expect(store.load().hostPermissionAnswers).toBe(false);
+  });
+
+  it('load_hostPermissionAnswersBasura_apagado', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, hostPermissionAnswers: 'sí' }) }));
+
+    expect(store.load().hostPermissionAnswers).toBe(false);
+  });
+
+  it('load_hostPermissionAnswersEncendido_seConserva', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, hostPermissionAnswers: true }) }));
+
+    expect(store.load().hostPermissionAnswers).toBe(true);
   });
 });

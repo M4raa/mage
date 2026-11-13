@@ -3,7 +3,7 @@ import type { AccountCreateParams, AccountInfo } from '@shared/accounts';
 import type { ConversationId } from '@shared/coordination';
 import type { CreateSessionParams } from '@shared/ipc';
 import type { ChatProject } from '@shared/settings';
-import { BypassPermissionsBlockedError, TrustRequiredError, UnknownAccountError } from './hostErrors';
+import { BypassPermissionsBlockedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError } from './hostErrors';
 import type { HostAccountCreateRequest, HostCreateRequest, HostOptionKey } from './hostProtocol';
 
 // Lo que el host 1.2 (F7.2) hace fuera del coordinador: crear una sesión con la frontera de confianza de main,
@@ -21,6 +21,7 @@ export interface HostControl {
   listAccounts(): readonly HostAccount[];
   createApiAccount(request: HostAccountCreateRequest): HostAccount;
   requestQuit(): void;
+  guardPermissionAnswer(): void;
 }
 
 export interface HostOptionSetters {
@@ -46,6 +47,8 @@ export interface HostControlDeps {
   readonly createAccount: (params: AccountCreateParams) => AccountInfo;
   // Cierra main un poco después de contestar (`HOST_STOP_DELAY_MS`).
   readonly requestQuit: () => void;
+  // D3: `AppSettings.hostPermissionAnswers`, leído en cada llamada.
+  readonly permissionAnswersAllowed: () => boolean;
 }
 
 // Recibos de `session.create` recordados para deduplicar reintentos: los últimos, no todos.
@@ -65,6 +68,7 @@ export function createHostControl(deps: HostControlDeps): HostControl {
     listAccounts: () => deps.listAccounts().map(toHostAccount),
     createApiAccount: (request) => toHostAccount(deps.createAccount({ providerId: request.provider, authKind: 'api-key', name: request.name, apiKey: request.apiKey })),
     requestQuit: () => deps.requestQuit(),
+    guardPermissionAnswer: () => { if (!deps.permissionAnswersAllowed()) throw new PermissionAnswersDisabledError(); },
   };
 }
 

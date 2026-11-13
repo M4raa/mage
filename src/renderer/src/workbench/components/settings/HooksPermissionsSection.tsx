@@ -84,6 +84,25 @@ export function HooksPermissionsSection(): React.JSX.Element {
         </p>
         <CommonRulesEditor />
       </div>
+      <HostPermissionAnswersToggle />
+    </div>
+  );
+}
+
+// D3 (13-11): `mage chat` solo contesta permisos si el usuario lo enciende aquí.
+function HostPermissionAnswersToggle(): React.JSX.Element {
+  const t = useT();
+  const checked = useWorkbenchStore((s) => s.settings.hostPermissionAnswers);
+  const setHostPermissionAnswers = useWorkbenchStore((s) => s.setHostPermissionAnswers);
+  return (
+    <div className="flex flex-col gap-[8px] border-t border-mg-border pt-[14px]">
+      <label className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
+        <input type="checkbox" className="mt-[3px]" data-host-permission-answers="true" checked={checked} onChange={(e) => setHostPermissionAnswers(e.target.checked)} />
+        <span>
+          <span className="font-semibold">{t('settings.hooks.hostAnswers.label')}</span>
+          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t('settings.hooks.hostAnswers.hint')}</span>
+        </span>
+      </label>
     </div>
   );
 }

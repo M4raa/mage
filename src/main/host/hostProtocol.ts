@@ -43,6 +43,7 @@ export const HostErrorCode = {
   UnknownConversation: -32009,
   UnknownAccount: -32010,
   PermissionModeBlocked: -32011,
+  PermissionAnswersDisabled: -32012,
 } as const;
 
 const MAX_METHOD_CHARS = 64;

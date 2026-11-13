@@ -5954,8 +5954,18 @@ const CHECKS = [
           conMensaje: text.includes(window.__mageDev.t('settings.hooks.noHooks')) || text.includes(window.__mageDev.t('settings.hooks.noRules')) || text.includes(window.__mageDev.t('settings.hooks.intro.union')),
         };
       }, { reglas: uiPrefix('settings.hooks.rulesHeading') });
+      // D3 (13-11): «Contestar permisos desde la terminal» sale APAGADA y cambia el ajuste.
+      const casilla = page.locator('[data-host-permission-answers="true"]');
+      await casilla.scrollIntoViewIfNeeded();
+      measured.casillas = await casilla.count();
+      measured.terminalAntes = await casilla.isChecked();
+      await casilla.click();
+      measured.ajusteTrasPulsar = await page.evaluate(() => window.__mageDev.store.getState().settings.hostPermissionAnswers);
+      await casilla.click();
+      measured.ajusteAlFinal = await page.evaluate(() => window.__mageDev.store.getState().settings.hostPermissionAnswers);
       await closeDialog(page);
-      const ok = measured.errores === 0 && measured.conHooks && measured.conReglas && measured.conMensaje;
+      const ok = measured.errores === 0 && measured.conHooks && measured.conReglas && measured.conMensaje
+        && measured.casillas === 1 && measured.terminalAntes === false && measured.ajusteTrasPulsar === true && measured.ajusteAlFinal === false;
       return { ok, detail: `seccion=${JSON.stringify(measured)}` };
     },
   },

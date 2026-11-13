@@ -535,6 +535,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setDefaultPermissionMode: (mode: DefaultPermissionMode) => void;
   // D5 (#53): permitir Artifact en las sesiones de Claude Code (publica en claude.ai). Siguiente arranque.
   setArtifactEnabled: (enabled: boolean) => void;
+  // D3: `mage chat` puede contestar permisos (apagado por defecto).
+  setHostPermissionAnswers: (enabled: boolean) => void;
   // Keep-alive de la caché de Claude (U11, U15): fusiona el parche con los ajustes; valida tipos y rangos.
   setKeepAlive: (patch: Partial<KeepAliveSettings>) => void;
   // Profundidad máxima de delegación entre sesiones (U10): entero entre DELEGATION_DEPTH_MIN y _MAX.

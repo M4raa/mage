@@ -4560,6 +4560,7 @@ function hostControlDeps(): HostControlDeps {
     },
     createAccount: (params) => getProviderAccounts().create(params),
     requestQuit: () => { setTimeout(() => app.quit(), HOST_STOP_DELAY_MS); },
+    permissionAnswersAllowed: () => getSettingsStore().load().hostPermissionAnswers,
   };
 }
 

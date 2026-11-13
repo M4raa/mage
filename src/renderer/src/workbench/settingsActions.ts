@@ -46,6 +46,7 @@ export type SettingsActionName =
   | 'setAgyLinkedPaths'
   | 'setDefaultProvider'
   | 'setArtifactEnabled'
+  | 'setHostPermissionAnswers'
   | 'setKeepAlive'
   | 'setDelegationDepth'
   | 'setDefaultPermissionMode'
@@ -237,6 +238,11 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
 
     setArtifactEnabled: (enabled) => {
       set((s) => ({ settings: { ...s.settings, artifactEnabled: enabled } }));
+      deps.persistSettings();
+    },
+
+    setHostPermissionAnswers: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, hostPermissionAnswers: enabled } }));
       deps.persistSettings();
     },
 

@@ -1073,6 +1073,7 @@ export interface MessageValues {
   readonly "errors.git.worktreeCreateRejected": { readonly "detail": string | number };
   readonly "errors.host.bypassPermissionsBlocked": never;
   readonly "errors.host.directoryNotPrivate": { readonly "directory": string | number; readonly "mode": string | number; readonly "owner": string | number; readonly "user": string | number };
+  readonly "errors.host.permissionAnswersDisabled": never;
   readonly "errors.host.socketPathTooLong": { readonly "address": string | number; readonly "bytes": string | number; readonly "max": string | number };
   readonly "errors.host.startFailedCleanup": { readonly "detail": string | number; readonly "reason": string | number };
   readonly "errors.host.trustRequired": { readonly "cwd": string | number };
@@ -2121,6 +2122,8 @@ export interface MessageValues {
   readonly "settings.hooks.editableHeading": { readonly "origin": string | number };
   readonly "settings.hooks.editableTip": never;
   readonly "settings.hooks.hooksHeading": { readonly "count": string | number };
+  readonly "settings.hooks.hostAnswers.hint": never;
+  readonly "settings.hooks.hostAnswers.label": never;
   readonly "settings.hooks.intro.editable": never;
   readonly "settings.hooks.intro.end": never;
   readonly "settings.hooks.intro.readOnly": never;

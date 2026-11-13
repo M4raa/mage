@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AccountCreateParams, AccountInfo } from '@shared/accounts';
 import type { ChatProject } from '@shared/settings';
 import { createHostControl, MAX_CREATE_RECEIPTS, resolveHostLaunchParams, type HostControlDeps } from './hostControl';
-import { BypassPermissionsBlockedError, TrustRequiredError, UnknownAccountError } from './hostErrors';
+import { BypassPermissionsBlockedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError } from './hostErrors';
 import type { HostCreateRequest } from './hostProtocol';
 
 const CWD = resolve('proyecto');
@@ -19,6 +19,7 @@ function harness(overrides: Partial<HostControlDeps> = {}) {
     defaultModels: vi.fn((): Readonly<Record<string, string>> => ({})),
     isTrusted: vi.fn(() => true),
     canonicalPath: vi.fn((path: string) => path),
+    permissionAnswersAllowed: vi.fn(() => true),
     launch: vi.fn(() => 's-1'),
     conversationIdOf: vi.fn(() => null),
     options: { setModel: vi.fn(), setEffort: vi.fn(), setPermissionMode: vi.fn() },
@@ -32,6 +33,20 @@ function harness(overrides: Partial<HostControlDeps> = {}) {
 function request(overrides: Partial<HostCreateRequest> = {}): HostCreateRequest {
   return { commandId: COMMAND_ID, provider: 'claude', accountId: '/h/.claude', cwd: CWD, trust: { acknowledged: false }, ...overrides };
 }
+
+describe('HostControl.guardPermissionAnswer', () => {
+  it('guardPermissionAnswer_ajusteApagado_lanzaPermissionAnswersDisabled', () => {
+    const h = harness({ permissionAnswersAllowed: vi.fn(() => false) });
+
+    expect(() => h.control.guardPermissionAnswer()).toThrow(PermissionAnswersDisabledError);
+  });
+
+  it('guardPermissionAnswer_ajusteEncendido_noLanza', () => {
+    const h = harness({ permissionAnswersAllowed: vi.fn(() => true) });
+
+    expect(() => h.control.guardPermissionAnswer()).not.toThrow();
+  });
+});
 
 describe('HostControl.createSession', () => {
   it('createSession_cuentaYCarpetaBuenas_lanzaConLosParametrosResueltos', () => {

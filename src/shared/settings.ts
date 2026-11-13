@@ -241,6 +241,8 @@ export interface AppSettings {
   readonly keepAlive: KeepAliveSettings;
   // Delegacion entre conversaciones (U10): profundidad maxima de la cadena de creadoras.
   readonly delegation: DelegationSettings;
+  // D3 (INFORME-051 H1, b): `mage chat` puede contestar permisos. Default false.
+  readonly hostPermissionAnswers: boolean;
 }
 
 export interface DelegationSettings {
@@ -346,4 +348,5 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   runtimeToolAccess: {},
   keepAlive: DEFAULT_KEEP_ALIVE,
   delegation: DEFAULT_DELEGATION,
+  hostPermissionAnswers: false,
 };
