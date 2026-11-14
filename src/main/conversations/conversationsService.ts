@@ -48,6 +48,15 @@ export function withCreator(
   });
 }
 
+// «Programada» por Mage, sea cual sea el proveedor: la conversación la creó una tarea suya, según su índice. La que ya lo era
+// por su transcripción (una tarea de Claude Desktop) sigue igual.
+export function withScheduledTaskRun(
+  items: readonly ConversationSummary[],
+  isTaskRun: (sessionId: string) => boolean,
+): ConversationSummary[] {
+  return items.map((item) => (item.isScheduled || !isTaskRun(item.sessionId) ? item : { ...item, isScheduled: true }));
+}
+
 export interface ConversationsDeps {
   readonly exists: (path: string) => boolean;
   readonly listDir: (path: string) => string[];

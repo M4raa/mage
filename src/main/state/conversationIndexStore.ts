@@ -31,6 +31,8 @@ export interface ConversationEntry extends ConversationPrefs {
   readonly lastSeq?: number;
   readonly createdBy?: NonNullable<DelegationRecord['createdBy']>;
   readonly creatorChain?: readonly string[];
+  // Tarea de Mage que creó la conversación (la escribe solo main al lanzarla).
+  readonly createdByTaskId?: string;
 }
 
 // Cómo se lanzó una sesión del host: su cuenta (la dueña), su CLI y lo que la ventana necesita para reabrirla igual.
@@ -77,6 +79,7 @@ const ENTRY_SCHEMA = PREFS_SCHEMA.extend({
   lastSeq: z.number().int().nonnegative().optional().catch(undefined),
   createdBy: z.object({ conversationId: z.string().min(1), requestId: z.string().min(1), at: z.string().datetime() }).optional().catch(undefined),
   creatorChain: z.array(z.string().min(1)).max(MAX_CREATOR_CHAIN).optional().catch(undefined),
+  createdByTaskId: z.string().min(1).optional().catch(undefined),
 });
 
 const ARTIFACT_SCHEMA = z.object({
@@ -163,6 +166,23 @@ export class ConversationIndexStore {
     };
     const merged: ConversationEntry = { ...mergePrefs(index.conversations[key], prefs), hostOwnerAccountId: record.accountId };
     this.write({ ...index, conversations: { ...index.conversations, [key]: merged } });
+  }
+
+  // Conversación creada por una tarea de Mage: el lateral le pone «programada» sea cual sea el proveedor. `id` es el
+  // ConversationId o el nativo. Solo escribe si cambia.
+  recordTaskRun(id: string, taskId: string): void {
+    if (id.length === 0 || taskId.length === 0) throw new Error(`id o tarea vacios al marcar la conversacion de una tarea: ${JSON.stringify({ id, taskId })}`);
+    const index = this.read();
+    const key = this.keyFor(index, id);
+    const entry = index.conversations[key];
+    if (entry?.createdByTaskId === taskId) return;
+    this.write({ ...index, conversations: { ...index.conversations, [key]: { ...entry, createdByTaskId: taskId } } });
+  }
+
+  // La tarea de Mage que creó la conversación, o undefined.
+  taskRunOf(id: string): string | undefined {
+    const index = this.read();
+    return index.conversations[this.keyFor(index, id)]?.createdByTaskId;
   }
 
   // Olvida una conversacion (la borra `ConversationsDelete`). No-op si no estaba.

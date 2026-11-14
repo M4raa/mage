@@ -209,7 +209,9 @@ import { claudeSharedLaunch } from './config/mcpProviderTranslate';
 import { mergeServerLists, selectForTarget, type ResolvedMcpServer } from './config/mcpResolved';
 import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
-import { ConversationsService, withCreator, withHostOwner, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
+import { ConversationsService, withCreator, withHostOwner, withLastAccount, withScheduledTaskRun, type ConversationsDeps } from './conversations/conversationsService';
+import { taskRunMarker } from './tasks/taskRunMarker';
+import type { TaskRecord } from '@shared/tasks';
 import { migratePrivateConversations } from './conversations/privateConversationsMigration';
 import { CodexHistoryService } from './conversations/codexHistory';
 import { deleteCodexConversation } from './conversations/codexDeletion';
@@ -2938,9 +2940,13 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
     launchingTaskExtras = task === null ? [] : getTaskService().launchExtrasFor(task, params.cwd);
+    const markTaskRun = taskRunMarkerFor(task, params);
     let sessionId: string;
     try {
-      sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+      sessionId = sessionCoordinator.create(effectiveParams, (payload) => {
+        markTaskRun(payload.conversationId);
+        relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir });
+      }, sender?.id);
     } finally {
       launchingTaskExtras = [];
     }
@@ -2950,6 +2956,15 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
     if (sender !== null) stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
   }
+
+// Una conversación NUEVA que lanza una tarea de Mage queda marcada en el índice en cuanto tiene id. Reanudarla no la vuelve a marcar.
+function taskRunMarkerFor(task: TaskRecord | null, params: CreateSessionParams): (conversationId: string | null) => void {
+  if (task === null || params.resumeSessionId !== undefined) return () => undefined;
+  return taskRunMarker({
+    record: (conversationId) => getConversationIndexStore().recordTaskRun(conversationId, task.id),
+    warn: (message, data) => mainLog('warn', message, data),
+  });
+}
 
 // U17: sesiones del host (sin ventana) que la ventana principal puede adoptar, y quién sigue cuál.
 const adoptableSessions = new AdoptableSessions();
@@ -3671,9 +3686,11 @@ function listClaudeConversations(accountDir: string): readonly ConversationSumma
   return withHostOwner(listed, (id) => getConversationIndexStore().loadPrefs(id)?.hostOwnerAccountId);
 }
 
-// Añade a cada conversación del historial la que la creó con `mage_create_session` (el índice de Mage la guarda).
-function withCreatorOfDelegation(items: readonly ConversationSummary[]): ConversationSummary[] {
-  return withCreator(items, (id) => getConversationIndexStore().delegationOf(id).createdBy?.conversationId);
+// Lo que sabe el índice de Mage y no el disco: quién creó cada conversación por delegación y cuáles creó una tarea suya.
+function withIndexMarks(items: readonly ConversationSummary[]): ConversationSummary[] {
+  const index = getConversationIndexStore();
+  const withCreators = withCreator(items, (id) => index.delegationOf(id).createdBy?.conversationId);
+  return withScheduledTaskRun(withCreators, (id) => index.taskRunOf(id) !== undefined);
 }
 
 function registerTranscriptIpc2(deps: IpcDependencies): void {
@@ -3696,10 +3713,10 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
   // ser un dir de cuenta gestionado bajo HOME (nunca una ruta arbitraria via IPC).
   ipcMain.handle(IpcChannel.ConversationsList, (_e, accountDir: string): readonly ConversationSummary[] => {
     const codex = getProviderAccounts().find('codex', accountDir);
-    if (codex !== null) return withCreatorOfDelegation(codexHistory.list(codex.home));
+    if (codex !== null) return withIndexMarks(codexHistory.list(codex.home));
     const agyProfile = agyProfileOfAccount(accountDir);
-    if (agyProfile !== null) return withCreatorOfDelegation(agyHistory.list(agyProfile, accountDir, agyExternalProfileOf(accountDir)));
-    return withCreatorOfDelegation(listClaudeConversations(accountDir));
+    if (agyProfile !== null) return withIndexMarks(agyHistory.list(agyProfile, accountDir, agyExternalProfileOf(accountDir)));
+    return withIndexMarks(listClaudeConversations(accountDir));
   });
   ipcMain.handle(IpcChannel.ConversationsDelete, async (_e, params: DeleteConversationParams): Promise<void> => {
     requireSafeConversation(params.accountDir, params.sessionId);

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationSummary } from '@shared/conversations';
-import { ConversationsService, withCreator, withHostOwner, withLastAccount, type ConversationsDeps } from './conversationsService';
+import { ConversationsService, withCreator, withHostOwner, withLastAccount, withScheduledTaskRun, type ConversationsDeps } from './conversationsService';
 
 const ACC = join('/home/u', '.claude-p');
 const SHARED = join(ACC, 'projects');
@@ -288,6 +288,34 @@ describe('withCreator', () => {
     const item = summary('a');
 
     const result = withCreator([item], () => undefined);
+
+    expect(result[0]).toBe(item);
+  });
+});
+
+describe('withScheduledTaskRun', () => {
+  const summary = (sessionId: string, isScheduled = false): ConversationSummary => ({
+    sessionId, configDir: ACC, cwd: '', title: sessionId, updatedAtMs: 0, sizeBytes: 0, isScheduled,
+  });
+
+  it('withScheduledTaskRun_creadaPorTarea_programada', () => {
+    const result = withScheduledTaskRun([summary('a'), summary('b')], (id) => id === 'a');
+
+    expect(result.map((item) => item.isScheduled)).toEqual([true, false]);
+  });
+
+  it('withScheduledTaskRun_programadaPorTranscripcion_sigueProgramada', () => {
+    const item = summary('a', true);
+
+    const result = withScheduledTaskRun([item], () => false);
+
+    expect(result[0]?.isScheduled).toBe(true);
+  });
+
+  it('withScheduledTaskRun_sinMarca_mismoObjeto', () => {
+    const item = summary('a');
+
+    const result = withScheduledTaskRun([item], () => false);
 
     expect(result[0]).toBe(item);
   });
