@@ -582,6 +582,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // Carpeta: `cwd` la fija (un proyecto elegido en la pantalla sin pestañas); `scratch` fuerza la temporal;
   // sin ninguna de las dos, la que diga el ajuste `newConversationFolder`.
   createConversation: (folder?: ConversationFolderChoice) => Promise<void>;
+  // «Probar en chat» de una skill: conversación nueva de ESA cuenta con `command` en el prompt, sin enviarlo; cierra Configuración.
+  tryCommandInNewConversation: (accountId: string, command: string) => Promise<void>;
   // Renombra una pestana (M2.6): titulo editable a mano; ignora un titulo vacio. Persiste.
   renameTab: (tabId: string, title: string) => void;
   // Renombrado hecho por el USUARIO: titulo local + `/rename` al CLI (D3). `renameTab` es el de siempre,
@@ -2317,6 +2319,17 @@ export function createWorkbenchStore(mage: MageClient) {
         importedContext: folder.importedContext,
         ...(effort.length === 0 ? {} : { effort }),
       });
+    },
+
+    tryCommandInNewConversation: async (accountId, command) => {
+      if (!get().accounts.some((account) => account.id === accountId)) {
+        throw new Error(`Cuenta desconocida para probar ${JSON.stringify(command)}: ${JSON.stringify(accountId)}`);
+      }
+      get().setActiveAccount(accountId);
+      await get().createConversation();
+      get().setDraft(get().activeTabId, { text: `${command} `, attachments: [], mentions: [] });
+      get().closeSettings();
+      get().focusPrompt();
     },
 
     // Renombra una pestana (M2.6). Ignora un titulo vacio (no deja la pestana sin nombre). Persiste.
