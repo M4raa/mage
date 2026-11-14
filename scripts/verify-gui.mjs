@@ -11458,6 +11458,34 @@ const CHECKS = [
     },
   },
   {
+    // Historial de prompts con ↑/↓ como el CLI: con el borrador vacío, ↑ trae el último mensaje enviado de ESTA conversación y
+    // otro ↑ el anterior; ↓ vuelve y al final deja el borrador como estaba. Bloques sembrados por el puente; sin Enter.
+    name: 'Prompt: ↑ y ↓ recorren los mensajes enviados de la conversación',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      try {
+        await page.evaluate((id) => {
+          const bloque = (n, text) => ({ kind: 'user', id: `vg-hist-${n}`, text, time: '10:00', attachments: [], nativeId: null });
+          const st = window.__mageDev.store;
+          st.setState({ blocksByChat: { ...st.getState().blocksByChat, [id]: [bloque(1, 'primero'), bloque(2, 'segundo')] } });
+        }, tabId);
+        await clearPrompt(page);
+        const borrador = () => page.evaluate((id) => window.__mageDev.store.getState().draftByChat[id]?.text ?? '', tabId);
+        const pasos = [];
+        for (const tecla of ['ArrowUp', 'ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown']) {
+          await page.keyboard.press(tecla);
+          await page.waitForTimeout(CONFIG.settleMs);
+          pasos.push(await borrador());
+        }
+        const ok = JSON.stringify(pasos) === JSON.stringify(['segundo', 'primero', 'primero', 'segundo', '']);
+        return { ok, detail: JSON.stringify(pasos) };
+      } finally {
+        await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+      }
+    },
+  },
+  {
     // Punto 23 de P-043 (D2): una pestaña con proceso vivo, sin actividad y fuera de la vista suelta el proceso; la pestaña se
     // queda con su conversación y vuelve a tener sesión al pedirla. Con 0 minutos no se suelta. Reloj adelantado por el puente.
     name: 'Punto 23: una pestaña inactiva fuera de la vista suelta su proceso y se reanuda; con 0 no',

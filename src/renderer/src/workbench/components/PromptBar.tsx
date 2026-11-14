@@ -12,6 +12,7 @@ import { popoverAnchor } from '../popoverAnchor';
 import type { ProviderModel } from '@shared/providers';
 import { continueListOnNewline, indentLines, outdentLines, removeListMarker, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
+import { historyDown, historyUp, IDLE_PROMPT_HISTORY, sentPrompts, type PromptHistoryState } from '../promptHistory';
 import { assertPastedImages, base64ByteLength, sourcePathOf, validateAttachmentSet, type ImageSource } from '@shared/attachments';
 import type { PromptEditorHandle } from './PromptEditor';
 import { Icon, type IconName } from './Icon';
@@ -236,6 +237,11 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   // Autocompletado de comandos "/" (M2.6): indice seleccionado + flag de descartado (Escape).
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
+  // ↑/↓ del historial de prompts de ESTA conversación (como el CLI); se olvida al cambiar de pestaña.
+  const historyRef = useRef<PromptHistoryState>(IDLE_PROMPT_HISTORY);
+  useEffect(() => {
+    historyRef.current = IDLE_PROMPT_HISTORY;
+  }, [activeTabId]);
   const [preview, setPreview] = useState<string | null>(null); // sugerencia de mejora (editable)
   const [busy, setBusy] = useState(false); // mejorando/rehaciendo
   const [error, setError] = useState<string | null>(null);
@@ -540,6 +546,21 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
     editorRef.current?.applyTextState({ value: inserted.text, selectionStart: inserted.cursor, selectionEnd: inserted.cursor });
   };
 
+  // ↑/↓ sin modificadores: el mensaje anterior o siguiente de la conversación (`promptHistory.ts`). Al aplicarlo se cierra el
+  // popover «/», que un mensaje que empieza por «/» abriría.
+  const recallHistory = (e: KeyboardEvent): boolean => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return false;
+    if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return false;
+    const entries = sentPrompts(useWorkbenchStore.getState().blocksByChat[activeTabId] ?? []);
+    const current = currentTextState();
+    const move = e.key === 'ArrowUp' ? historyUp(entries, historyRef.current, current) : historyDown(entries, historyRef.current, current);
+    if (move === null) return false;
+    historyRef.current = move.state;
+    applyEdit(move.text);
+    setSlashDismissed(true);
+    return true;
+  };
+
   // Puente de teclado del editor (2.7). MISMO orden de precedencia que tenia el textarea, y devuelve
   // `true` SOLO cuando ha actuado: devolver `true` de mas dejaria a CodeMirror sordo a teclas que nadie
   // ha reclamado (moverse, seleccionar, deshacer...).
@@ -565,6 +586,8 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
     }
     // 1b. Popover `@` abierto: mismas teclas que el de `/` (Enter elige y no envia).
     if (mentions.onKeyDown(e)) return true;
+    // 1c. Historial de prompts: después de los dos popovers, que usan las mismas flechas.
+    if (recallHistory(e)) return true;
     // 2. Shift+Enter: continuar lista si aplica; si no, salto de linea del editor. NO es rebindable
     // (D5 §2.2): es la convencion universal de "salto de linea".
     if (e.key === 'Enter' && e.shiftKey) {
