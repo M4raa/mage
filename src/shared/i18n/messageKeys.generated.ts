@@ -123,6 +123,7 @@ export interface MessageValues {
   readonly "accounts.switcher.add": never;
   readonly "accounts.switcher.groupAria": never;
   readonly "accounts.vendor.local": never;
+  readonly "accountsUsage.accounts.title": never;
   readonly "accountsUsage.accountsAria": never;
   readonly "accountsUsage.addAccount": never;
   readonly "accountsUsage.admin.activityStats": { readonly "active": string | number; readonly "current": string | number; readonly "days": string | number; readonly "longest": string | number };
@@ -171,7 +172,6 @@ export interface MessageValues {
   readonly "accountsUsage.login": never;
   readonly "accountsUsage.menuAria": { readonly "alias": string | number };
   readonly "accountsUsage.models.noPrice": never;
-  readonly "accountsUsage.accounts.title": never;
   readonly "accountsUsage.models.title": never;
   readonly "accountsUsage.openAria": never;
   readonly "accountsUsage.period": { readonly "days": string | number };
