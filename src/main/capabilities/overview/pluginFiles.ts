@@ -55,6 +55,20 @@ export function parseInstalledPlugins(
   return { state: 'ok', plugins };
 }
 
+const INSTALL_PATHS = z
+  .object({ plugins: z.record(z.string(), z.array(z.object({ installPath: z.string().min(1).optional().catch(undefined) }).passthrough()).catch([])).catch({}) })
+  .passthrough();
+
+// installPath de cada instalación de un plugin (por nombre, sin marketplace), en el orden del fichero. Solo rutas absolutas.
+export function pluginInstallPaths(installedText: string | null, pluginName: string): readonly string[] {
+  const parsed = parseJsonObject(installedText);
+  if (parsed.state !== 'ok') return [];
+  return Object.entries(INSTALL_PATHS.parse(parsed.value).plugins)
+    .filter(([id]) => splitPluginId(id).name === pluginName)
+    .flatMap(([, installs]) => installs.map((install) => install.installPath))
+    .filter((path): path is string => path !== undefined && isAbsolute(path));
+}
+
 // known_marketplaces.json MEDIDO con Claude Code 2.1.319: { "<nombre>": { source: { source: 'github'|'git'|'directory', repo?|url?|path? }, installLocation: <ruta absoluta>, lastUpdated, autoUpdate? } }.
 const KNOWN = z
   .object({

@@ -1,10 +1,11 @@
 // Frontera IPC de Capacidades. Valida con Zod y delega. Solo se tocan cuentas de Claude que
 // Mage conoce: el renderer no puede pedir que se lea ni se ejecute nada en una ruta cualquiera.
 import { z } from 'zod';
-import type { CapabilitiesOverview, PluginActionParams, PluginCatalogView } from '@shared/capabilities';
+import { SKILL_ORIGINS, type CapabilitiesOverview, type PluginActionParams, type PluginCatalogView, type SkillFileParams, type SkillFileView } from '@shared/capabilities';
 import { IpcChannel } from '@shared/ipc';
 import { describeIssues, NATIVE_NAME, previewValue } from '../capabilityPackage';
 import { pluginActionCommand, type NativeCommand } from '../nativeCommands';
+import { SKILL_NAME_MAX_CHARS, splitSkillName } from './skillFiles';
 
 export interface CapabilitiesIpcDeps {
   readonly handle: (channel: string, listener: (event: unknown, arg: unknown) => unknown) => void;
@@ -12,6 +13,7 @@ export interface CapabilitiesIpcDeps {
   readonly claudeAccountDirs: () => readonly string[];
   readonly pluginCatalog: (accountDir: string) => PluginCatalogView;
   readonly runPluginCommand: (accountDir: string, command: NativeCommand) => Promise<void>;
+  readonly skillFile: (params: SkillFileParams) => SkillFileView;
 }
 
 // El config dir pedido, solo si es el de una cuenta de Claude conocida.
@@ -33,6 +35,17 @@ export function parsePluginActionParams(raw: unknown, known: readonly string[]):
   const result = PLUGIN_ACTION.safeParse(raw);
   if (!result.success) throw new Error(`Acción de plugin inválida (${describeIssues(result.error)}): ${previewValue(raw)}`);
   parseClaudeAccountDir(result.data.accountDir, known);
+  return result.data;
+}
+
+const SKILL_FILE_PARAMS = z.object({ accountDir: z.string().min(1), name: z.string().min(1).max(SKILL_NAME_MAX_CHARS), origin: z.enum(SKILL_ORIGINS) });
+
+// La skill pedida, solo de una cuenta de Claude conocida y con un nombre sin rutas.
+export function parseSkillFileParams(raw: unknown, known: readonly string[]): SkillFileParams {
+  const result = SKILL_FILE_PARAMS.safeParse(raw);
+  if (!result.success) throw new Error(`Skill invalida (${describeIssues(result.error)}): ${previewValue(raw)}`);
+  parseClaudeAccountDir(result.data.accountDir, known);
+  splitSkillName(result.data.name);
   return result.data;
 }
 
@@ -60,4 +73,5 @@ export function registerCapabilitiesIpc(deps: CapabilitiesIpcDeps): void {
   deps.handle(IpcChannel.CapabilitiesOverview, (_event, arg) => deps.overview(parseClaudeAccountDir(arg, deps.claudeAccountDirs())));
   deps.handle(IpcChannel.CapabilitiesPluginCatalog, (_event, arg) => deps.pluginCatalog(parseClaudeAccountDir(arg, deps.claudeAccountDirs())));
   deps.handle(IpcChannel.CapabilitiesPluginAction, (_event, arg) => runPluginAction(deps, parsePluginActionParams(arg, deps.claudeAccountDirs())));
+  deps.handle(IpcChannel.CapabilitiesSkillFile, (_event, arg) => deps.skillFile(parseSkillFileParams(arg, deps.claudeAccountDirs())));
 }

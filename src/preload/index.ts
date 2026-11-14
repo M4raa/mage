@@ -382,6 +382,7 @@ const api: MageApi = {
   capabilitiesOverview: (accountDir) => ipcRenderer.invoke(IpcChannel.CapabilitiesOverview, accountDir),
   capabilitiesPluginCatalog: (accountDir) => ipcRenderer.invoke(IpcChannel.CapabilitiesPluginCatalog, accountDir),
   capabilitiesPluginAction: (params) => ipcRenderer.invoke(IpcChannel.CapabilitiesPluginAction, params),
+  capabilitiesSkillFile: (params) => ipcRenderer.invoke(IpcChannel.CapabilitiesSkillFile, params),
   // Navegador de Mage (F11b.3).
   browserList: () => ipcRenderer.invoke(IpcChannel.BrowserList),
   browserOpen: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserOpen, sessionId),

@@ -44,3 +44,11 @@ export interface DiscoverPluginView {
 export interface PluginCatalogView { readonly marketplaces: readonly MarketplaceView[]; readonly plugins: readonly DiscoverPluginView[] }
 export type PluginAction = 'install' | 'uninstall' | 'enable' | 'disable';
 export interface PluginActionParams { readonly accountDir: string; readonly action: PluginAction; readonly plugin: string; readonly marketplace: string }
+// Detalle de una skill: su origen (el que da el catálogo) y su SKILL.md tal como lo lee main (solo bajo raíces conocidas).
+export const SKILL_ORIGINS = ['user', 'project', 'plugin', 'organization'] as const;
+export type SkillOrigin = (typeof SKILL_ORIGINS)[number];
+export interface SkillFileParams { readonly accountDir: string; readonly name: string; readonly origin: SkillOrigin }
+export type SkillFileView =
+  | { readonly state: 'ok'; readonly path: string; readonly content: string }
+  | { readonly state: 'too_large'; readonly path: string; readonly sizeBytes: number }
+  | { readonly state: 'missing' };

@@ -8,6 +8,7 @@ import {
   parseInstalledPlugins,
   parseKnownMarketplaces,
   parseMarketplaceManifest,
+  pluginInstallPaths,
   splitPluginId,
 } from './pluginFiles';
 
@@ -88,6 +89,20 @@ describe('parseInstalledPlugins', () => {
 describe('splitPluginId', () => {
   it('splitPluginId_sinArroba_marketplaceVacio', () => {
     expect(splitPluginId('solo')).toEqual({ name: 'solo', marketplace: '' });
+  });
+});
+
+describe('pluginInstallPaths', () => {
+  it('pluginInstallPaths_dosInstalacionesDelPlugin_lasDos', () => {
+    const one = resolve('p', '1');
+    const two = resolve('p', '2');
+    const text = JSON.stringify({ plugins: { 'a@m': [{ installPath: one }, { installPath: two }], 'b@m': [{ installPath: resolve('b') }] } });
+
+    expect(pluginInstallPaths(text, 'a')).toEqual([one, two]);
+  });
+
+  it('pluginInstallPaths_ficheroRoto_vacio', () => {
+    expect(pluginInstallPaths('{roto', 'a')).toEqual([]);
   });
 });
 

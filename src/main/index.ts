@@ -138,6 +138,7 @@ import { bundledContents, loadBundledCatalog } from './capabilities/catalog/libr
 import { registerLibraryIpc } from './capabilities/library/libraryIpc';
 import { registerCapabilitiesIpc } from './capabilities/overview/capabilitiesIpc';
 import { managedSettingsDir, readCapabilitiesOverview, readPluginCatalog } from './capabilities/overview/capabilitiesOverview';
+import { readSkillFile } from './capabilities/overview/skillFiles';
 import { runNativeCommand } from './capabilities/nativeRunner';
 import { BROWSER_STATE_CHANNEL } from '@shared/browser';
 import { registerBrowserIpc } from './browser/browserIpc';
@@ -2294,14 +2295,14 @@ function probeLoggedInAccounts(): void {
   probeModelsInBackground(dirs);
 }
 
-function cacheCommandCatalog(accountDir: string, commands: readonly SlashCommandInfo[]): void {
+function cacheCommandCatalog(accountDir: string, commands: readonly SlashCommandInfo[], cwd: string): void {
   // Si el catalogo es identico al ultimo escrito, no se toca el disco (P12). Solo cambia al instalar
   // o quitar un plugin; el resto de los turnos reescribia 74 kB para dejarlos igual.
-  const json = JSON.stringify(commands);
+  const json = JSON.stringify({ commands, cwd });
   if (lastCommandCatalogJson.get(accountDir) === json) return;
   lastCommandCatalogJson.set(accountDir, json);
   try {
-    getCommandCatalogStore().save(accountDir, commands, Date.now());
+    getCommandCatalogStore().save(accountDir, commands, Date.now(), cwd);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     mainLog('warn', `No se pudo cachear el catalogo de comandos de "${accountDir}": ${detail}`);
@@ -2883,13 +2884,13 @@ function stopSessionsWhenDestroyed(sender: Electron.WebContents): void {
 // Registro de handlers IPC: puentean el renderer con el SessionManager. Los eventos del motor se
 // empujan al webContents que creo la sesion (guardando contra un renderer ya destruido).
 function relaySessionEvent(payload: { readonly sessionId: string; readonly event: MageEvent },
-  { sender, configDir, accountDir }: { sender: Electron.WebContents | null; configDir: string; accountDir: string }): void {
+  { sender, configDir, accountDir, cwd }: { sender: Electron.WebContents | null; configDir: string; accountDir: string; cwd: string }): void {
   sessionSettings.observe(payload.sessionId, payload.event);
       // Cache del catalogo "/" (2.2): la sesion es la UNICA fuente del catalogo real, y una
       // conversacion recien abierta no tiene sesion. Se escribe con el config dir de la sesion: si no,
       // la cache de una cuenta acabaria con el catalogo de otra.
       if (payload.event.kind === 'commands_available') {
-        cacheCommandCatalog(configDir, payload.event.commands);
+        cacheCommandCatalog(configDir, payload.event.commands, cwd);
       }
       // Y el de modelos (P-026 2.4), del mismo `initialize` y con el mismo config dir.
       if (payload.event.kind === 'models_available') {
@@ -2945,7 +2946,7 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
     try {
       sessionId = sessionCoordinator.create(effectiveParams, (payload) => {
         markTaskRun(payload.conversationId);
-        relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir });
+        relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir, cwd: params.cwd });
       }, sender?.id);
     } finally {
       launchingTaskExtras = [];
@@ -4228,6 +4229,7 @@ function registerCapabilitiesIpcFromMain(): void {
     runPluginCommand: async (accountDir, command) => {
       await runNativeCommand({ engine: 'claude', binary: resolveClaudeBinary(), configDir: accountDir, runner: execFileRunner, baseEnv: process.env }, command);
     },
+    skillFile: (params) => readSkillFile({ fs: nodeCapabilityFs(), projectDir: getCommandCatalogStore().loadCwd(params.accountDir) }, params),
   });
 }
 

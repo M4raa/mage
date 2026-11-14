@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
-import type { CapabilitiesOverview, InstalledPluginView, PluginCatalogView } from '@shared/capabilities';
+import type { CapabilitiesOverview, InstalledPluginView, PluginCatalogView, SkillFileView } from '@shared/capabilities';
 import { registerCapabilitiesIpc } from './capabilitiesIpc';
 
 type Listener = (event: unknown, arg: unknown) => unknown;
@@ -19,30 +19,65 @@ function setup(plugins: readonly InstalledPluginView[] = []) {
     (): PluginCatalogView => ({ marketplaces: [{ name: 'm', sourceKind: 'git', state: 'ok', count: 1 }], plugins: [] }),
   );
   const runPluginCommand = vi.fn(async () => undefined);
+  const skillFile = vi.fn((): SkillFileView => ({ state: 'missing' }));
   registerCapabilitiesIpc({
     handle: (channel, listener) => void handlers.set(channel, listener),
     overview,
     claudeAccountDirs: () => [KNOWN],
     pluginCatalog,
     runPluginCommand,
+    skillFile,
   });
   const call = (arg?: unknown): unknown => (handlers.get(IpcChannel.CapabilitiesOverview) as Listener)(null, arg);
   const catalog = (arg?: unknown): unknown => (handlers.get(IpcChannel.CapabilitiesPluginCatalog) as Listener)(null, arg);
   const action = async (arg?: unknown): Promise<unknown> => (handlers.get(IpcChannel.CapabilitiesPluginAction) as Listener)(null, arg);
-  return { handlers, overview, runPluginCommand, call, catalog, action };
+  const skill = (arg?: unknown): unknown => (handlers.get(IpcChannel.CapabilitiesSkillFile) as Listener)(null, arg);
+  return { handlers, overview, runPluginCommand, skillFile, call, catalog, action, skill };
 }
 
 const params = (over: Record<string, unknown> = {}) => ({ accountDir: KNOWN, action: 'install', plugin: 'p', marketplace: 'm', ...over });
 
 describe('registerCapabilitiesIpc', () => {
-  it('registerCapabilitiesIpc_registraTresCanales', () => {
+  it('registerCapabilitiesIpc_registraCuatroCanales', () => {
     const { handlers } = setup();
 
     expect([...handlers.keys()]).toEqual([
       IpcChannel.CapabilitiesOverview,
       IpcChannel.CapabilitiesPluginCatalog,
       IpcChannel.CapabilitiesPluginAction,
+      IpcChannel.CapabilitiesSkillFile,
     ]);
+  });
+
+  it('capabilitiesSkillFile_valido_llamaAlLector', () => {
+    const { skill, skillFile } = setup();
+    const arg = { accountDir: KNOWN, name: 'p:s', origin: 'plugin' };
+
+    const result = skill(arg);
+
+    expect(skillFile).toHaveBeenCalledWith(arg);
+    expect(result).toEqual({ state: 'missing' });
+  });
+
+  it('capabilitiesSkillFile_cuentaDesconocida_lanza', () => {
+    const { skill, skillFile } = setup();
+
+    expect(() => skill({ accountDir: '/otra/ruta', name: 's', origin: 'user' })).toThrow('/otra/ruta');
+    expect(skillFile).not.toHaveBeenCalled();
+  });
+
+  it('capabilitiesSkillFile_nombreConBarra_lanza', () => {
+    const { skill, skillFile } = setup();
+
+    expect(() => skill({ accountDir: KNOWN, name: '../x', origin: 'user' })).toThrow('../x');
+    expect(skillFile).not.toHaveBeenCalled();
+  });
+
+  it('capabilitiesSkillFile_origenRaro_lanza', () => {
+    const { skill, skillFile } = setup();
+
+    expect(() => skill({ accountDir: KNOWN, name: 's', origin: 'otro' })).toThrow('otro');
+    expect(skillFile).not.toHaveBeenCalled();
   });
 
   it('capabilitiesOverview_cuentaConocida_llamaAlLector', () => {

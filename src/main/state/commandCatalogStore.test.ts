@@ -132,6 +132,29 @@ describe('CommandCatalogStore.save', () => {
 
 // P-026 2.4: el catalogo de modelos va en la MISMA entrada por cuenta, y cada mitad se escribe sin pisar
 // la otra (los comandos llegan en cada turno; los modelos, tambien del sondeo de arranque).
+describe('CommandCatalogStore — carpeta', () => {
+  it('save_conCarpeta_loadCwdLaDevuelve', () => {
+    const { store } = memoryStore();
+
+    store.save(ACCOUNT, COMMANDS, 1, 'C:\\work\\repo');
+
+    expect(store.loadCwd(ACCOUNT)).toBe('C:\\work\\repo');
+  });
+
+  it('save_sinCarpeta_borraLaAnterior', () => {
+    const { store } = memoryStore();
+    store.save(ACCOUNT, COMMANDS, 1, 'C:\\work\\repo');
+
+    store.save(ACCOUNT, COMMANDS, 2);
+
+    expect(store.loadCwd(ACCOUNT)).toBeNull();
+  });
+
+  it('loadCwd_cuentaSinEntrada_null', () => {
+    expect(memoryStore().store.loadCwd(ACCOUNT)).toBeNull();
+  });
+});
+
 describe('CommandCatalogStore — modelos', () => {
   const MODELS = [
     { id: 'opus', label: 'Opus 5.5' },

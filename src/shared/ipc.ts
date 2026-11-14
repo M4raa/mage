@@ -23,7 +23,7 @@ import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
 import type { TranscriptBatch, TranscriptTailPosition } from './transcripts';
 import type { MemoryFile } from './memory';
-import type { CapabilitiesOverview, PluginActionParams, PluginCatalogView } from './capabilities';
+import type { CapabilitiesOverview, PluginActionParams, PluginCatalogView, SkillFileParams, SkillFileView } from './capabilities';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from './conversations';
 import type { PersistedWorkspace } from './state';
 import type { AppSettings } from './settings';
@@ -353,6 +353,7 @@ export const IpcChannel = {
   CapabilitiesOverview: 'capabilities:overview',
   CapabilitiesPluginCatalog: 'capabilities:pluginCatalog',
   CapabilitiesPluginAction: 'capabilities:pluginAction',
+  CapabilitiesSkillFile: 'capabilities:skillFile',
   // Modo de tareas (F8).
   TasksList: 'tasks:list',
   TasksCreate: 'tasks:create',
@@ -1402,6 +1403,7 @@ export interface MageApi {
   capabilitiesOverview(accountDir: string): Promise<CapabilitiesOverview>;
   capabilitiesPluginCatalog(accountDir: string): Promise<PluginCatalogView>;
   capabilitiesPluginAction(params: PluginActionParams): Promise<void>;
+  capabilitiesSkillFile(params: SkillFileParams): Promise<SkillFileView>;
   // --- Navegador de Mage (F11b.3) ---
   browserList(): Promise<readonly BrowserEntryState[]>;
   browserOpen(sessionId: string): Promise<readonly BrowserEntryState[]>;

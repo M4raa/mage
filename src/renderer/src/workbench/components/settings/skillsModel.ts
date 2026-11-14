@@ -8,9 +8,9 @@
 // Límite conocido: «(user)» también lo llevan los comandos personales de `<config>/commands/*.md`, y «(project)» es del
 // proyecto de la última sesión de la cuenta.
 import type { SlashCommandInfo } from '@shared/events';
-import type { InstalledPluginView } from '@shared/capabilities';
+import type { InstalledPluginView, SkillOrigin } from '@shared/capabilities';
 
-export type SkillOriginKind = 'user' | 'project' | 'plugin' | 'organization';
+export type SkillOriginKind = SkillOrigin;
 export interface SkillEntry {
   readonly name: string;
   readonly description: string;
