@@ -36,8 +36,8 @@ export interface CapabilityHeaderProps {
 const TAB_ORDER = ['mine', 'discover'] as const satisfies readonly CapabilityTab[];
 const TAB_LABELS = { mine: 'capabilities.tabs.mine', discover: 'capabilities.tabs.discover' } as const;
 const TAB_BASE = 'rounded-[7px] px-[10px] py-[4px] text-[11.5px]';
-const TAB_ACTIVE = `${TAB_BASE} bg-mg-sel font-semibold text-mg-sel-ink`;
-const TAB_IDLE = `${TAB_BASE} text-mg-sec hover:bg-mg-hover`;
+export const TAB_ACTIVE = `${TAB_BASE} bg-mg-sel font-semibold text-mg-sel-ink`;
+export const TAB_IDLE =`${TAB_BASE} text-mg-sec hover:bg-mg-hover`;
 
 function CapabilityTabs({ tab, onTab }: { readonly tab: CapabilityTab; readonly onTab: (tab: CapabilityTab) => void }): React.JSX.Element {
   const t = useT();
@@ -155,9 +155,11 @@ export interface CapabilityRowProps {
   readonly aside?: React.ReactNode;
   readonly menu: readonly RowMenuItem[];
   readonly dataAttrs: Readonly<Record<string, string>>;
+  // Con él, el nombre es un botón que abre el detalle.
+  readonly onOpen?: () => void;
 }
 
-export function CapabilityRow({ icon, name, chips, origin, description, aside, menu, dataAttrs }: CapabilityRowProps): React.JSX.Element {
+export function CapabilityRow({ icon, name, chips, origin, description, aside, menu, dataAttrs, onOpen }: CapabilityRowProps): React.JSX.Element {
   const t = useT();
   return (
     <div role="listitem" {...dataAttrs} className="grid grid-cols-[20px_minmax(0,1fr)_auto_auto] items-start gap-x-[10px] border-b border-mg-border-subtle py-[8px] text-[11px]">
@@ -166,7 +168,11 @@ export function CapabilityRow({ icon, name, chips, origin, description, aside, m
       </span>
       <div className="flex min-w-0 flex-col gap-[2px]">
         <div className="flex min-w-0 flex-wrap items-center gap-[4px]">
-          <span className="truncate text-[11.5px] font-semibold text-mg-body">{name}</span>
+          {onOpen === undefined ? (
+            <span className="truncate text-[11.5px] font-semibold text-mg-body">{name}</span>
+          ) : (
+            <button type="button" onClick={onOpen} data-capability-open="true" className="truncate text-left text-[11.5px] font-semibold text-mg-body hover:underline">{name}</button>
+          )}
           {chips.map((chip) => (
             <MetaChip key={chip}>{chip}</MetaChip>
           ))}

@@ -16,6 +16,7 @@ import {
   type CapabilityTab,
 } from './CapabilityPage';
 import { LibrarySection } from './LibrarySection';
+import { SkillDetail } from './SkillDetail';
 import {
   classifySkills,
   filterSkills,
@@ -76,7 +77,7 @@ function skillOriginText(t: Translate, entry: SkillEntry): string {
   return t('capabilities.skills.origin.pluginMarketplace', { plugin, marketplace: entry.marketplace });
 }
 
-function SkillRow({ entry }: { readonly entry: SkillEntry }): React.JSX.Element {
+function SkillRow({ entry, onOpen }: { readonly entry: SkillEntry; readonly onOpen: (name: string) => void }): React.JSX.Element {
   const t = useT();
   const copy = (): void =>
     void navigator.clipboard.writeText(`/${entry.name}`).catch((err: unknown) => console.warn('No se pudo copiar la skill:', describeError(err)));
@@ -89,11 +90,12 @@ function SkillRow({ entry }: { readonly entry: SkillEntry }): React.JSX.Element 
       description={entry.description}
       menu={[{ label: t('capabilities.skills.copy', { name: entry.name }), onSelect: copy }]}
       dataAttrs={{ 'data-capability-row': entry.name, 'data-skill-origin': entry.origin }}
+      onOpen={() => onOpen(entry.name)}
     />
   );
 }
 
-function SkillList({ state, visible }: { readonly state: SkillsState; readonly visible: readonly SkillEntry[] }): React.JSX.Element {
+function SkillList({ state, visible, onOpen }: { readonly state: SkillsState; readonly visible: readonly SkillEntry[]; readonly onOpen: (name: string) => void }): React.JSX.Element {
   const t = useT();
   const message = 'text-[11px] text-mg-muted';
   if (state.error !== null) return <div role="alert" className="text-[11px] text-mg-danger">{t('capabilities.loadError', { error: state.error })}</div>;
@@ -103,7 +105,7 @@ function SkillList({ state, visible }: { readonly state: SkillsState; readonly v
   return (
     <CapabilityList label={t('capabilities.skills.listAria')}>
       {visible.map((entry) => (
-        <SkillRow key={entry.name} entry={entry} />
+        <SkillRow key={entry.name} entry={entry} onOpen={onOpen} />
       ))}
     </CapabilityList>
   );
@@ -150,6 +152,12 @@ function skillChoices(t: Translate, ctx: ChoiceContext): readonly CapabilityChoi
   return [account, filter, sort];
 }
 
+// La skill abierta en detalle: solo en «Tus skills» y si sigue en el catálogo.
+function openedSkill(entries: readonly SkillEntry[] | null, tab: CapabilityTab, opened: string | null): SkillEntry | null {
+  if (tab !== 'mine' || opened === null) return null;
+  return entries?.find((entry) => entry.name === opened) ?? null;
+}
+
 export function SkillsPage(): React.JSX.Element {
   const t = useT();
   const { accounts, accountDir, setAccountDir } = useClaudeAccountChoice();
@@ -158,11 +166,21 @@ export function SkillsPage(): React.JSX.Element {
   const [filter, setFilter] = useState<SkillFilter>('all');
   const [sort, setSort] = useState<SkillSort>('name');
   const state = useSkillEntries(accountDir);
+  const [opened, setOpened] = useState<string | null>(null);
+  useEffect(() => setOpened(null), [accountDir]);
   const visible = useMemo(
     () => (state.entries === null ? [] : sortSkills(filterSkills(state.entries, query, filter), sort)),
     [state.entries, query, filter, sort],
   );
   if (accountDir === null) return <div className={CAPABILITY_PAGE_CLASS}>{t('capabilities.noClaudeAccounts')}</div>;
+  const openedEntry = openedSkill(state.entries, tab, opened);
+  if (openedEntry !== null) {
+    return (
+      <div data-capabilities-page="skills" className={CAPABILITY_PAGE_CLASS}>
+        <SkillDetail entry={openedEntry} accountDir={accountDir} originText={skillOriginText(t, openedEntry)} onBack={() => setOpened(null)} />
+      </div>
+    );
+  }
   const choices = skillChoices(t, { accounts, accountDir, setAccountDir, tab, filter, setFilter, sort, setSort });
   const add = [{ label: t('capabilities.skills.addFromLibrary'), onSelect: () => setTab('discover') }];
   return (
@@ -176,7 +194,7 @@ export function SkillsPage(): React.JSX.Element {
         choices={choices}
         add={add}
       />
-      {tab === 'mine' ? <SkillList state={state} visible={visible} /> : <DiscoverSkills accountDir={accountDir} />}
+      {tab === 'mine' ? <SkillList state={state} visible={visible} onOpen={setOpened} /> : <DiscoverSkills accountDir={accountDir} />}
     </div>
   );
 }

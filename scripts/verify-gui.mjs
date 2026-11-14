@@ -12306,6 +12306,64 @@ const CHECKS = [
     },
   },
   {
+    // Detalle de una skill: sin fichero, «Contenido» lo dice; con fichero, «Resumen» trae su ruta y «Contenido» su cabecera en
+    // tabla y su cuerpo. «Probar en chat» cierra Configuración y deja «/vg-mia » en el prompt de una pestaña nueva de esa cuenta,
+    // sin enviar ni arrancar el CLI. Siembra y deshace lo suyo; cierra la pestaña y repone la cuenta activa.
+    name: 'Capacidades: el detalle de una skill enseña su SKILL.md y «Probar en chat» deja /nombre sin enviar',
+    async run(page, { userDataDir, runDir }) {
+      if (HARNESS_HOME === os.homedir()) return { ok: false, notRunnable: true, detail: 'HOME real: no se escribe en él' };
+      const cuenta = path.join(HARNESS_HOME, '.claude');
+      const cuentaPrevia = await page.evaluate(() => window.__mageDev.store.getState().activeAccountId);
+      const sembrados = seedCapabilitiesFixture(cuenta, userDataDir);
+      let pestanaNueva = null;
+      await openSettingsDialog(page);
+      try {
+        await page.locator(MODAL).first().getByRole('tab', { name: uiRegExp('settings.sections.skills.nav') }).click();
+        if (!(await selectCapabilityAccount(page, cuenta))) return { ok: false, detail: 'sin la cuenta de prueba en el selector' };
+        const medido = {};
+        await page.locator('[data-capability-row="vg-proyecto"] [data-capability-open]').click();
+        await page.locator('[data-skill-detail="vg-proyecto"] [data-skill-detail-tab="content"]').click();
+        medido.sinFichero = await page.locator('[data-skill-content="missing"]').count();
+        await page.locator('[data-skill-detail-back]').click();
+        await page.locator('[data-capability-row="vg-mia"] [data-capability-open]').click();
+        const detalle = page.locator('[data-skill-detail="vg-mia"]');
+        await detalle.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.linea = await detalle.locator('[data-skill-byline]').textContent();
+        await detalle.locator('[data-skill-field="location"] dd').filter({ hasText: 'vg-mia' }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.ruta = await detalle.locator('[data-skill-field="location"] dd').textContent();
+        await detalle.locator('[data-skill-detail-tab="content"]').click();
+        const contenido = detalle.locator('[data-skill-content="ok"]');
+        await contenido.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.cabecera = await detalle.locator('[data-frontmatter-key]').evaluateAll((n) => n.map((x) => x.getAttribute('data-frontmatter-key')));
+        medido.cuerpo = (await contenido.textContent()) ?? '';
+        await page.screenshot({ path: path.join(runDir, 'capacidades-skill-detalle.png') });
+        await detalle.locator('[data-skill-try]').click();
+        await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await page.waitForFunction(() => { const s = window.__mageDev.store.getState(); return s.draftByChat[s.activeTabId]?.text === '/vg-mia '; }, null, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+        const tras = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          const tab = s.tabs.find((t) => t.id === s.activeTabId);
+          return { tabId: s.activeTabId, cuenta: tab?.accountId ?? null, borrador: s.draftByChat[s.activeTabId]?.text ?? null, sesion: s.sessionIdByChat[s.activeTabId] ?? null };
+        });
+        pestanaNueva = tras.tabId;
+        const ok = medido.sinFichero === 1 && (medido.linea ?? '').includes('/vg-mia') && (medido.ruta ?? '').includes('vg-mia')
+          && JSON.stringify(medido.cabecera) === JSON.stringify(['name', 'description']) && medido.cuerpo.includes('Cuerpo de prueba.')
+          && tras.borrador === '/vg-mia ' && (tras.cuenta ?? '').toLowerCase() === cuenta.toLowerCase() && tras.sesion === null;
+        return { ok, detail: JSON.stringify({ medido, tras }) };
+      } finally {
+        if (pestanaNueva !== null) {
+          await page.evaluate((id) => { const st = window.__mageDev.store.getState(); st.setDraft(id, null); return st.closeTab(id); }, pestanaNueva);
+        }
+        if ((await page.locator(MODAL).count()) > 0) {
+          await page.keyboard.press('Escape');
+          await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        }
+        await page.evaluate((id) => window.__mageDev.store.getState().setActiveAccount(id), cuentaPrevia);
+        restoreCapabilitiesFixture(sembrados);
+      }
+    },
+  },
+  {
     // Plugins (los instalados y Descubrir de un marketplace FALSO del HOME de prueba, ordenado por instalaciones)
     // y «MCP y conectores» con la tabla de Conectores y su Descubrir. NO pulsa Instalar: lanzaría el CLI. Sin Enter. Abre
     // Configuración y la cierra (error 5); autosuficiente con --only=Capacidades: Plugins (error 8). Siembra y deshace lo suyo.
@@ -14341,10 +14399,20 @@ function seedCapabilitiesFixture(cuenta, userDataDir) {
     [path.join(managed, 'managed-settings.json')]: { permissions: { deny: ['Bash(rm:*)'] }, env: { VG_SECRET: CAPABILITY_SECRETS[1] } },
     [path.join(managed, 'managed-settings.d', '10-vg.json')]: { vgDropIn: true },
   };
-  const dirs = [path.join(cuenta, 'plugins'), managed].filter((dir) => !fs.existsSync(dir));
+  const dirs = [path.join(cuenta, 'plugins'), path.join(cuenta, 'skills'), managed].filter((dir) => !fs.existsSync(dir));
   for (const [file, json] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify(json), 'utf-8');
+  }
+  // SKILL.md de la skill del usuario y de la del plugin (los lee el detalle de Skills). Sus carpetas son solo nuestras.
+  const skillDirs = [path.join(cuenta, 'skills', 'vg-mia'), path.join(cuenta, 'plugins', 'cache', 'vgplug')];
+  const skillTexts = {
+    [path.join(skillDirs[0], 'SKILL.md')]: '---\nname: vg-mia\ndescription: Skill mía de prueba\n---\n# Skill mía\n\nCuerpo de prueba.\n',
+    [path.join(skillDirs[1], 'skills', 'vg-de-plugin', 'SKILL.md')]: '---\nname: vg-de-plugin\ndescription: Skill de un plugin de prueba\n---\nCuerpo del plugin.\n',
+  };
+  for (const [file, text] of Object.entries(skillTexts)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text, 'utf-8');
   }
   const catalogPath = path.join(userDataDir, 'command-catalog.json');
   const catalogBefore = readIfExists(catalogPath);
@@ -14352,7 +14420,7 @@ function seedCapabilitiesFixture(cuenta, userDataDir) {
   const previo = catalog.byAccount[cuenta] ?? { measuredAtMs: 1, commands: [] };
   catalog.byAccount[cuenta] = { ...previo, commands: [...previo.commands, ...CAPABILITY_SKILLS] };
   fs.writeFileSync(catalogPath, JSON.stringify(catalog, null, 2), 'utf-8');
-  return { files: Object.keys(files), dirs, catalogPath, catalogBefore };
+  return { files: Object.keys(files), dirs: [...dirs, ...skillDirs], catalogPath, catalogBefore };
 }
 
 function restoreCapabilitiesFixture({ files, dirs, catalogPath, catalogBefore }) {
