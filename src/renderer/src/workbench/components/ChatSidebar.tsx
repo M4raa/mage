@@ -42,8 +42,8 @@ function rowKey(row: SidebarRow): string {
   return row.kind === 'tab' ? `t:${row.tab.id}` : `h:${row.item.providerId ?? 'claude'}:${row.item.sessionId}`;
 }
 
-// Lateral de conversaciones de TODAS las cuentas con historial (D6): Fijadas → Proyectos (por carpeta y los
-// del usuario) → Sin proyecto; la cuenta y el proveedor son filtros. Una pestaña = una conversación
+// Lateral de conversaciones de TODAS las cuentas con historial (D6): Fijadas → Sin proyecto → Proyectos (por carpeta y los
+// del usuario); la cuenta y el proveedor son filtros. Una pestaña = una conversación
 // real. El modelo (fusión, grupos, filtros) vive en `sidebarModel.ts` y `useSidebarModel`; esto solo pinta.
 export function ChatSidebar(): React.JSX.Element {
   const t = useT();
@@ -149,6 +149,7 @@ export function ChatSidebar(): React.JSX.Element {
           <div data-volatile-text="true" className="p-[8px_9px] text-[11px] text-mg-muted">{view.filterActive ? t('sidebar.search.noMatches') : t('sidebar.shared.empty')}</div>
         )}
         {groups.pinned.length > 0 && <FlatGroup kind="pinned" title={t('sidebar.pinned.title')} rows={groups.pinned} renderRow={renderRow} unlimited />}
+        {groups.unassigned.length > 0 && <FlatGroup kind="unassigned" title={t('sidebar.unassigned.title')} rows={groups.unassigned} renderRow={renderRow} unlimited={view.filterActive} />}
         {(groups.projects.length > 0 || !filter.archived) && (
           <div className="flex flex-col gap-px">
             {groups.projects.length > 0 && <SectionLabel text={t('sidebar.projects.title')} hint={`${groups.projects.length}`} />}
@@ -185,7 +186,6 @@ export function ChatSidebar(): React.JSX.Element {
             )}
           </div>
         )}
-        {groups.unassigned.length > 0 && <FlatGroup kind="unassigned" title={t('sidebar.unassigned.title')} rows={groups.unassigned} renderRow={renderRow} unlimited={view.filterActive} />}
       </div>
 
       <AnimatePresence>

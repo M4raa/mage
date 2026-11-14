@@ -1,5 +1,5 @@
 // Modelo PURO del lateral de conversaciones de TODAS las cuentas (D6): fusión de los historiales,
-// agrupación (Fijadas → Proyectos → Sin proyecto), filtros e indicadores de fila. Sin store
+// agrupación (Fijadas → Sin proyecto → Proyectos), filtros e indicadores de fila. Sin store
 // ni IPC: el componente solo pinta lo que sale de aquí.
 import type { ConversationSummary } from '@shared/conversations';
 import type { ChatProject } from '@shared/settings';

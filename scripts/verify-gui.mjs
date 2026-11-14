@@ -10739,7 +10739,7 @@ const CHECKS = [
   // cuentas, una real y una ficticia) y el estado previo se restaura. Mientras se mide, la recarga del
   // historial por IPC se apaga (pisaría las filas sintéticas); el restaurado la repone.
   {
-    name: 'Q02: el lateral va Fijadas → Proyectos → Sin proyecto',
+    name: 'Q02: el lateral va Fijadas → Sin proyecto → Proyectos',
     async run(page) {
       const previo = await seedSidebar(page);
       try {
@@ -10761,7 +10761,7 @@ const CHECKS = [
           };
         });
         const ok =
-          medido.orden.join(',') === 'pinned,project,unassigned' &&
+          medido.orden.join(',') === 'pinned,unassigned,project' &&
           !medido.archivadaPresente &&
           /^proyecto-a\s*2$/.test(medido.proyecto) &&
           medido.filasConPeso === 0 &&
