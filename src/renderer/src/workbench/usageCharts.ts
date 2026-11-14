@@ -151,10 +151,10 @@ export interface RankedRow {
 }
 
 // Barras horizontales ordenadas: hasta TOP_RANKED filas con valor; la cuota es sobre el total del periodo.
-export function rankedRows(entries: readonly (readonly [string, number])[], total: number): readonly RankedRow[] {
+export function rankedRows(entries: readonly (readonly [string, number])[], total: number, limit: number = TOP_RANKED): readonly RankedRow[] {
   const sorted = entries.filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   const top = sorted[0]?.[1] ?? 0;
-  return sorted.slice(0, TOP_RANKED).map(([id, value]) => ({
+  return sorted.slice(0, limit).map(([id, value]) => ({
     id,
     value,
     sharePct: total <= 0 ? 0 : Math.round((value * PERCENT) / total),

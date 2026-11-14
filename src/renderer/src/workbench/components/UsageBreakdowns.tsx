@@ -146,7 +146,8 @@ export function TopSection({ metrics, accounts }: { readonly metrics: AccountMet
 function AccountsBars({ accounts, total }: { readonly accounts: AccountsBreakdown; readonly total: number }): React.JSX.Element {
   const t = useT();
   const cost = new Map(accounts.shares.map((share) => [share.accountId, share.costMicroUsd]));
-  const rows = rankedRows(accounts.shares.map((share) => [share.accountId, share.tokens] as const), total);
+  // Todas las cuentas con consumo, sin tope: son pocas y el usuario las quiere ver todas.
+  const rows = rankedRows(accounts.shares.map((share) => [share.accountId, share.tokens] as const), total, Number.POSITIVE_INFINITY);
   return <RankedBars title={t('accountsUsage.accounts.title')} data="accounts" rows={rows} labelOf={accounts.labelOf} extraOf={(id) => priceText(t, cost.get(id))} />;
 }
 

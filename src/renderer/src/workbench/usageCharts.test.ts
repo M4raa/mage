@@ -258,6 +258,15 @@ describe('rankedRows', () => {
     expect(rows[0]?.id).toBe('k11');
   });
 
+  it('rankedRows_limiteInfinito_todasLasFilas', () => {
+    // Arrange
+    const entries = Array.from({ length: 10 }, (_, i): readonly [string, number] => [`k${i}`, i + 1]);
+    // Act
+    const rows = rankedRows(entries, 55, Number.POSITIVE_INFINITY);
+    // Assert
+    expect(rows).toHaveLength(10);
+  });
+
   it('rankedRows_totalCero_cuotaCero', () => {
     // Arrange / Act
     const rows = rankedRows([['a', 5]], 0);
