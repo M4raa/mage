@@ -9572,6 +9572,55 @@ const CHECKS = [
     },
   },
   {
+    // «Todas las cuentas» enseña todas las cuentas con consumo, de cualquier proveedor: una de Claude, una de Codex y una de agy
+    // sembradas en el historial por el puente (sin transcripciones ni CLI). Sin Enter.
+    name: 'Métricas: «Todas las cuentas» lista Claude, Codex y agy en «Por cuenta»',
+    async run(page) {
+      const siembra = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        const claude = s.accounts.find((a) => a.providerId === 'claude')?.id ?? null;
+        if (claude === null) return { claude };
+        window.__vgCuentasPrevio = { refreshUsage: s.refreshUsage, load: window.__mageDev.usageHistorySource.load };
+        const ahora = new Date();
+        const hoy = new Date(ahora.getTime() - ahora.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+        const uso = (input, output, cacheRead, turns) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, turns });
+        const dia = (byModel, sesion) => ({ day: hoy, byModel, limits: { fiveHour: 0, weekly: 0, other: 0 }, hours: new Array(24).fill(0), tools: {}, sessions: [sesion], projects: {} });
+        const cuenta = (accountId, detail) => ({ accountId, days: [], detail, windows: [] });
+        const historia = { generatedAt: Date.now(), fromDay: hoy, unattributed: [], accounts: [
+          cuenta(claude, [dia({ 'claude-opus-5-5': uso(1000, 2000, 7000, 4) }, 'vg-cuentas-c')]),
+          cuenta('vg-cuentas-codex', [dia({ 'gpt-6.1-sol': uso(3000, 1000, 0, 1) }, 'vg-cuentas-x')]),
+          cuenta('vg-cuentas-agy', [dia({ 'agy:1318': uso(1500, 500, 0, 1) }, 'vg-cuentas-a')]),
+        ] };
+        window.__mageDev.usageHistorySource.load = async () => historia;
+        window.__mageDev.store.setState({ refreshUsage: async () => undefined });
+        return { claude };
+      });
+      if (siembra.claude === null) return { ok: false, detail: 'Hace falta una cuenta de Claude de prueba' };
+      try {
+        await page.locator('[data-usage-summary]').first().click();
+        const dialogo = page.locator('[data-accounts-usage]');
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialogo.locator('[data-account-row="all"]').click();
+        const filas = dialogo.locator('[data-usage-ranked="accounts"] [data-ranked-row]');
+        await filas.first().waitFor({ state: 'visible', timeout: 60_000 });
+        const medido = await filas.evaluateAll((n) => n.map((x) => [x.getAttribute('data-ranked-row'), x.getAttribute('data-value')]));
+        const ok = JSON.stringify(medido) === JSON.stringify([[siembra.claude, '10000'], ['vg-cuentas-codex', '4000'], ['vg-cuentas-agy', '2000']]);
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          store.getState().closeAccountsUsage();
+          const p = window.__vgCuentasPrevio;
+          if (p === undefined) return;
+          window.__mageDev.usageHistorySource.load = p.load;
+          store.setState({ refreshUsage: p.refreshUsage });
+          delete window.__vgCuentasPrevio;
+        });
+        await page.locator('[data-accounts-usage]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      }
+    },
+  },
+  {
     name: 'P-038 V6: el lateral enseña 10 proyectos y «Mostrar más»; el scratch de otro perfil no es proyecto',
     async run(page) {
       const previo = await page.evaluate(() => {

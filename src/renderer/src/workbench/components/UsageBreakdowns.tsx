@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { formatMicroUsd } from '@shared/usage';
 import type { DayKey, UsageHistory } from '@shared/usageHistory';
 import { useWorkbenchStore } from '../workbenchStore';
-import { computeAccountMetrics, type AccountMetrics } from '../accountMetrics';
+import { computeAccountMetrics, type AccountMetrics, type AccountShare } from '../accountMetrics';
+import type { Translate } from '@shared/i18n/translator';
 import { formatTokensShort } from '../contextView';
 import type { Account } from '../types';
 import { formatResetAbsolute, type UsageSeverity } from '../usageView';
@@ -15,6 +16,15 @@ import { activeFormatLocale } from '../../i18n/format';
 // van los tokens. Solo pintan: los números salen de usageCharts.ts y accountMetrics.ts.
 
 const money = (microUsd: number): string => formatMicroUsd(microUsd, activeFormatLocale());
+
+const priceText = (t: Translate, value: number | null | undefined): string =>
+  value === null || value === undefined ? t('accountsUsage.models.noPrice') : money(value);
+
+// «Todas»: las cuentas con consumo del periodo y cómo se llaman en pantalla.
+export interface AccountsBreakdown {
+  readonly shares: readonly AccountShare[];
+  readonly labelOf: (accountId: string) => string;
+}
 
 const FULL_PCT = 100;
 const SEVERITY_COLOR: Readonly<Record<UsageSeverity, string>> = { ok: 'var(--mg-series-1)', warn: 'var(--mg-warn)', critical: 'var(--mg-crit)' };
@@ -120,19 +130,24 @@ function BudgetRow({ account, history, period }: { readonly account: Account; re
   );
 }
 
-export function TopSection({ metrics }: { readonly metrics: AccountMetrics }): React.JSX.Element {
+export function TopSection({ metrics, accounts }: { readonly metrics: AccountMetrics; readonly accounts: AccountsBreakdown | null }): React.JSX.Element {
   const t = useT();
   const cost = new Map(metrics.models.map((row) => [row.model, row.costMicroUsd]));
-  const costText = (id: string): string => {
-    const value = cost.get(id);
-    return value === null || value === undefined ? t('accountsUsage.models.noPrice') : money(value);
-  };
+  const costText = (id: string): string => priceText(t, cost.get(id));
   return (
     <div className="grid grid-cols-2 gap-[18px]">
       <RankedBars title={t('accountsUsage.models.title')} data="models" rows={rankedRows(metrics.models.map((row) => [row.model, row.tokens]), metrics.tokens)} labelOf={(id) => id} extraOf={costText} />
       <RankedBars title={t('accountsUsage.admin.projects')} data="projects" rows={rankedRows(metrics.projects, metrics.tokens)} labelOf={projectLabel} />
+      {accounts !== null && <AccountsBars accounts={accounts} total={metrics.tokens} />}
     </div>
   );
+}
+
+function AccountsBars({ accounts, total }: { readonly accounts: AccountsBreakdown; readonly total: number }): React.JSX.Element {
+  const t = useT();
+  const cost = new Map(accounts.shares.map((share) => [share.accountId, share.costMicroUsd]));
+  const rows = rankedRows(accounts.shares.map((share) => [share.accountId, share.tokens] as const), total);
+  return <RankedBars title={t('accountsUsage.accounts.title')} data="accounts" rows={rows} labelOf={accounts.labelOf} extraOf={(id) => priceText(t, cost.get(id))} />;
 }
 
 function RankedBars({ title, data, rows, labelOf, extraOf }: { readonly title: string; readonly data: string; readonly rows: readonly RankedRow[]; readonly labelOf: (id: string) => string; readonly extraOf?: (id: string) => string }): React.JSX.Element {

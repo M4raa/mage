@@ -169,6 +169,7 @@
   "accountsUsage.login": "Iniciar sesión",
   "accountsUsage.menuAria": "Acciones de {alias}",
   "accountsUsage.models.noPrice": "sin precio",
+  "accountsUsage.accounts.title": "Por cuenta",
   "accountsUsage.models.title": "Por modelo",
   "accountsUsage.openAria": "Abrir Cuentas y consumo",
   "accountsUsage.period": "{days} días",

@@ -169,6 +169,7 @@
   "accountsUsage.login": "Sign in",
   "accountsUsage.menuAria": "Actions for {alias}",
   "accountsUsage.models.noPrice": "no price",
+  "accountsUsage.accounts.title": "By account",
   "accountsUsage.models.title": "By model",
   "accountsUsage.openAria": "Open Accounts and usage",
   "accountsUsage.period": "{days} days",

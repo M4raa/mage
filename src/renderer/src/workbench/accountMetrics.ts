@@ -87,6 +87,23 @@ export function combineDetail(accounts: readonly AccountUsageHistory[]): readonl
   return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
 }
 
+export interface AccountShare {
+  readonly accountId: string;
+  readonly tokens: number;
+  readonly costMicroUsd: number | null; // null: parte de su consumo no tiene precio
+}
+
+// «Todas»: tokens y coste de CADA cuenta con consumo en el periodo, sea del proveedor que sea (Claude, Codex, agy). Sin
+// esto, la tendencia por cuenta (3 series + «Otros») escondía las cuentas pequeñas.
+export function accountSharesOf(accounts: readonly AccountUsageHistory[], period: readonly DayKey[]): readonly AccountShare[] {
+  return accounts
+    .map((account) => {
+      const metrics = computeAccountMetrics({ detail: account.detail, windows: [], period, planPriceMicroUsd: null });
+      return { accountId: account.accountId, tokens: metrics.tokens, costMicroUsd: metrics.unpriced ? null : metrics.costMicroUsd };
+    })
+    .filter((share) => share.tokens > 0);
+}
+
 function dayCost(detail: DailyDetail): { readonly costMicroUsd: number; readonly unpriced: boolean; readonly tokens: number } {
   let cost = 0;
   let unpriced = false;

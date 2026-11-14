@@ -4,7 +4,7 @@ import { formatMicroUsd } from '@shared/usage';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { lastDays, localDay, PERIODS, type PeriodDays } from '../accountsUsageView';
-import { combineDetail, computeAccountMetrics, type AccountMetrics } from '../accountMetrics';
+import { accountSharesOf, combineDetail, computeAccountMetrics, type AccountMetrics } from '../accountMetrics';
 import { describeError } from '../describeError';
 import { usageHistorySource } from '../usageHistorySource';
 import type { Account } from '../types';
@@ -209,9 +209,14 @@ function Detail({ history, accountId, account, period }: { readonly history: Usa
   const metrics = useMetrics(history, accountId, period);
   const detail = useMemo(() => detailOf(history, accountId), [history, accountId]);
   const split = useMemo(() => tokenSplitOf(detail, period), [detail, period]);
+  const shares = useMemo(() => (accountId === null ? accountSharesOf(history.accounts, period) : null), [history, accountId, period]);
   if (metrics === null) return <></>;
   const limitsByDay = new Map(history.accounts.find((entry) => entry.accountId === accountId)?.detail.map((day) => [day.day, day.limits.fiveHour + day.limits.weekly + day.limits.other]) ?? []);
   const aliasOf = (id: string): string => accounts.find((entry) => entry.id === id)?.alias ?? id;
+  const accountLabelOf = (id: string): string => {
+    const found = accounts.find((entry) => entry.id === id);
+    return found === undefined ? id : `${found.provider} · ${found.alias}`;
+  };
   return (
     <>
       <Kpis metrics={metrics} account={account} />
@@ -222,7 +227,7 @@ function Detail({ history, accountId, account, period }: { readonly history: Usa
       <Question id="trend" title={t('accountsUsage.q.trend')}>
         <TrendSection detail={detail} accounts={accountId === null ? history.accounts : null} period={period} labelOf={aliasOf} />
       </Question>
-      <Question id="top" title={t('accountsUsage.q.top')}><TopSection metrics={metrics} /></Question>
+      <Question id="top" title={t('accountsUsage.q.top')}><TopSection metrics={metrics} accounts={shares === null ? null : { shares, labelOf: accountLabelOf }} /></Question>
       <Question id="tokens" title={t('accountsUsage.q.tokens')}><TokenSplitSection split={split} /></Question>
       <Question id="when" title={t('accountsUsage.q.when')}><ActivitySection metrics={metrics} /></Question>
       {adminMode && (
