@@ -2,15 +2,16 @@
 
 What changes from one version to the next, written for the people who use the app. The most recent version is at the top. Mage shows these same notes in its what's-new tab after an update, and in Settings › Release notes.
 
-## 0.1.6 — 2026-11-13
+## 0.1.6 — 2026-11-16
 
 ### Added
-- **Scheduled tasks.** Mage runs tasks at a set time or on repeat, only while the app is open. If a run was missed while Mage was closed, it runs once at startup and is marked "delayed". They have a full-screen view with "Yours" and "From Claude Desktop", and "Tasks" in the sidebar is merged into them. Each run opens its own conversation with the scheduled badge and doesn't take away your tab or account.
+- **Scheduled tasks.** Mage runs tasks at a set time or on repeat, only while the app is open. If a run was missed while Mage was closed, it runs once at startup and is marked "delayed". They have a full-screen view with "Yours" and "From Claude Desktop", and "Tasks" in the sidebar is merged into them. Each run opens its own conversation with the scheduled badge, whatever the provider, and doesn't take away your tab or account.
 - **Subsessions.** A session created by the agent has its own name and hangs in the sidebar under the conversation that created it. In the chat it appears as a card that opens it, and its replies fold into "Received N messages". Those created by the Mage MCP don't open a tab until you click them, and their notices go up to the creating conversation, folded, and to its folder.
 - **Ultracode in Claude.** A switch in the effort submenu; Mage remembers it per conversation, like the effort.
-- **Capabilities in Settings.** Skills shows where each one comes from (yours, project, organization or a plugin). Organization shows the policies applied to each account; editing them is a link to the Anthropic console, for administrators only. Plugins lists the installed ones and "Discover" the ones from the marketplaces the account knows, and lets you install, remove, enable and disable with the account's CLI; it warns that the plugins folder is shared by all your Claude accounts (installing or removing affects all of them; enabling or disabling, only the account). MCP and connectors has "Discover" and the connectors in a table.
+- **Capabilities in Settings.** Skills shows where each one comes from (yours, project, organization or a plugin) and, when you click one, its page with an overview and the contents of its SKILL.md, "Try in chat" and open its folder. Organization shows the policies applied to each account; editing them is a link to the Anthropic console, for administrators only. Plugins lists the installed ones and "Discover" the ones from the marketplaces the account knows, and lets you install, remove, enable and disable with the account's CLI; it warns that the plugins folder is shared by all your Claude accounts (installing or removing affects all of them; enabling or disabling, only the account). MCP and connectors has "Discover" and the connectors in a table.
 - **Attach any file.** "Attach file" in the "+" and dropping onto the chat accept any file. Images go as images and the rest as an @ mention: a PDF is attached in Claude, text goes inside the message and anything else as a path. A file from outside the folder comes in as its path and the agent reads it with your permission.
 - **Inactive tabs release their process.** After a few minutes unused and out of view, the agent's process is closed (not the tab) and resumes when you type. It never happens with "Keep cache alive" or background work, and the minutes can be changed, or turned off, in Settings.
+- With an empty prompt, ↑ and ↓ go through the messages you sent in that conversation, like in the CLI.
 - A link dropped onto the prompt inserts its URL.
 - After rewinding, Activity shows the discarded branch dimmed and labeled.
 - The Mage browser opens the `.html` files in the conversation's folder with their resources.
@@ -19,8 +20,8 @@ What changes from one version to the next, written for the people who use the ap
 ### Changed
 - **Prompt box.** One-line text is centered with "+" and send. "Ask the agent to commit" moves to the "+". Below the input go permissions and model; effort, "More models" and Ultracode are inside the model menu, the same for all providers. Backspace after a list number deletes it whole.
 - **No private conversations or "Shared".** On startup, private ones move to their account's normal history.
-- **Sidebar.** Each chat shows only its name, sorted by the last interaction, yours or the agent's. Projects appear expanded, and folders only change order if you drag them; a new one enters at the top.
-- **Accounts and usage** now answers how much you have left, how you're doing (stacked daily usage), what uses the most, where the tokens go (with cache hits) and when you work the most (hours map), with colorblind-safe colors.
+- **Sidebar.** Conversations without a project go at the top, below pinned ones and before projects. Each chat shows only its name, sorted by the last interaction, yours or the agent's. Projects appear expanded, and folders only change order if you drag them; a new one enters at the top.
+- **Accounts and usage** now answers how much you have left, how you're doing (stacked daily usage), what uses the most, where the tokens go (with cache hits) and when you work the most (hours map), with colorblind-safe colors. In "All accounts", "By account" lists every account that used tokens, from Claude, Codex and agy.
 - The status bar no longer has the provider and account indicator.
 - With a menu open inside a dialog, Escape only closes the menu.
 - The fallback list of Gemini (agy) models no longer includes the 3.6 ones.
@@ -42,7 +43,6 @@ What changes from one version to the next, written for the people who use the ap
 
 ### Known limitations
 - Scheduled tasks only run while Mage is open; those from Claude Desktop are shown without their schedule.
-- Scheduled Codex runs don't carry the scheduled badge.
 - Plugins' "Discover" only shows the marketplaces the account already knows; they can't be added from Mage.
 - All Claude accounts share plugins, skills, commands, agents and conversations; today it can't be separated per account.
 - A tab followed by a terminal or MCP client doesn't release its process when inactive.
