@@ -32,13 +32,12 @@ export interface RecentProjectsInput {
 }
 
 // Una entrada por carpeta (la conversacion mas reciente manda), de la mas reciente a la mas antigua.
-// Solo el historial COMPARTIDO: una conversacion privada no deja rastro fuera de su perfil. O(n) en
-// el historial mas el orden de las carpetas distintas.
+// O(n) en el historial mas el orden de las carpetas distintas.
 export function recentProjects(input: RecentProjectsInput): readonly RecentProject[] {
   if (input.limit <= 0) return [];
   const byKey = new Map<string, RecentProject>();
   for (const item of input.history) {
-    if (item.privacy !== 'shared' || item.cwd.trim().length === 0) continue;
+    if (item.cwd.trim().length === 0) continue;
     if ([...(input.scratchRoots ?? []), ...(input.scratchRoot === null ? [] : [input.scratchRoot])].some(root => isInside(item.cwd, root))) continue;
     const key = projectKey(item.cwd, input.caseInsensitive);
     const known = byKey.get(key);

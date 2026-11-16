@@ -3,7 +3,7 @@ import type { AccountCreateParams, AccountInfo } from '@shared/accounts';
 import type { ConversationId } from '@shared/coordination';
 import type { CreateSessionParams } from '@shared/ipc';
 import type { ChatProject } from '@shared/settings';
-import { BypassPermissionsBlockedError, TrustRequiredError, UnknownAccountError } from './hostErrors';
+import { BypassPermissionsBlockedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError } from './hostErrors';
 import type { HostAccountCreateRequest, HostCreateRequest, HostOptionKey } from './hostProtocol';
 
 // Lo que el host 1.2 (F7.2) hace fuera del coordinador: crear una sesión con la frontera de confianza de main,
@@ -21,6 +21,7 @@ export interface HostControl {
   listAccounts(): readonly HostAccount[];
   createApiAccount(request: HostAccountCreateRequest): HostAccount;
   requestQuit(): void;
+  guardPermissionAnswer(): void;
 }
 
 export interface HostOptionSetters {
@@ -36,6 +37,8 @@ export interface HostControlDeps {
   readonly defaultModels: () => Readonly<Record<string, string>>;
   // La misma decisión que una pestaña (`isFolderTrusted` de index.ts).
   readonly isTrusted: (cwd: string, accountDir: string) => boolean;
+  // Ruta canónica (8.3 resuelto, enlaces seguidos; admite rutas que no existen): la de index.ts.
+  readonly canonicalPath: (path: string) => string;
   // El núcleo de `createSessionFromIpc` sin ventana: vuelve a pasar por `assertLaunchable`. Devuelve el sessionId.
   readonly launch: (params: CreateSessionParams) => string;
   readonly conversationIdOf: (sessionId: string) => ConversationId | null;
@@ -44,6 +47,8 @@ export interface HostControlDeps {
   readonly createAccount: (params: AccountCreateParams) => AccountInfo;
   // Cierra main un poco después de contestar (`HOST_STOP_DELAY_MS`).
   readonly requestQuit: () => void;
+  // D3: `AppSettings.hostPermissionAnswers`, leído en cada llamada.
+  readonly permissionAnswersAllowed: () => boolean;
 }
 
 // Recibos de `session.create` recordados para deduplicar reintentos: los últimos, no todos.
@@ -63,6 +68,7 @@ export function createHostControl(deps: HostControlDeps): HostControl {
     listAccounts: () => deps.listAccounts().map(toHostAccount),
     createApiAccount: (request) => toHostAccount(deps.createAccount({ providerId: request.provider, authKind: 'api-key', name: request.name, apiKey: request.apiKey })),
     requestQuit: () => deps.requestQuit(),
+    guardPermissionAnswer: () => { if (!deps.permissionAnswersAllowed()) throw new PermissionAnswersDisabledError(); },
   };
 }
 
@@ -95,7 +101,8 @@ function guardHostOption(key: HostOptionKey, value: string): string {
 // La frontera de `session.create` (cuenta, modelo por defecto y confianza decidida por main), también para el MCP.
 export function resolveHostLaunchParams(deps: HostControlDeps, request: HostCreateRequest, options: { readonly cliDefaultModel?: boolean } = {}): CreateSessionParams {
   if (!isAbsolute(request.cwd)) throw new Error(`La carpeta tiene que ser una ruta absoluta: ${request.cwd}`);
-  const account = deps.listAccounts().find((a) => a.configDir === request.accountId && a.providerId === request.provider);
+  const wanted = deps.canonicalPath(request.accountId);
+  const account = deps.listAccounts().find((a) => a.providerId === request.provider && deps.canonicalPath(a.configDir) === wanted);
   if (account === undefined) throw new UnknownAccountError(request.accountId, request.provider);
   const defaults = deps.defaultModels();
   const requested = request.model ?? nonEmpty(defaults[request.provider]) ?? nonEmpty(account.defaultModel ?? undefined);

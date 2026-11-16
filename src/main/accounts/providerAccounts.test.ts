@@ -163,13 +163,6 @@ describe('ProviderAccountService', () => {
   });
 
   // El perfil privado factura como su cuenta: recibe su clave.
-  it('apiKeyFor_perfilPrivadoDeUnaCuentaDeApi_laClaveDeSuCuenta', () => {
-    const { service } = setup();
-    service.create({ providerId: 'claude', authKind: 'api-key', name: 'api', apiKey: 'k' });
-
-    expect(service.apiKeyFor('claude', join(HOME, '.claude-api', 'mage-private'))).toBe('k');
-  });
-
   it('apiKeyFor_cuentaDeApiSinClaveEnLaBoveda_lanza', () => {
     const { service, secrets } = setup();
     service.create({ providerId: 'codex', authKind: 'api-key', name: 'oa', apiKey: 'k' });

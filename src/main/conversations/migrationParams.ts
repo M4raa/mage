@@ -12,7 +12,6 @@ export const MIGRATE_CONVERSATION_SCHEMA = z.object({
   sourceProvider: PROVIDER,
   sessionId: z.string().regex(SAFE_ID, 'sessionId no valido'),
   cwd: z.string(),
-  privacy: z.enum(['shared', 'private']),
   destAccountDir: z.string().min(1),
   destProvider: PROVIDER,
   title: z.string().max(MAX_TITLE_CHARS).optional(),

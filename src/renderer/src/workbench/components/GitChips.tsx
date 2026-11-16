@@ -10,15 +10,14 @@ import { useT } from '../../i18n/uiLanguage';
 export const CHIP_CLASS = 'inline-flex max-w-[280px] items-center gap-[5px] rounded-full border border-mg-border-ctrl px-[8px] py-[2px]';
 const BARE_CHIP_CLASS = 'inline-flex max-w-[280px] items-center gap-[5px] rounded-[4px] px-[3px]';
 
-// Rama, cambios y «Pedir commit al agente» (P-026 3.5, D25–D27; el nombre es el de DA-1). Sin repo, sin
-// git o sin confianza, nada.
+// Rama y cambios (P-026 3.5, D25–D27). «Pedir commit al agente» vive ahora en el menú «+» del prompt
+// (PromptBar). Sin repo, sin git o sin confianza, nada.
 // `bare` quita la píldora (borde y relleno de las etiquetas encima del input): en la sublínea de la pestaña van como texto.
 export function GitChips({ tabId, cwd, bare = false }: { readonly tabId: string; readonly cwd: string; readonly bare?: boolean }): React.JSX.Element | null {
   const chipClass = bare ? BARE_CHIP_CLASS : CHIP_CLASS;
   const view = useWorkbenchStore((s) => s.gitByCwd[cwd]);
   const turnActive = useWorkbenchStore((s) => s.tabs.some((t) => t.cwd === cwd && isTurnLive(s.statusByChat[t.id])));
   const switchGitBranch = useWorkbenchStore((s) => s.switchGitBranch);
-  const insertCommitPrompt = useWorkbenchStore((s) => s.insertCommitPrompt);
   const t = useT();
   const snapshot = view?.snapshot;
   const branch = gitChip(snapshot);
@@ -55,16 +54,6 @@ export function GitChips({ tabId, cwd, bare = false }: { readonly tabId: string;
           <span className="text-mg-diff-add">{diff.added}</span>
           <span className="text-mg-diff-del">{diff.removed}</span>
         </span>
-      )}
-      {diff !== null && (
-        <button
-          onClick={() => insertCommitPrompt(tabId)}
-          data-git-commit
-          data-tip={t('chat.git.askCommitTip')}
-          className={`${chipClass} text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body`}
-        >
-          {t('chat.git.askCommit')}
-        </button>
       )}
       {view.error !== null && (
         <span role="alert" className="max-w-[320px] truncate text-mg-danger" data-tip={view.error}>

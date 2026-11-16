@@ -4,6 +4,7 @@ import { SUPPORTED_IMAGE_MEDIA_TYPES } from './types';
 import { extractToolResult, extractToolUses } from './toolView';
 import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
+import { completeDelegation, parseDelegationDraft } from '@shared/delegationCards';
 import { planTextField, SUBAGENT_TOOL_NAMES } from './toolSummary';
 import { noticeTextFor } from './cliNotices';
 import { fileTouchesField } from './fileTouches';
@@ -12,6 +13,7 @@ import { t } from '../i18n/uiLanguage';
 import { classifySystemWrapper } from '@shared/systemWrappers';
 import { EMPTY_SUBAGENT_RUN, withSubagentRun, withSubagentUpdate } from './engineBlocks';
 import { formatClockTime } from '../i18n/format';
+import { countThinkingEntries, hasThinkingBlock } from '@shared/thinkingBlocks';
 
 // Reconstruye los bloques del chat (M2.5b) a partir de una transcripcion persistida ya cargada, para
 // que una conversacion REANUDADA no arranque con el panel principal vacio. PURO (datos -> datos,
@@ -22,9 +24,10 @@ import { formatClockTime } from '../i18n/format';
 export function transcriptToBlocks(entries: readonly TranscriptEntry[], thinking: readonly string[] = []): readonly Block[] {
   const blocks: Block[] = [];
   const toolIndexById = new Map<string, number>(); // tool_use_id -> indice de su bloque en `blocks`
-  // Cursor sobre los pensamientos que guarda Mage (el CLI los persiste vacios). Va por ORDEN, no por
-  // id: ver el comentario de donde se consume. Por defecto vacio, y entonces todo queda como estaba.
-  const thinkingCursor: ThinkingCursor = { texts: thinking, index: 0 };
+  // Cursor sobre los pensamientos que guarda Mage (el CLI los persiste vacios). Casan POR LA COLA con los bloques de
+  // `entries` (`@shared/thinkingBlocks`): el indice arranca en `textos - bloques`; uno negativo da `undefined` y el bloque
+  // queda sin texto. Por defecto vacio, y entonces todo queda como estaba.
+  const thinkingCursor: ThinkingCursor = { texts: thinking, index: thinking.length - countThinkingEntries(entries) };
 
   for (const entry of entries) {
     // Entradas inyectadas por el CLI para su contabilidad (aviso de imagen pegada,
@@ -73,6 +76,7 @@ function appendUserOrResult(entry: TranscriptEntry, blocks: Block[], toolIndexBy
       writtenContent: result.writtenContent?.split('\n') ?? current.writtenContent,
       artifact:
         current.artifactDraft === null ? current.artifact : completeArtifactPublication(current.artifactDraft, result.output),
+      delegation: current.delegationDraft == null ? (current.delegation ?? null) : completeDelegation(current.delegationDraft, result.output),
     };
     return;
   }
@@ -186,9 +190,7 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
   // asi que al reanudar se puede decir "pensó" pero no QUE penso. Se pinta igualmente: esconderlo
   // borraria del hilo que el agente estuvo pensando.
   if (hasThinkingBlock(entry.raw)) {
-    // El texto lo pone MAGE, no el CLI: sus bloques `thinking` van vacios en disco (medido). El
-    // N-esimo pensamiento guardado corresponde al N-esimo bloque vacio — las dos secuencias son de
-    // solo-añadir y se producen a la vez, asi que casan por orden sin necesitar un id que el CLI no da.
+    // El texto lo pone MAGE, no el CLI: sus bloques `thinking` van vacios en disco (medido). Casan por la cola: ver el comentario del cursor.
     const saved = thinking.texts[thinking.index++];
     blocks.push({
       kind: 'thinking',
@@ -231,6 +233,8 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
       writtenContent: null,
       artifact: null,
       artifactDraft: parseArtifactDraft(use.toolName, use.input),
+      delegation: null,
+      delegationDraft: parseDelegationDraft(use.toolName, use.input),
       // Los pasos de los subagentes viven en su propio `agent-<id>.jsonl`: en el principal, todo es suyo.
       parentToolUseId: null,
       ...planTextField(use.toolName, use.input),
@@ -260,13 +264,6 @@ function appendSystemNotice(entry: TranscriptEntry, blocks: Block[]): void {
   const text = noticeTextFor({ kind: 'compacted', trigger });
   if (text === null) return;
   blocks.push({ kind: 'system', id: blockId(entry.index, 0), text });
-}
-
-// ¿Trae este mensaje del asistente algun bloque de pensamiento? (su texto viene vacio en disco).
-function hasThinkingBlock(raw: unknown): boolean {
-  const content = messageContent(raw);
-  if (!Array.isArray(content)) return false;
-  return content.some((block) => isRecord(block) && block.type === 'thinking');
 }
 
 function stringOrNull(value: unknown): string | null {

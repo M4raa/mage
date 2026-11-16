@@ -2,6 +2,55 @@
 
 What changes from one version to the next, written for the people who use the app. The most recent version is at the top. Mage shows these same notes in its what's-new tab after an update, and in Settings › Release notes.
 
+## 0.1.6 — 2026-11-16
+
+### Added
+- **Scheduled tasks.** Mage runs tasks at a set time or on repeat, only while the app is open. If a run was missed while Mage was closed, it runs once at startup and is marked "delayed". They have a full-screen view with "Yours" and "From Claude Desktop", and "Tasks" in the sidebar is merged into them. Each run opens its own conversation with the scheduled badge, whatever the provider, and doesn't take away your tab or account.
+- **Subsessions.** A session created by the agent has its own name and hangs in the sidebar under the conversation that created it. In the chat it appears as a card that opens it, and its replies fold into "Received N messages". Those created by the Mage MCP don't open a tab until you click them, and their notices go up to the creating conversation, folded, and to its folder.
+- **Ultracode in Claude.** A switch in the effort submenu; Mage remembers it per conversation, like the effort.
+- **Capabilities in Settings.** Skills shows where each one comes from (yours, project, organization or a plugin) and, when you click one, its page with an overview and the contents of its SKILL.md, "Try in chat" and open its folder. Organization shows the policies applied to each account; editing them is a link to the Anthropic console, for administrators only. Plugins lists the installed ones and "Discover" the ones from the marketplaces the account knows, and lets you install, remove, enable and disable with the account's CLI; it warns that the plugins folder is shared by all your Claude accounts (installing or removing affects all of them; enabling or disabling, only the account). MCP and connectors has "Discover" and the connectors in a table.
+- **Attach any file.** "Attach file" in the "+" and dropping onto the chat accept any file. Images go as images and the rest as an @ mention: a PDF is attached in Claude, text goes inside the message and anything else as a path. A file from outside the folder comes in as its path and the agent reads it with your permission.
+- **Inactive tabs release their process.** After a few minutes unused and out of view, the agent's process is closed (not the tab) and resumes when you type. It never happens with "Keep cache alive" or background work, and the minutes can be changed, or turned off, in Settings.
+- With an empty prompt, ↑ and ↓ go through the messages you sent in that conversation, like in the CLI.
+- A link dropped onto the prompt inserts its URL.
+- After rewinding, Activity shows the discarded branch dimmed and labeled.
+- The Mage browser opens the `.html` files in the conversation's folder with their resources.
+- A minimal user guide in `docs/`: installation, accounts, billing, the `mage` command and local data.
+
+### Changed
+- **Prompt box.** One-line text is centered with "+" and send. "Ask the agent to commit" moves to the "+". Below the input go permissions and model; effort, "More models" and Ultracode are inside the model menu, the same for all providers. Backspace after a list number deletes it whole.
+- **No private conversations or "Shared".** On startup, private ones move to their account's normal history.
+- **Sidebar.** Conversations without a project go at the top, below pinned ones and before projects. Each chat shows only its name, sorted by the last interaction, yours or the agent's. Projects appear expanded, and folders only change order if you drag them; a new one enters at the top.
+- **Accounts and usage** now answers how much you have left, how you're doing (stacked daily usage), what uses the most, where the tokens go (with cache hits) and when you work the most (hours map), with colorblind-safe colors. In "All accounts", "By account" lists every account that used tokens, from Claude, Codex and agy.
+- The status bar no longer has the provider and account indicator.
+- With a menu open inside a dialog, Escape only closes the menu.
+- The fallback list of Gemini (agy) models no longer includes the 3.6 ones.
+
+### Fixed
+- The cost of "Keep cache alive" on API-key accounts no longer adds up the conversation's running total. 0.1.4 claimed it was fixed and it wasn't; now it is.
+- The thoughts of a rewound or diverged Claude conversation go back to their reply when you reopen it.
+- `mage chat --account` with a path finds the account written in short or long Windows form.
+- With your own provider (Ollama, LM Studio…), Escape and "Stop" also cut the wait for MCPs to connect.
+- When migrating a conversation, the original no longer leaves its saved data behind (thoughts, PR and rewind state).
+- Secret masking no longer corrupts the session ids returned by the Mage MCP.
+
+### Security
+- The package ignores `NODE_OPTIONS` and `--inspect`, and only loads its own `app.asar`, with an integrity check.
+- Answering permissions from the terminal is off by default; you turn it on in Settings.
+- MCP OAuth and agy sign-in only open `https` (and `localhost` for the OAuth return).
+- The Mage browser doesn't open files from outside the conversation's folder.
+- `SECURITY.md` explains the requests Mage makes on its own and why it presents itself as Claude Code when checking usage.
+
+### Known limitations
+- Scheduled tasks only run while Mage is open; those from Claude Desktop are shown without their schedule.
+- Plugins' "Discover" only shows the marketplaces the account already knows; they can't be added from Mage.
+- All Claude accounts share plugins, skills, commands, agents and conversations; today it can't be separated per account.
+- A tab followed by a terminal or MCP client doesn't release its process when inactive.
+- With agy there is no permissions dialog.
+- The Windows installer isn't signed.
+- Linux has only been tested on WSL without a desktop.
+- A conversation rewound before this version may still show a misaligned thought.
+
 ## 0.1.5 — 2026-11-10
 
 ### Added

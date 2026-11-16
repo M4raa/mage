@@ -56,14 +56,15 @@ export interface RowMenuItem {
 }
 
 // «⋯» con las acciones secundarias de una fila. Los elementos conservan el nombre accesible que tenían como botones.
-export function RowMenu({ label, items }: { readonly label: string; readonly items: readonly RowMenuItem[] }): React.JSX.Element | null {
+// Con `buttonLabel` el botón es un «Añadir ▾» con rótulo; sin él, el «⋯» de siempre.
+export function RowMenu({ label, items, buttonLabel }: { readonly label: string; readonly items: readonly RowMenuItem[]; readonly buttonLabel?: string }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   useLocalPopover(open);
   if (items.length === 0) return null;
   return (
     <span className="relative" onKeyDown={(e) => e.key === 'Escape' && open && (e.stopPropagation(), setOpen(false))}>
-      <button onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open} aria-label={label} data-mcp-row-menu="true" className="grid h-[22px] w-[22px] place-items-center rounded-[5px] text-mg-muted hover:bg-mg-hover hover:text-mg-body">
-        <Icon name="ellipsis" size={14} />
+      <button onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open} aria-label={label} data-mcp-row-menu="true" className={buttonLabel === undefined ? 'grid h-[22px] w-[22px] place-items-center rounded-[5px] text-mg-muted hover:bg-mg-hover hover:text-mg-body' : MCP_BUTTON_CLASS}>
+        {buttonLabel === undefined ? <Icon name="ellipsis" size={14} /> : <><Icon name="plus" />{buttonLabel}<Icon name="chevron" size={10} className="rotate-90" /></>}
       </button>
       {open && (
         <>

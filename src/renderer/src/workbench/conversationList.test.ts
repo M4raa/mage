@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   filterConversationRows,
   formatSize,
-  mergeConversationRows,
   planOpenConversation,
   tabFromConversation,
   relativeTime,
+  rowRecency,
   rowTitle,
   type ConversationRow,
 } from './conversationList';
@@ -20,7 +20,6 @@ const tab = (over: Partial<Tab>): Tab => ({
   model: 'sonnet',
   provider: 'claude',
   title: 'abierta',
-  privacy: 'shared',
   ...over,
 });
 
@@ -29,117 +28,10 @@ const hist = (over: Partial<ConversationSummary>): ConversationSummary => ({
   configDir: '.claude-p',
   cwd: '/proj',
   title: 'histórica',
-  privacy: 'shared',
   updatedAtMs: 1000,
   sizeBytes: 2048,
   isScheduled: false,
   ...over,
-});
-
-describe('mergeConversationRows', () => {
-  it('ordenaPorRecencia_pestanaRecienEscritaPrimero', () => {
-    const tabs = [tab({ id: 'tA', resumeSessionId: 'sA', lastMessageAtMs: 5000 })];
-    const history = [hist({ sessionId: 'sB', updatedAtMs: 2000 })];
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
-
-    expect(rows.map((r) => r.kind)).toEqual(['tab', 'history']);
-  });
-
-  // Devolución 19: con sesión viva, la pestaña de Codex se empareja con su hilo y no sale dos veces.
-  it('mergeConversationRows_pestañaCodexConSesionViva_absorbeLaFilaDeSuHilo', () => {
-    const tabs = [tab({ id: 'tA', accountId: '.codex-a', provider: 'codex', resumeSessionId: 'thread-7' })];
-    const history = [hist({ sessionId: 'thread-7', configDir: '.codex-a' })];
-
-    const rows = mergeConversationRows(tabs, history, { tA: 'mage-uuid-1' }, '.codex-a', 'shared');
-
-    expect(rows.map((r) => r.kind)).toEqual(['tab']);
-  });
-
-  it('pestanaAbiertaSinEscribir_mantieneSuSitioPorMtimeDelHistorial', () => {
-    // Abrir una conversacion antigua NO debe subirla al principio (A6): su sitio lo da su mtime.
-    const tabs = [tab({ id: 'tA', resumeSessionId: 'sVieja' })];
-    const history = [hist({ sessionId: 'sVieja', updatedAtMs: 100 }), hist({ sessionId: 'sNueva', updatedAtMs: 900 })];
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
-
-    expect(rows.map((r) => (r.kind === 'tab' ? 'sVieja' : r.item.sessionId))).toEqual(['sNueva', 'sVieja']);
-  });
-
-  it('escribirEnLaPestana_laSubeAlPrincipio', () => {
-    const tabs = [tab({ id: 'tA', resumeSessionId: 'sVieja', lastMessageAtMs: 5000 })];
-    const history = [hist({ sessionId: 'sVieja', updatedAtMs: 100 }), hist({ sessionId: 'sNueva', updatedAtMs: 900 })];
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
-
-    expect(rows.map((r) => (r.kind === 'tab' ? 'sVieja' : r.item.sessionId))).toEqual(['sVieja', 'sNueva']);
-  });
-
-  it('conversacionNuevaSinSesion_seOrdenaPorCreatedAtMs', () => {
-    const tabs = [tab({ id: 'tNueva', createdAtMs: 8000 })];
-    const history = [hist({ sessionId: 'sB', updatedAtMs: 2000 })];
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
-
-    expect(rows.map((r) => r.kind)).toEqual(['tab', 'history']);
-  });
-
-  it('pestanaSinMarcasDeTiempo_noRompeElOrden', () => {
-    const tabs = [tab({ id: 'tLegacy' })]; // restaurada de un formato anterior
-    const history = [hist({ sessionId: 'sB', updatedAtMs: 2000 })];
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
-
-    expect(rows).toHaveLength(2);
-    expect(rows.map((r) => r.kind)).toEqual(['history', 'tab']);
-  });
-
-  it('deduplicaHistorialQueYaEstaAbierto_porResumeSessionId', () => {
-    const tabs = [tab({ id: 'tA', resumeSessionId: 'sX' })];
-    const history = [hist({ sessionId: 'sX' })]; // misma conversacion abierta
-
-    const rows = mergeConversationRows(tabs, history, {}, '.claude-p', 'shared');
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.kind).toBe('tab');
-  });
-
-  it('deduplicaPorSesionViva_sessionIdByChat', () => {
-    const tabs = [tab({ id: 'tA' })]; // sin resumeSessionId, pero con sesion viva
-    const history = [hist({ sessionId: 'live1' })];
-
-    const rows = mergeConversationRows(tabs, history, { tA: 'live1' }, '.claude-p', 'shared');
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.kind).toBe('tab');
-  });
-
-  it('filtraPorPrivacidad', () => {
-    const history = [hist({ sessionId: 's1', privacy: 'shared' }), hist({ sessionId: 's2', privacy: 'private' })];
-
-    const shared = mergeConversationRows([], history, {}, '.claude-p', 'shared');
-    const priv = mergeConversationRows([], history, {}, '.claude-p', 'private');
-
-    expect(shared).toHaveLength(1);
-    expect(priv).toHaveLength(1);
-    expect(priv[0]).toMatchObject({ kind: 'history', item: { sessionId: 's2' } });
-  });
-
-  it('historialMasRecientePrimero', () => {
-    const history = [hist({ sessionId: 'viejo', updatedAtMs: 1 }), hist({ sessionId: 'nuevo', updatedAtMs: 9 })];
-
-    const rows = mergeConversationRows([], history, {}, '.claude-p', 'shared');
-
-    expect(rows.map((r) => (r.kind === 'history' ? r.item.sessionId : ''))).toEqual(['nuevo', 'viejo']);
-  });
-
-  it('filtraPestanasDeOtraCuenta', () => {
-    const tabs = [tab({ id: 'tA', accountId: '.claude-9' })];
-
-    const rows = mergeConversationRows(tabs, [], {}, '.claude-p', 'shared');
-
-    expect(rows).toHaveLength(0);
-  });
 });
 
 describe('filterConversationRows', () => {
@@ -238,21 +130,25 @@ describe('planOpenConversation', () => {
   });
 });
 
-// P-026, 1.7 (D19): la fila de una pestaña abierta enseña lo mismo que la de una cerrada.
-describe('mergeConversationRows — resumen de la pestaña', () => {
-  it('mergeConversationRows_pestanaAbiertaConHistorial_adjuntaSuResumen', () => {
-    const summary = hist({ sessionId: 'sX', sizeBytes: 4096 });
+// U-A2: el orden es por la ultima interaccion (mensaje del usuario o respuesta del agente).
+describe('rowRecency — pestaña', () => {
+  const rowOf = (t: Partial<Tab>, h?: Partial<ConversationSummary>): ConversationRow =>
+    h === undefined ? { kind: 'tab', tab: tab(t) } : { kind: 'tab', tab: tab(t), history: hist(h) };
 
-    const rows = mergeConversationRows([tab({ id: 'tA', resumeSessionId: 'sX' })], [summary], {}, '.claude-p', 'shared');
-
-    expect(rows).toEqual([{ kind: 'tab', tab: expect.objectContaining({ id: 'tA' }), history: summary }]);
+  it('rowRecency_tabConRespuestaPosterior_usaElMtime', () => {
+    expect(rowRecency(rowOf({ lastMessageAtMs: 1000 }, { updatedAtMs: 5000 }))).toBe(5000);
   });
 
-  it('mergeConversationRows_pestanaSinFichero_sinResumen', () => {
-    const rows = mergeConversationRows([tab({ id: 'tNueva', createdAtMs: 5 })], [hist({ sessionId: 'otra' })], {}, '.claude-p', 'shared');
-    const fila = rows.find((r) => r.kind === 'tab');
+  it('rowRecency_tabConMensajePosterior_usaLastMessage', () => {
+    expect(rowRecency(rowOf({ lastMessageAtMs: 8000 }, { updatedAtMs: 5000 }))).toBe(8000);
+  });
 
-    expect(fila !== undefined && fila.kind === 'tab' ? fila.history : 'no hay fila').toBeUndefined();
+  it('rowRecency_tabSinNada_usaCreatedAt', () => {
+    expect(rowRecency(rowOf({ createdAtMs: 300 }))).toBe(300);
+  });
+
+  it('rowRecency_tabVacia_cero', () => {
+    expect(rowRecency(rowOf({}))).toBe(0);
   });
 });
 
@@ -298,7 +194,6 @@ describe('tabFromConversation', () => {
     configDir: 'C:/Users/u/.claude',
     cwd: 'C:/src/mage',
     title: 'Arreglar el cierre',
-    privacy: 'shared',
     updatedAtMs: 5,
     sizeBytes: 10,
     isScheduled: false,
@@ -315,7 +210,6 @@ describe('tabFromConversation', () => {
       model: 'opus',
       provider: 'claude',
       title: 'Arreglar el cierre',
-      privacy: 'shared',
       resolvedConfigDir: 'C:/Users/u/.claude',
       resumeSessionId: 'sess-1',
     });
@@ -326,5 +220,17 @@ describe('tabFromConversation', () => {
 
     expect(tab.effort).toBe('high');
     expect(tab.permissionMode).toBe('plan');
+  });
+
+  it('tabFromConversation_conUltracodeGuardado_arrancaConUltracode', () => {
+    const tab = tabFromConversation({ id: 't1', item, accountId: 'acc', accountAlias: 'a', prefs: { model: 'opus', ultracode: true } });
+
+    expect(tab.ultracode).toBe(true);
+  });
+
+  it('tabFromConversation_ultracodeEnOtroProveedor_noSeArrastra', () => {
+    const tab = tabFromConversation({ id: 't1', item: { ...item, providerId: 'codex' }, accountId: 'acc', accountAlias: 'a', prefs: { model: 'gpt', ultracode: true } });
+
+    expect(tab.ultracode).toBeUndefined();
   });
 });

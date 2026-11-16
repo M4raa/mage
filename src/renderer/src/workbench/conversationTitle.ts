@@ -1,6 +1,7 @@
 import type { TranscriptEntry } from '@shared/transcripts';
 import type { Translate } from '@shared/i18n/translator';
 import { isPlaceholderTitle } from '@shared/conversationTitle';
+import { classifySystemWrapper } from '@shared/systemWrappers';
 import { t } from '../i18n/uiLanguage';
 
 // Titulo de una conversacion (M2.6): las pestanas nuevas arrancan SIN titulo elegido ('') y
@@ -12,7 +13,10 @@ const MAX_TITLE_LENGTH = 60;
 // Deriva un titulo a partir del primer prompt: primera linea no vacia, recortada. Un texto vacio
 // (o solo espacios/saltos) devuelve '' (sin titulo: se pinta con `tabs.untitled`, ver `displayTitle`).
 export function deriveTitleFromPrompt(text: string): string {
-  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0) ?? '';
+  // Una ejecución de tarea programada empieza por `<scheduled-task name="…">`: su título es el nombre de la tarea.
+  const wrapper = classifySystemWrapper(text);
+  const source = wrapper.kind === 'scheduled-task' && wrapper.name.length > 0 ? wrapper.name : text;
+  const firstLine = source.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0) ?? '';
   if (firstLine.length === 0) return '';
   if (firstLine.length <= MAX_TITLE_LENGTH) return firstLine;
   return `${firstLine.slice(0, MAX_TITLE_LENGTH - 1).trimEnd()}…`;

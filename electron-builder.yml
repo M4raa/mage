@@ -9,6 +9,20 @@ copyright: © 2026 M4raa
 # Falla ruidosamente si no lo encuentra: publicarlos sin saberlo es el fallo que viene a evitar.
 afterPack: scripts/after-pack-free-ffmpeg.mjs
 
+# Fuses de Electron (INFORME-051 H6, D4 del 13-11). Se graban en el ejecutable al empaquetar, después del afterPack
+# y justo antes de firmar.
+# - runAsNode se queda ENCENDIDO: el lanzador `mage` (resources/bin), el `--cli` del AppImage (cliRelay.ts) y el
+#   `mage mcp` que registran Claude y Codex ejecutan el propio Mage con ELECTRON_RUN_AS_NODE=1.
+# - NODE_OPTIONS (y con él NODE_EXTRA_CA_CERTS) y --inspect apagados: el entorno o la línea de órdenes no meten
+#   código en main.
+# - Solo se carga app.asar, con su integridad comprobada (Windows desde Electron 30; macOS siempre).
+electronFuses:
+  runAsNode: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+  enableEmbeddedAsarIntegrityValidation: true
+
 directories:
   output: release
   buildResources: resources/brand

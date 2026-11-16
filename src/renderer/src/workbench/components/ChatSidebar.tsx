@@ -1,11 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
 import type { Account } from '../types';
 import type { ConversationSummary } from '@shared/conversations';
 import { backgroundMoveBlockedReason, backgroundOfConversation } from '../backgroundWork';
 import { ConversationContextMenu, type ConversationTarget } from './ConversationContextMenu';
-import type { ConversationPrivacy } from '@shared/state';
 import { reportActionError } from '../notificationStore';
 import type { ChatProject } from '@shared/settings';
 import { conversationIdOfTab } from '../conversationId';
@@ -13,12 +12,13 @@ import { accountRecovery } from '../accountRecovery';
 import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 import { t as translate, useT } from '../../i18n/uiLanguage';
 import { displayTitle } from '../conversationTitle';
-import { accountToOpenWith, sidebarRowId, type SidebarRow } from '../sidebarModel';
+import { accountToOpenWith, foldedIndicator, sidebarRowId, type SidebarRow } from '../sidebarModel';
 import { SidebarHeader } from './sidebar/SidebarHeader';
-import { SidebarRowItem } from './sidebar/SidebarRowItem';
-import { FlatGroup, PROJECTS_COLLAPSED_LIMIT, ProjectGroupView, RowList, SectionLabel } from './sidebar/SidebarGroups';
+import { RowBranch } from './sidebar/RowBranch';
+import { SidebarRowItem, type RowFold } from './sidebar/SidebarRowItem';
+import { FlatGroup, PROJECTS_COLLAPSED_LIMIT, ProjectEndDropZone, ProjectGroupView, RowList, SectionLabel } from './sidebar/SidebarGroups';
 import { useSidebarModel } from './sidebar/useSidebarModel';
-import { TasksSection } from '../tasks/TasksSection';
+import { ScheduledTasksEntry } from '../tasks/ScheduledTasksEntry';
 
 // Estado del menu contextual abierto (posicion + conversacion objetivo).
 interface MenuState {
@@ -35,16 +35,15 @@ interface MenuState {
 
 function menuTargetOf(row: SidebarRow, sessionId: string | undefined, title: string): ConversationTarget {
   const cwd = row.kind === 'tab' ? row.tab.cwd : row.item.cwd;
-  const privacy = row.kind === 'tab' ? row.tab.privacy : row.item.privacy;
-  return { sessionId, cwd, privacy, title, accountId: row.accountId };
+  return { sessionId, cwd, title, accountId: row.accountId };
 }
 
 function rowKey(row: SidebarRow): string {
   return row.kind === 'tab' ? `t:${row.tab.id}` : `h:${row.item.providerId ?? 'claude'}:${row.item.sessionId}`;
 }
 
-// Lateral de conversaciones de TODAS las cuentas con historial (D6): Fijadas → Proyectos (por carpeta y los
-// del usuario) → Sin proyecto → Privadas; la cuenta y el proveedor son filtros. Una pestaña = una conversación
+// Lateral de conversaciones de TODAS las cuentas con historial (D6): Fijadas → Sin proyecto → Proyectos (por carpeta y los
+// del usuario); la cuenta y el proveedor son filtros. Una pestaña = una conversación
 // real. El modelo (fusión, grupos, filtros) vive en `sidebarModel.ts` y `useSidebarModel`; esto solo pinta.
 export function ChatSidebar(): React.JSX.Element {
   const t = useT();
@@ -62,6 +61,13 @@ export function ChatSidebar(): React.JSX.Element {
   const view = useSidebarModel(filter);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [editingProject, setEditingProject] = useState<ChatProject | 'new' | null>(null);
+  // Una carpeta nueva queda guardada arriba al aparecer; en un perfil sin `projectOrder` se guarda una vez el
+  // orden de hoy (por recencia) y ya no se mueve solo. Sin claves nuevas, `ensureProjectOrder` no hace nada.
+  const projectKeys = view.groups.projects.map((group) => group.key).join('\n');
+  const { ensureProjectOrder } = actions;
+  useEffect(() => {
+    if (projectKeys.length > 0) ensureProjectOrder(projectKeys.split('\n'));
+  }, [projectKeys, ensureProjectOrder]);
 
   if (account === undefined) {
     return (
@@ -83,14 +89,22 @@ export function ChatSidebar(): React.JSX.Element {
       tabPinned: row.kind === 'tab' && row.tab.pinned === true,
     });
   };
-  const renderRow = (row: SidebarRow): React.ReactNode => (
+  // Una fila y, si las tiene, sus subsesiones anidadas debajo (a cualquier profundidad).
+  const renderRow = (row: SidebarRow): React.ReactNode => {
+    const id = sidebarRowId(row, sessionIdByChat);
+    const kids = id === undefined ? undefined : view.groups.childrenOf.get(id);
+    if (kids === undefined) return renderRowItem(row);
+    return <RowBranch key={rowKey(row)} head={(fold) => renderRowItem(row, fold)} kids={kids.map(renderRow)} />;
+  };
+  const renderRowItem = (row: SidebarRow, fold?: RowFold): React.ReactNode => (
     <SidebarRowItem
       key={rowKey(row)}
       row={row}
+      {...(fold === undefined ? {} : { fold })}
       account={view.accountOf(row)}
       missingOwner={view.missingOwnerOf(row)}
       status={view.statusOf(row)}
-      indicator={view.indicatorOf(row)}
+      indicator={fold?.open === false ? foldedIndicator(view.indicatorOf(row), view.descendantIndicatorsOf(row)) : view.indicatorOf(row)}
       background={view.backgroundOf(row)}
       onSelectTab={actions.setActiveTab}
       onOpenHistory={(historyRow) => {
@@ -104,7 +118,8 @@ export function ChatSidebar(): React.JSX.Element {
     />
   );
   const { groups } = view;
-  const isEmpty = groups.pinned.length + groups.unassigned.length + groups.private.length === 0 && groups.projects.every((group) => group.rows.length === 0);
+  const shownProjects = groups.projects.filter((group) => !filter.archived || group.rows.length > 0);
+  const isEmpty = groups.pinned.length + groups.unassigned.length === 0 && groups.projects.every((group) => group.rows.length === 0);
   const menuSessionId = menu?.target.sessionId ?? '';
 
   return (
@@ -116,7 +131,7 @@ export function ChatSidebar(): React.JSX.Element {
       <SidebarHeader
         filter={filter}
         onFilter={setFilter}
-        onNewConversation={() => void actions.createConversation('shared')}
+        onNewConversation={() => void actions.createConversation()}
         onNewWithOptions={actions.openNewTabDialog}
         workingCount={view.workingCount}
         providers={view.providers}
@@ -128,29 +143,34 @@ export function ChatSidebar(): React.JSX.Element {
       <OrphanBanner key={account.id} account={account} onDelete={actions.deleteAccount} />
 
       <div data-sidebar-list="true" className="flex flex-1 flex-col gap-[6px] overflow-y-auto p-[2px_6px_8px] text-[12px]">
-        {!filter.archived && <TasksSection />}
+        {!filter.archived && <ScheduledTasksEntry />}
         {filter.archived && isEmpty && <div data-volatile-text="true" className="p-[8px_9px] text-[11px] text-mg-muted">{t('sidebar.archived.empty')}</div>}
         {!filter.archived && isEmpty && projects.length === 0 && (
           <div data-volatile-text="true" className="p-[8px_9px] text-[11px] text-mg-muted">{view.filterActive ? t('sidebar.search.noMatches') : t('sidebar.shared.empty')}</div>
         )}
         {groups.pinned.length > 0 && <FlatGroup kind="pinned" title={t('sidebar.pinned.title')} rows={groups.pinned} renderRow={renderRow} unlimited />}
+        {groups.unassigned.length > 0 && <FlatGroup kind="unassigned" title={t('sidebar.unassigned.title')} rows={groups.unassigned} renderRow={renderRow} unlimited={view.filterActive} />}
         {(groups.projects.length > 0 || !filter.archived) && (
           <div className="flex flex-col gap-px">
             {groups.projects.length > 0 && <SectionLabel text={t('sidebar.projects.title')} hint={`${groups.projects.length}`} />}
             {editingProject !== null && <ProjectEditor project={editingProject === 'new' ? null : editingProject}
               onSave={async (project) => { await actions.saveChatProject(project); setEditingProject(null); }} onCancel={() => setEditingProject(null)} />}
-            <RowList rows={groups.projects.filter((group) => !filter.archived || group.rows.length > 0)} unlimited={view.filterActive} collapsed={PROJECTS_COLLAPSED_LIMIT} renderRow={(group) => {
+            <RowList rows={shownProjects} unlimited={view.filterActive} collapsed={PROJECTS_COLLAPSED_LIMIT} renderRow={(group) => {
               const userProject = group.projectId === null ? undefined : projects.find((p) => p.id === group.projectId);
+              const at = shownProjects.indexOf(group);
               return (
                 <ProjectGroupView
                   key={group.key}
                   group={group}
+                  neighbors={{ prev: shownProjects[at - 1]?.key ?? null, next: shownProjects[at + 1]?.key ?? null, afterNext: shownProjects[at + 2]?.key ?? null }}
                   renderRow={renderRow}
                   indicatorOf={view.indicatorOf}
+                  descendantIndicatorsOf={view.descendantIndicatorsOf}
                   unlimited={view.filterActive}
                   forceOpen={view.filterActive}
                   emptyHint={t('sidebar.projects.empty')}
-                  onCreate={() => void actions.createConversation('shared', userProject === undefined
+                  onMove={actions.moveProject}
+                  onCreate={() => void actions.createConversation(userProject === undefined
                     ? (group.cwd === null ? {} : { cwd: group.cwd })
                     : { projectId: userProject.id, ...(userProject.cwd === null ? { scratch: true } : { cwd: userProject.cwd }) })}
                   onEdit={userProject === undefined ? null : () => setEditingProject(userProject)}
@@ -158,6 +178,7 @@ export function ChatSidebar(): React.JSX.Element {
                 />
               );
             }} />
+            {!view.filterActive && shownProjects.length > 0 && <ProjectEndDropZone onMove={actions.moveProject} />}
             {!filter.archived && (
               <button onClick={() => setEditingProject('new')} aria-label={t('sidebar.projects.create')} className="mx-[2px] mt-[2px] rounded-[6px] p-[4px_9px] text-left text-[11px] text-mg-icon hover:bg-mg-hover hover:text-mg-body">
                 ＋ {t('sidebar.projects.create')}
@@ -165,8 +186,6 @@ export function ChatSidebar(): React.JSX.Element {
             )}
           </div>
         )}
-        {groups.unassigned.length > 0 && <FlatGroup kind="unassigned" title={t('sidebar.unassigned.title')} rows={groups.unassigned} renderRow={renderRow} unlimited={view.filterActive} />}
-        {groups.private.length > 0 && <FlatGroup kind="private" title={t('sidebar.private.title')} rows={groups.private} renderRow={renderRow} unlimited={view.filterActive} />}
       </div>
 
       <AnimatePresence>
@@ -214,11 +233,11 @@ export function ChatSidebar(): React.JSX.Element {
             }
             newWindowBlockedReason={menu.item === undefined ? null : backgroundMoveBlockedReason(backgroundOfConversation(backgroundSessions, menu.item.sessionId))}
             onDelete={() => {
-              void actions.deleteConversation(menuSessionId, menu.target.cwd, menu.target.privacy, menu.target.accountId);
+              void actions.deleteConversation(menuSessionId, menu.target.cwd, menu.target.accountId);
               setMenu(null);
             }}
-            onMove={(destAccountDir: string, destPrivacy: ConversationPrivacy) => {
-              actions.moveConversation(menuSessionId, menu.target.cwd, menu.target.privacy, destAccountDir, destPrivacy, menu.target.accountId).catch(
+            onMove={(destAccountDir: string) => {
+              actions.moveConversation(menuSessionId, menu.target.cwd, destAccountDir, menu.target.accountId).catch(
                 (err: unknown) => console.error('No se pudo mover la conversacion:', err instanceof Error ? err.message : String(err)),
               );
               setMenu(null);
@@ -247,6 +266,8 @@ function useSidebarActions(): {
   readonly dropConversationOutside: ReturnType<typeof useWorkbenchStore.getState>['dropConversationOutside'];
   readonly togglePinnedConversation: (sessionId: string) => void;
   readonly setConversationArchived: (sessionId: string, archived: boolean) => void;
+  readonly ensureProjectOrder: (keys: readonly string[]) => void;
+  readonly moveProject: (key: string, beforeKey: string | null) => void;
 } {
   return {
     setActiveTab: useWorkbenchStore((s) => s.setActiveTab),
@@ -264,6 +285,8 @@ function useSidebarActions(): {
     dropConversationOutside: useWorkbenchStore((s) => s.dropConversationOutside),
     togglePinnedConversation: useWorkbenchStore((s) => s.togglePinnedConversation),
     setConversationArchived: useWorkbenchStore((s) => s.setConversationArchived),
+    ensureProjectOrder: useWorkbenchStore((s) => s.ensureProjectOrder),
+    moveProject: useWorkbenchStore((s) => s.moveProject),
   };
 }
 

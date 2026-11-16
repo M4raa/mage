@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { resolveTrapTarget, shouldRestoreFocus } from './focusTrap';
+import { hasOpenPopupTrigger, resolveTrapTarget, shouldRestoreFocus } from './focusTrap';
 
 // Selector de elementos focusables dentro de un panel de dialogo (subconjunto habitual, sin los que
 // estan deshabilitados o con tabindex negativo).
@@ -41,24 +41,18 @@ export function useDialogA11y({
     const previouslyFocused = doc.activeElement as HTMLElement | null;
     if (stealFocusOnMount) focusFirst(panel);
 
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (!appliesToPanel(panel, doc, event, trapTab)) return;
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (trapTab && event.key === 'Tab') handleTab(panel, event);
-    };
+    const keys = panelKeyHandlers(panel, trapTab, () => onCloseRef.current());
 
     // El listener va en el DOCUMENTO, no en el panel: cuando el elemento enfocado se DESMONTA (pulsar
     // "Cancelar" en un formulario, borrar una fila de una lista…) Chromium manda el foco a <body> SIN
     // emitir blur, asi que un listener colgado del panel deja de recibir teclas y el modal se queda sin
     // Escape y sin trampa de Tab. Medido con verify:gui: tras "Cancelar" en el formulario de
     // Proveedores, Escape no cerraba Configuracion. `appliesToPanel` acota que teclas son suyas.
-    doc.addEventListener('keydown', onKeyDown);
+    doc.addEventListener('keydown', keys.capture, true);
+    doc.addEventListener('keydown', keys.bubble);
     return () => {
-      doc.removeEventListener('keydown', onKeyDown);
+      doc.removeEventListener('keydown', keys.capture, true);
+      doc.removeEventListener('keydown', keys.bubble);
       // Restaura el foco al elemento que lo tenia antes de abrir (si sigue en el DOM), salvo que otro
       // dialogo lo haya tomado ya (ver shouldRestoreFocus).
       if (previouslyFocused === null || !doc.contains(previouslyFocused)) return;
@@ -80,6 +74,33 @@ function appliesToPanel(panel: HTMLElement, doc: Document, event: KeyboardEvent,
   if (!isModal) return false;
   const focused = doc.activeElement;
   return focused === null || focused === doc.body || focused === doc.documentElement;
+}
+
+// Las dos escuchas de teclado del panel. La de CAPTURA corre antes que React y anota si el Escape nace con
+// un menú abierto dentro del panel: ese Escape solo cierra el menú. En la de burbuja React ya lo ha
+// cerrado y el DOM no lo dice (localPopovers.ts).
+function panelKeyHandlers(
+  panel: HTMLElement,
+  trapTab: boolean,
+  onClose: () => void,
+): { readonly capture: (event: KeyboardEvent) => void; readonly bubble: (event: KeyboardEvent) => void } {
+  const doc = panel.ownerDocument;
+  let escapeForPopup = false;
+  return {
+    capture: (event) => {
+      escapeForPopup = event.key === 'Escape' && hasOpenPopupTrigger(panel);
+    },
+    bubble: (event) => {
+      if (!appliesToPanel(panel, doc, event, trapTab)) return;
+      if (event.key === 'Tab' && trapTab) {
+        handleTab(panel, event);
+        return;
+      }
+      if (event.key !== 'Escape' || escapeForPopup) return;
+      event.preventDefault();
+      onClose();
+    },
+  };
 }
 
 // Enfoca el primer focusable de `panel`; si no hay ninguno, el propio panel (con tabIndex=-1) para que

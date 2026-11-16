@@ -7,6 +7,7 @@ import {
   SESSION_ADOPTABLE_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
+  TASKS_DUE_CHANNEL,
   TRANSCRIPT_BATCH_CHANNEL,
   WIDGET_ENABLED_CHANGED_CHANNEL,
   WIDGET_FOCUS_TAB_CHANNEL,
@@ -116,6 +117,7 @@ const api: MageApi = {
   stop: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionStop, sessionId),
   closeSession: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionClose, sessionId),
   getSessionSnapshot: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionSnapshot, sessionId),
+  getSessionIdleState: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionIdleState, sessionId),
   listAdoptableSessions: () => ipcRenderer.invoke(IpcChannel.SessionsAdoptable),
   attachSession: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionAttach, sessionId),
   getScratchDir: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchDir),
@@ -377,6 +379,10 @@ const api: MageApi = {
   libraryView: () => ipcRenderer.invoke(IpcChannel.LibraryView),
   libraryPreview: (target) => ipcRenderer.invoke(IpcChannel.LibraryPreview, target),
   libraryApply: (params) => ipcRenderer.invoke(IpcChannel.LibraryApply, params),
+  capabilitiesOverview: (accountDir) => ipcRenderer.invoke(IpcChannel.CapabilitiesOverview, accountDir),
+  capabilitiesPluginCatalog: (accountDir) => ipcRenderer.invoke(IpcChannel.CapabilitiesPluginCatalog, accountDir),
+  capabilitiesPluginAction: (params) => ipcRenderer.invoke(IpcChannel.CapabilitiesPluginAction, params),
+  capabilitiesSkillFile: (params) => ipcRenderer.invoke(IpcChannel.CapabilitiesSkillFile, params),
   // Navegador de Mage (F11b.3).
   browserList: () => ipcRenderer.invoke(IpcChannel.BrowserList),
   browserOpen: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserOpen, sessionId),
@@ -403,6 +409,17 @@ const api: MageApi = {
   pickTaskFolders: () => ipcRenderer.invoke(IpcChannel.TasksPickFolders),
   pickTaskDocuments: () => ipcRenderer.invoke(IpcChannel.TasksPickDocuments),
   saveTaskDeliverableCopy: (params) => ipcRenderer.invoke(IpcChannel.TasksSaveCopy, params),
+  editTask: (params) => ipcRenderer.invoke(IpcChannel.TasksEdit, params),
+  setTaskEnabled: (params) => ipcRenderer.invoke(IpcChannel.TasksSetEnabled, params),
+  runTaskNow: (taskId) => ipcRenderer.invoke(IpcChannel.TasksRunNow, taskId),
+  takeDueTaskRuns: () => ipcRenderer.invoke(IpcChannel.TasksTakeDue),
+  reportTaskRunFailed: (params) => ipcRenderer.invoke(IpcChannel.TasksRunFailed, params),
+  listDesktopScheduledTasks: () => ipcRenderer.invoke(IpcChannel.TasksDesktopList),
+  onTasksDue: (listener: () => void) => {
+    const handler = (): void => listener();
+    ipcRenderer.on(TASKS_DUE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(TASKS_DUE_CHANNEL, handler);
+  },
 };
 
 contextBridge.exposeInMainWorld('mage', api);

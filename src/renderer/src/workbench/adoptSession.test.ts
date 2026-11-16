@@ -3,7 +3,18 @@ import type { ConversationSnapshot, CoordinatedState } from '@shared/coordinatio
 import type { AdoptableSession } from '@shared/ipc';
 import type { PermissionRequest } from '@shared/events';
 import type { ElicitationRequest } from '@shared/elicitation';
-import { adoptedTab, adoptionTarget, chatStatusOf, creatorTabOf, pinnedAccountMissing, snapshotEvents } from './adoptSession';
+import {
+  adoptedTab,
+  adoptionTarget,
+  adoptsWithoutTab,
+  backgroundStateOf,
+  chatStatusOf,
+  creatorTabOf,
+  delegatedBackgroundEntry,
+  delegatedSessionToOpen,
+  pinnedAccountMissing,
+  snapshotEvents,
+} from './adoptSession';
 import type { Tab } from './types';
 
 const ACCOUNT = '/home/u/.claude';
@@ -14,7 +25,7 @@ function session(over: Partial<AdoptableSession> = {}): AdoptableSession {
 }
 
 function tab(id: string, over: Partial<Tab> = {}): Tab {
-  return { id, accountId: ACCOUNT, accountAlias: 'principal', cwd: '/proj', model: 'sonnet', provider: 'claude', title: id, privacy: 'shared', ...over };
+  return { id, accountId: ACCOUNT, accountAlias: 'principal', cwd: '/proj', model: 'sonnet', provider: 'claude', title: id, ...over };
 }
 
 function snapshot(over: Partial<ConversationSnapshot> = {}): ConversationSnapshot {
@@ -54,7 +65,7 @@ describe('adoptedTab', () => {
   it('adoptedTab_fullSession_mapsAllFields', () => {
     const result = adoptedTab(session({ effort: 'high', permissionMode: 'plan', configDir: '/priv' }), ids);
     expect(result).toEqual({ id: 'tab7', accountId: ACCOUNT, accountAlias: 'principal', cwd: '/proj/app', model: 'sonnet', provider: 'claude',
-      title: 'app', privacy: 'shared', accountPinned: true, resolvedConfigDir: '/priv', resumeSessionId: 'n1', effort: 'high', permissionMode: 'plan', createdAtMs: 1234, worktreeOff: true });
+      title: 'app', accountPinned: true, resolvedConfigDir: '/priv', resumeSessionId: 'n1', effort: 'high', permissionMode: 'plan', createdAtMs: 1234, worktreeOff: true });
   });
 
   it('adoptedTab_nullNativeId_noResumeSessionId', () => {
@@ -139,5 +150,83 @@ describe('pinnedAccountMissing', () => {
 
   it('pinnedAccountMissing_notPinnedAndAbsent_false', () => {
     expect(pinnedAccountMissing({ accountId: 'b' }, accounts)).toBe(false);
+  });
+});
+
+describe('adoptsWithoutTab', () => {
+  it('adoptsWithoutTab_mcpNueva_true', () => {
+    expect(adoptsWithoutTab({ tabs: [], sessionIdByChat: {} }, session({ origin: 'mcp', nativeId: null }))).toBe(true);
+  });
+
+  it('adoptsWithoutTab_terminal_false', () => {
+    expect(adoptsWithoutTab({ tabs: [], sessionIdByChat: {} }, session({ origin: 'terminal', nativeId: null }))).toBe(false);
+  });
+
+  it('adoptsWithoutTab_mcpConPestanaRestaurada_false', () => {
+    const state = { tabs: [tab('a', { resumeSessionId: 'n1' })], sessionIdByChat: {} };
+    expect(adoptsWithoutTab(state, session({ origin: 'mcp' }))).toBe(false);
+  });
+
+  it('adoptsWithoutTab_mcpYaEnlazada_false', () => {
+    const state = { tabs: [tab('a')], sessionIdByChat: { a: 's1' } };
+    expect(adoptsWithoutTab(state, session({ origin: 'mcp' }))).toBe(false);
+  });
+});
+
+describe('backgroundStateOf', () => {
+  it('backgroundStateOf_pidePermiso_needsAction', () => {
+    expect(backgroundStateOf({ state: 'requires_action', lastSeq: 5 })).toBe('needs_action');
+  });
+
+  it('backgroundStateOf_corriendo_working', () => {
+    expect(backgroundStateOf({ state: 'running', lastSeq: 5 })).toBe('working');
+  });
+
+  it('backgroundStateOf_ociosaSinEventos_working', () => {
+    expect(backgroundStateOf({ state: 'idle', lastSeq: 0 })).toBe('working');
+  });
+
+  it('backgroundStateOf_ociosaConEventos_done', () => {
+    expect(backgroundStateOf({ state: 'idle', lastSeq: 3 })).toBe('done');
+  });
+
+  it('backgroundStateOf_error_done', () => {
+    expect(backgroundStateOf({ state: 'error', lastSeq: 0 })).toBe('done');
+  });
+});
+
+describe('delegatedBackgroundEntry', () => {
+  it('delegatedBackgroundEntry_claude_conversacionEsLaSesionViva', () => {
+    const entry = delegatedBackgroundEntry(session({ nativeId: null, origin: 'mcp' }), 'working', 10);
+    expect(entry).toMatchObject({ sessionId: 's1', conversationId: 's1', state: 'working', sinceMs: 10 });
+    expect(entry.hostSession?.origin).toBe('mcp');
+  });
+
+  it('delegatedBackgroundEntry_codexSinHilo_sinConversacion', () => {
+    const entry = delegatedBackgroundEntry(session({ provider: 'codex', nativeId: null }), 'working', 10);
+    expect(entry.conversationId).toBeUndefined();
+  });
+
+  it('delegatedBackgroundEntry_codexConHilo_elHilo', () => {
+    const entry = delegatedBackgroundEntry(session({ provider: 'codex', nativeId: 'hilo-9' }), 'working', 10);
+    expect(entry.conversationId).toBe('hilo-9');
+  });
+});
+
+describe('delegatedSessionToOpen', () => {
+  it('delegatedSessionToOpen_codexConHilo_loPoneComoNativeId', () => {
+    const host = session({ provider: 'codex', nativeId: null });
+    const entry = { ...delegatedBackgroundEntry(host, 'working', 1), conversationId: 'hilo-9' };
+    expect(delegatedSessionToOpen(entry).nativeId).toBe('hilo-9');
+  });
+
+  it('delegatedSessionToOpen_claude_sinCambios', () => {
+    const host = session({ nativeId: null });
+    expect(delegatedSessionToOpen(delegatedBackgroundEntry(host, 'working', 1))).toBe(host);
+  });
+
+  it('delegatedSessionToOpen_sinHostSession_lanza', () => {
+    const entry = { sessionId: 's1', conversationId: 's1', title: '', accountId: ACCOUNT, state: 'working' as const, sinceMs: 1 };
+    expect(() => delegatedSessionToOpen(entry)).toThrow('s1');
   });
 });

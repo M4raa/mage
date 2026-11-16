@@ -166,7 +166,8 @@ export const PROMPT_MAX_HEIGHT_PX = 200;
 
 const promptTheme = EditorView.theme({
   '&': { fontSize: '12.5px', color: 'var(--color-mg-text)' },
-  '.cm-content': { padding: '0', fontFamily: 'inherit', caretColor: 'var(--color-mg-text)' },
+  // 4px arriba y abajo: una linea (~19,4 px) queda centrada con los botones de 28 px de «+» y enviar.
+  '.cm-content': { padding: '4px 0', fontFamily: 'inherit', caretColor: 'var(--color-mg-text)' },
   '.cm-scroller': { maxHeight: `${PROMPT_MAX_HEIGHT_PX}px`, overflowY: 'auto', lineHeight: '1.55', fontFamily: 'inherit' },
   '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },

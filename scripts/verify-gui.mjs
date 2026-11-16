@@ -67,14 +67,6 @@ import { ui, uiIn, uiPlural, uiPrefix, uiRegExp, uiSegment, escapeRegExp, cssAtt
 
 // Línea resumen del dock de subagentes (agentsDock.ts): «N en ejecución · M terminados», sin la parte que vale cero.
 const agentsSummary = (running, finished) => [running > 0 ? uiPlural('chat.agents.summaryRunning', { count: running }) : null, finished > 0 ? uiPlural('chat.agents.summaryFinished', { count: finished }) : null].filter((part) => part !== null).join(' · ');
-// Línea de conversaciones privadas del diálogo de eliminar cuenta: contando, fallo, ninguna, una o N (el N se deja abierto).
-const privateLineRegExp = () => new RegExp(`(?:${[
-  escapeRegExp(ui('accounts.delete.privateCounting')),
-  escapeRegExp(uiPrefix('accounts.delete.privateCountFailed')),
-  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 0 })),
-  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 1 })),
-  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 2 })).replace('2', '\\d+'),
-].join('|')})`);
 // Entero con el agrupador del idioma de la tanda (la app formatea igual con Intl).
 const localizedInteger = (value) => new Intl.NumberFormat(getUiLanguage()).format(value);
 // Decimal con un dígito, con el separador del idioma de la tanda (la app formatea igual con Intl).
@@ -1038,8 +1030,9 @@ const CHECKS = [
     },
   },
   {
-    // P-038 V12: las tres pestañas con la MISMA fila (punto de estado, etiquetas del mismo tamaño, acciones en «⋯»), sin
-    // tablas, la explicación plegada tras «ⓘ» y el MCP de Mage arriba como tarjeta con su interruptor.
+    // P-038 V12: Servidores y Extensiones con la MISMA fila (punto de estado, etiquetas del mismo tamaño,
+    // acciones en «⋯»), Conectores en TABLA como Claude Desktop, la explicación plegada tras «ⓘ» y el MCP de Mage arriba
+    // como tarjeta con su interruptor.
     name: 'P-038 V12: MCP y conectores homogéneo, con el MCP de Mage arriba',
     state: { settingsSection: ui('mcp.section.tabsAria') },
     async run(page) {
@@ -1073,7 +1066,7 @@ const CHECKS = [
       const textoPlegado = (await page.locator('[data-mcp-section] [role="tabpanel"]').textContent())?.includes(ui('mcp.servers.intro.commons')) ?? true;
       const ok =
         arriba.tarjetaAntesDePestañas && arriba.interruptor && !textoPlegado &&
-        Object.values(porPestaña).every((p) => p.tablas === 0 && p.tamañosDeEtiqueta.length <= 1) &&
+        Object.entries(porPestaña).every(([tab, p]) => (tab === 'connectors' ? p.tablas >= 1 : p.tablas === 0) && p.tamañosDeEtiqueta.length <= 1) &&
         porPestaña.servers.filas > 0 && porPestaña.connectors.filas > 0;
       return { ok, detail: JSON.stringify({ arriba, textoPlegado, porPestaña }) };
     },
@@ -2139,7 +2132,7 @@ const CHECKS = [
         }, CODEX_REVERT_FIXTURE_ID);
         await instance.page.screenshot({ path: path.join(runDir, 'historial-codex-revert.png') });
         const migrada = await instance.page.evaluate(({ from, to, id }) => window.mage.migrateConversation({
-          sourceAccountDir: from, sourceProvider: 'codex', sessionId: id, cwd: 'C:\\proyecto', privacy: 'shared', destAccountDir: to, destProvider: 'codex',
+          sourceAccountDir: from, sourceProvider: 'codex', sessionId: id, cwd: 'C:\\proyecto', destAccountDir: to, destProvider: 'codex',
         }), { from: fx.codexHome, to: fx.codexHome2, id: CODEX_REVERT_FIXTURE_ID });
         const escrito = readCodexRolloutText(fx.codexHome2, migrada.sessionId);
         const medido = {
@@ -2187,7 +2180,7 @@ const CHECKS = [
       try {
         await refreshAccountsUntil(page, fx.codexHome2);
         const result = await page.evaluate(({ agyHome, codexHome2, id }) => window.mage.migrateConversation({
-          sourceAccountDir: agyHome, sourceProvider: 'agy', sessionId: id, cwd: 'C:\proyecto', privacy: 'shared', destAccountDir: codexHome2, destProvider: 'codex',
+          sourceAccountDir: agyHome, sourceProvider: 'agy', sessionId: id, cwd: 'C:\proyecto', destAccountDir: codexHome2, destProvider: 'codex',
         }), { agyHome: fx.agyHome, codexHome2: fx.codexHome2, id: AGY_FIXTURE_ID });
         const listar = (dir) => page.evaluate((d) => window.mage.listConversations(d), dir);
         const enCodex = await listar(fx.codexHome2);
@@ -2390,15 +2383,16 @@ const CHECKS = [
         permissionModes: { claude: null, codex: [':read-only', ':workspace', ':danger-full-access'] },
       })));
       const measured = await page.evaluate(() => ({
-        model: document.querySelectorAll(`[aria-label="${window.__mageDev.t('prompt.model.ariaLabel').replace(/["\\]/g, '\\$&')}"]`).length,
-        effort: document.querySelectorAll(`[aria-label="${window.__mageDev.t('prompt.effort.ariaLabel').replace(/["\\]/g, '\\$&')}"]`).length,
+        model: document.querySelectorAll('[data-model-menu]').length,
         permission: document.querySelectorAll(`[aria-label^="${window.__mageDev.t('chat.permissions.mode.title').replace(/["\\]/g, '\\$&')}"]`).length,
       }));
-      await page.getByRole('button', { name: ui('prompt.model.ariaLabel') }).click();
-      await page.getByRole('option', { name: 'GPT-6-Astra' }).click();
-      await page.getByRole('button', { name: ui('prompt.effort.ariaLabel') }).click();
-      await page.locator('[data-step-slider-popover] input[type="range"]').press('ArrowRight');
-      await page.keyboard.press('Escape');
+      // El esfuerzo vive DENTRO del menú del modelo: una fila «Esfuerzo» con su submenú.
+      await page.locator('[data-model-menu]').click();
+      const effortRows = await page.locator('[data-menu-effort]').count();
+      await page.getByRole('menuitemradio', { name: 'GPT-6-Astra' }).click();
+      await page.locator('[data-model-menu]').click();
+      await page.locator('[data-menu-effort]').click();
+      await page.getByRole('menuitemradio', { name: ui('prompt.effort.step.medium') }).click();
       await page.getByRole('button', { name: new RegExp('^' + uiPrefix('prompt.permission.ariaLabel').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).click();
       await page.locator('[role="listbox"] [data-value=":workspace|never"]').click();
       const selected = await page.evaluate(() => {
@@ -2406,9 +2400,9 @@ const CHECKS = [
         const tab = state.tabs.find((item) => item.id === state.activeTabId);
         return { model: tab?.model, effort: tab?.effort, permissionMode: tab?.permissionMode };
       });
-      return { ok: measured.model === 1 && measured.effort === 1 && measured.permission === 1
+      return { ok: measured.model === 1 && effortRows === 1 && measured.permission === 1
         && selected.model === 'gpt-6-astra' && selected.effort === 'medium' && selected.permissionMode === ':workspace|never',
-        detail: JSON.stringify({ ...measured, selected }) };
+        detail: JSON.stringify({ ...measured, effortRows, selected }) };
     },
   },
   {
@@ -2802,6 +2796,7 @@ const CHECKS = [
     // la guarda y el renderer nuevo la recoge al acabar de restaurar. Se mide en la ventana NUEVA por
     // CDP que la pestaña esta alli con su titulo, y en la de origen que ya no. No se envia nada ni se
     // arranca ninguna sesion; la ventana nueva se cierra al final (una secundaria no pregunta).
+    // Espera al montaje de la ventana nueva y sondea el origen (P-043, 43).
     name: 'P-028 36: mover una pestaña a una ventana nueva la entrega alli y la quita de aqui',
     async run(page) {
       const before = countMainPages(page);
@@ -2829,10 +2824,16 @@ const CHECKS = [
           if (nueva === null) await page.waitForTimeout(200);
         }
         if (nueva !== null) {
-          await nueva.locator('[data-tab-id]').filter({ hasText: title }).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).catch(() => {});
-          medido.enLaNueva = await nueva.locator('[data-tab-id]').filter({ hasText: title }).count();
+          // Intermitente medido (enLaNueva: 0): la ventana nueva aún no había montado su workbench.
+          medido.montada = await nueva.waitForFunction((marca) => performance.getEntriesByName(marca).length > 0, WORKBENCH_MOUNTED_MARK, { timeout: CONFIG.actionTimeoutMs * 2 }).then(() => true, () => false);
+          const pestana = nueva.locator('[data-tab-id]').filter({ hasText: title });
+          medido.llego = await pestana.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs * 2 }).then(() => true, () => false);
+          medido.enLaNueva = await pestana.count();
+          medido.urlNueva = nueva.url();
+          medido.pestanasNueva = await nueva.locator('[data-tab-id]').allTextContents();
         }
-        medido.enElOrigen = await page.evaluate((id) => window.__mageDev.store.getState().tabs.some((t) => t.id === id), tabId);
+        // El origen la quita cuando main confirma la entrega: se sondea hasta el plazo, no se lee una vez.
+        medido.enElOrigen = await page.waitForFunction((id) => !window.__mageDev.store.getState().tabs.some((t) => t.id === id), tabId, { timeout: CONFIG.actionTimeoutMs }).then(() => false, () => true);
       } catch (error) {
         medido.fallo = error.message;
       } finally {
@@ -2865,6 +2866,47 @@ const CHECKS = [
     },
   },
   {
+    // D9 (13-11): un enlace soltado SOBRE EL PROMPT inserta su URL; en el resto de la ventana sigue bloqueado
+    // (documentDropGuard.ts, H2). Arrastre sintético con un DataTransfer propio: no navega ni envía nada.
+    name: 'D9: un enlace soltado sobre el prompt inserta la URL; fuera sigue bloqueado',
+    state: { tabs: 1 },
+    async run(page) {
+      const prompt = page.getByRole('textbox', { name: ui('prompt.editor.ariaLabel') });
+      await prompt.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await clearPrompt(page);
+      const url = 'https://example.com/vg-d9';
+      const medido = await page.evaluate((enlace) => {
+        const editores = document.querySelectorAll('[data-prompt-editor="true"] .cm-content');
+        const lateral = document.querySelector('[data-chat-sidebar="true"]');
+        if (editores.length !== 1 || lateral === null) return { editores: editores.length, lateral: lateral !== null };
+        const caja = editores[0].getBoundingClientRect();
+        const arrastre = (destino, tipo) => {
+          const datos = new DataTransfer();
+          datos.setData('text/uri-list', enlace);
+          datos.setData('text/plain', enlace);
+          const evento = new DragEvent(tipo, { dataTransfer: datos, bubbles: true, cancelable: true, clientX: caja.left + 4, clientY: caja.top + caja.height / 2 });
+          destino.dispatchEvent(evento);
+          return { cancelado: evento.defaultPrevented, efecto: datos.dropEffect };
+        };
+        const antes = location.href;
+        const sobrePrompt = arrastre(editores[0], 'dragover');
+        arrastre(editores[0], 'drop');
+        const fuera = arrastre(lateral, 'dragover');
+        arrastre(lateral, 'drop');
+        return { editores: 1, lateral: true, sobrePrompt, fuera, mismaUrl: location.href === antes };
+      }, url);
+      await page.waitForTimeout(CONFIG.settleMs);
+      medido.documento = await promptDocument(page);
+      await clearPrompt(page);
+      // `efecto` se anota pero no se exige: el DataTransfer sintético no conserva `dropEffect` (medido: 'none' en los dos).
+      const ok = medido.sobrePrompt?.cancelado === true
+        && medido.documento.split(url).length === 2
+        && medido.fuera?.cancelado === true
+        && medido.mismaUrl === true;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
     // Input rico (M3), la otra mitad que seguia siendo manual: Shift+Enter continua la lista con el
     // marcador siguiente, y en un item VACIO sale de la lista. Shift+Enter NO envia (el envio es Enter a
     // secas), asi que aqui no se dispara ningun turno.
@@ -2889,6 +2931,30 @@ const CHECKS = [
         ok,
         detail: `tras 1er Shift+Enter=${JSON.stringify(continued)} tras escribir y repetir=${JSON.stringify(second)} sobre item vacio=${JSON.stringify(exited)}`,
       };
+    },
+  },
+  {
+    // U-A6 (punto 13): Retroceso justo tras el marcador de una lista lo borra entero (el guion ya era atómico; el
+    // número no). Enter en una lista con contenido solo continúa la lista, no envía: ningún turno.
+    name: 'Input rico: Retroceso tras el número borra el marcador entero',
+    state: { tabs: 1 },
+    async run(page) {
+      const prompt = page.getByRole('textbox', { name: ui('prompt.editor.ariaLabel') });
+      await prompt.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await clearPrompt(page);
+      await typeInPrompt(page, '1. uno');
+      await prompt.press('Enter');
+      const continuada = await promptDocument(page);
+      await prompt.press('Backspace');
+      const trasRetroceso = await promptDocument(page);
+      await clearPrompt(page);
+      await typeInPrompt(page, '- x');
+      await prompt.press('ArrowLeft');
+      await prompt.press('Backspace');
+      const trasGuion = await promptDocument(page);
+      await clearPrompt(page);
+      const ok = continuada === '1. uno\n2. ' && trasRetroceso === '1. uno\n' && trasGuion === 'x';
+      return { ok, detail: `tras Enter=${JSON.stringify(continuada)} tras Retroceso=${JSON.stringify(trasRetroceso)} guion=${JSON.stringify(trasGuion)}` };
     },
   },
   {
@@ -3025,12 +3091,14 @@ const CHECKS = [
       });
       await clearNotifications(page);
       await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      const initial = (await trigger.innerText()).trim();
-      // Elegir la opción que ya está puesta no es un cambio: no avisa (el Dropdown no dispara onChange).
-      await pickDropdownOption(page, ui('prompt.model.ariaLabel'), new RegExp(`^${escapeRegExp(initial)}$`, 'i'));
+      // El chip dice «modelo esfuerzo»: la etiqueta del modelo es su primer tramo.
+      const modelLabel = () => trigger.locator('[data-model-label]').innerText().then((text) => text.trim());
+      const initial = await modelLabel();
+      // Elegir la opción que ya está puesta no es un cambio: no avisa (el menú no dispara onModel).
+      await pickModelOption(page, new RegExp(`^${escapeRegExp(initial)}$`, 'i'));
       await page.waitForTimeout(CONFIG.settleMs);
       const avisosSinCambio = await page.locator('[data-notification-toasts="true"] [data-notification-level]').count();
-      const opus = await pickDropdownOption(page, ui('prompt.model.ariaLabel'), /opus/i);
+      const opus = await pickModelOption(page, /opus/i);
       if (opus === null) return { ok: false, detail: `no hay ninguna opcion de Opus en el selector (modelo actual=${JSON.stringify(initial)})` };
       // Grupo G: el aviso es un toast de la pestaña (`warning` si encarece), con su ✕.
       const toast = page.locator('[data-notification-toasts="true"] [data-notification-level]');
@@ -3042,10 +3110,10 @@ const CHECKS = [
       await toast.first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
       const dismissed = await toast.count();
       // Reponer el modelo de partida y vaciar los avisos que provoca el propio cambio de vuelta.
-      await pickDropdownOption(page, ui('prompt.model.ariaLabel'), new RegExp(`^${escapeRegExp(initial)}$`, 'i'));
+      await pickModelOption(page, new RegExp(`^${escapeRegExp(initial)}$`, 'i'));
       await page.waitForTimeout(CONFIG.settleMs);
       await clearNotifications(page);
-      const restored = (await trigger.innerText()).trim();
+      const restored = await modelLabel();
       if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       else if (modeloPrevio !== null) await page.evaluate((m) => window.__mageDev.store.getState().setActiveModel(m), modeloPrevio);
       await clearNotifications(page);
@@ -3082,50 +3150,319 @@ const CHECKS = [
     },
   },
   {
-    // Ronda 3, item 5: el menu "nacia desde arriba de la pantalla, no del boton". El calculo del `top`
-    // clampaba contra el borde de la VENTANA sin mirar el trigger; con el boton abajo (PromptBar) el
-    // menu aparecia muy por encima, desconectado. Se mide la separacion REAL entre las dos cajas: da
-    // igual si vuelca hacia arriba o hacia abajo, pero tiene que estar PEGADO a una de las dos caras.
-    // Solo se ABRE el menu (Escape para cerrarlo): elegir una opcion cambiaria el esfuerzo de verdad.
-    name: 'Esfuerzo: el popover del deslizador nace pegado a su chip y trae sus pasos (StepSlider)',
+    // B1 (0.1.6): el modelo y el esfuerzo son UN chip. Antes el popover del deslizador de esfuerzo «nacía
+    // desde arriba de la pantalla, no del botón» (Ronda 3, item 5): se sigue midiendo la separación REAL
+    // entre el menú y su chip, ahora con el menú del modelo, sus modelos más nuevos y los dos submenús.
+    // El nivel de esfuerzo se cambia de verdad en la pestaña y se REPONE por el mismo camino al acabar.
+    name: 'Modelo: el menú se abre pegado a su chip, con los modelos más nuevos, Esfuerzo y Más modelos',
     async run(page) {
-      // P-028 32/33: modo y esfuerzo son deslizadores de pasos. Grupo A (0.1.2, punto 4): se RECORREN todos
-      // los pasos con el teclado midiendo que ni el chip ni el popover se mueven (el de modo saltaba 16 px
-      // y el popover iba un paso por detras) y que el pulgar dibujado llega a su sitio con transicion. Al
-      // terminar se vuelve al paso de partida: el modo o el esfuerzo cambiado romperia las siguientes.
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
       });
-      const propia = (await page.locator(`button[aria-label^="${cssAttr(uiPrefix('prompt.permission.ariaLabel'))}"]`).count()) === 0;
+      const propia = (await page.locator('[data-model-menu]').count()) === 0;
       if (propia) await openTemporaryConversation(page);
-      const casos = [
-        { chip: `button[aria-label="${cssAttr(ui('prompt.effort.ariaLabel'))}"]`, pasos: 6 },
-      ];
-      const medidas = [];
+      const chip = page.locator('[data-model-menu]').first();
+      const nivelActual = () => chip.evaluate((node) => node.lastElementChild?.textContent?.trim() ?? '');
+      const dentroDeLaVentana = (selector) =>
+        page.evaluate((css) => {
+          const r = document.querySelector(css).getBoundingClientRect();
+          return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, dentro: r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight };
+        }, selector);
+      let catalogoPrevio = null;
       try {
-        for (const caso of casos) {
-          medidas.push(await walkStepSlider(page, caso));
-          await clearNotifications(page); // avisos provocados por este recorrido, fuera de la medida siguiente
-        }
+        await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        // El catálogo de reserva del perfil trae UN modelo por familia (sin «Más modelos»): se siembra el de una
+        // cuenta con varias versiones para medir el reparto; se repone en el `finally`.
+        catalogoPrevio = await page.evaluate((modelos) => {
+          const s = window.__mageDev.store.getState();
+          const tab = s.tabs.find((t) => t.id === s.activeTabId);
+          const key = tab.resolvedConfigDir ?? tab.accountId;
+          window.__mageDev.store.setState({ modelCatalogByAccount: { ...s.modelCatalogByAccount, [key]: modelos } });
+          return s.modelCatalogByAccount;
+        }, MODEL_MENU_CATALOG);
+        const proveedor = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          return s.tabs.find((t) => t.id === s.activeTabId)?.provider ?? null;
+        });
+        const chipBox = await chip.boundingBox();
+        const nivelInicial = await nivelActual();
+        await chip.click();
+        const menu = page.getByRole('menu', { name: ui('prompt.model.ariaLabel') });
+        await menu.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await waitForStillBox(page, '[role="menu"][aria-label]');
+        const principal = await dentroDeLaVentana('[role="menu"][aria-label]');
+        const etiquetas = await menu.getByRole('menuitemradio').evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim() ?? ''));
+        const familias = etiquetas.map((e) => /^(\S+)\s+\d/.exec(e)?.[1] ?? e);
+        const hueco = chipBox.y - principal.bottom;
+        await page.screenshot({ path: path.join(CONFIG.outDir, 'b1-menu-modelo.png') });
+        // «Más modelos»: se abre al pasar el ratón y no se sale de la ventana.
+        await page.locator('[data-menu-more]').hover();
+        await page.locator('[data-model-submenu="more"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await waitForStillBox(page, '[data-model-submenu="more"]'); // el submenú entra animado
+        const masModelos = await dentroDeLaVentana('[data-model-submenu="more"]');
+        const nMas = await page.locator('[data-model-submenu="more"] [role="menuitemradio"]').count();
+        await page.screenshot({ path: path.join(CONFIG.outDir, 'b1-submenu-mas-modelos.png') });
+        // «Esfuerzo»: se abre al pasar el ratón, no se sale de la ventana y lleva UN ✓.
+        await page.locator('[data-menu-effort]').hover();
+        const sub = page.locator('[data-model-submenu="effort"]');
+        await sub.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await waitForStillBox(page, '[data-model-submenu="effort"]'); // el submenú entra animado
+        const esfuerzo = await dentroDeLaVentana('[data-model-submenu="effort"]');
+        const marcas = await sub.locator('[aria-checked="true"]').count();
+        const marcaConIcono = await sub.locator('[aria-checked="true"] svg').count();
+        await page.screenshot({ path: path.join(CONFIG.outDir, 'b1-submenu-esfuerzo.png') });
+        const otro = sub.locator('[role="menuitemradio"][aria-checked="false"]').first();
+        const otroNivel = ((await otro.textContent()) ?? '').trim();
+        await otro.click();
+        await menu.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const nivelNuevo = await nivelActual();
+        // Reponer el nivel de partida por el mismo camino y vaciar los avisos de coste que provoca.
+        await chip.click();
+        await page.locator('[data-menu-effort]').click();
+        await page.locator('[data-model-submenu="effort"]').getByRole('menuitemradio', { name: nivelInicial, exact: true }).click();
+        await menu.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const nivelRepuesto = await nivelActual();
+        await clearNotifications(page);
+        const ok =
+          proveedor === 'claude' &&
+          principal.dentro &&
+          hueco >= 0 && hueco <= 8 &&
+          etiquetas.join(',') === MODEL_MENU_NEWEST.join(',') && new Set(familias).size === etiquetas.length &&
+          nMas === MODEL_MENU_CATALOG.length - MODEL_MENU_NEWEST.length && masModelos.dentro &&
+          esfuerzo.dentro && marcas === 1 && marcaConIcono === 1 &&
+          nivelNuevo === otroNivel && nivelNuevo !== nivelInicial && nivelRepuesto === nivelInicial;
+        return {
+          ok,
+          detail: JSON.stringify({ proveedor, principal, hueco, etiquetas, masModelos: { ...masModelos, modelos: nMas }, esfuerzo, marcas, marcaConIcono, nivelInicial, otroNivel, nivelNuevo, nivelRepuesto }),
+        };
       } finally {
+        if (catalogoPrevio !== null) await page.evaluate((catalogo) => window.__mageDev.store.setState({ modelCatalogByAccount: catalogo }), catalogoPrevio);
         if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       }
-      // Tolerancia de 24 px en el hueco: el `top` se calcula con una estimacion del alto del popover.
-      const ok = medidas.every(
-        (m) =>
-          m.gap <= 24 &&
-          m.pasos === m.esperados &&
-          m.recorridos === m.esperados &&
-          m.desplazamientoChip <= SLIDER_STILL_TOLERANCE_PX &&
-          m.desplazamientoPopover <= SLIDER_STILL_TOLERANCE_PX &&
-          Math.max(...Object.values(m.filaDeriva)) <= SLIDER_STILL_TOLERANCE_PX &&
-          m.errorPulgar <= 1 &&
-          m.transicion !== '0s' &&
-          m.vuelveAlInicio &&
-          m.valuetext.length > 0,
-      );
-      return { ok, detail: JSON.stringify(medidas) };
+    },
+  },
+  {
+    // Ultracode (0.1.6): interruptor al final del submenú «Esfuerzo», solo en pestañas de Claude. Se enciende de
+    // verdad (estado de la pestaña) y se deja APAGADO al acabar; en Codex la fila no existe. No manda ningún turno.
+    name: 'Modelo: Ultracode en el submenú de esfuerzo, solo en Claude',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      const propia = (await page.locator('[data-model-menu]').count()) === 0;
+      if (propia) await openTemporaryConversation(page);
+      const chip = page.locator('[data-model-menu]').first();
+      const ultracodeDelEstado = () => page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return s.tabs.find((t) => t.id === s.activeTabId)?.ultracode === true;
+      });
+      try {
+        await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const proveedor = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          return s.tabs.find((t) => t.id === s.activeTabId)?.provider ?? null;
+        });
+        await chip.click();
+        await page.locator('[data-menu-effort]').click();
+        const fila = page.locator('[data-model-submenu="effort"] [data-menu-ultracode]');
+        await fila.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await waitForStillBox(page, '[data-model-submenu="effort"]');
+        const apagadoAlAbrir = (await fila.getAttribute('aria-checked')) === 'false';
+        await fila.click();
+        const encendido = (await fila.getAttribute('aria-checked')) === 'true';
+        const menuAbierto = await page.locator('[data-model-submenu="effort"]').isVisible();
+        const enEstado = await ultracodeDelEstado();
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        await page.locator('[data-model-menu][aria-expanded="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const enChip = ((await chip.textContent()) ?? '').includes(ui('prompt.ultracode.label'));
+        // Dejarlo apagado por el mismo camino.
+        await chip.click();
+        await page.locator('[data-menu-effort]').click();
+        await page.locator('[data-model-submenu="effort"] [data-menu-ultracode]').click();
+        const apagadoAlFinal = !(await ultracodeDelEstado());
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        await page.locator('[data-model-menu][aria-expanded="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await clearNotifications(page);
+        // En Codex la fila no existe.
+        await page.evaluate(() => window.__mageDev.store.setState((state) => ({
+          tabs: state.tabs.map((tab) => (tab.id === state.activeTabId ? { ...tab, provider: 'codex', model: 'gpt-6.1-sol', effort: 'low' } : tab)),
+        })));
+        await chip.click();
+        await page.locator('[data-menu-effort]').click();
+        await page.locator('[data-model-submenu="effort"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const filasEnCodex = await page.locator('[data-menu-ultracode]').count();
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        const ok = proveedor === 'claude' && apagadoAlAbrir && encendido && menuAbierto && enEstado && enChip && apagadoAlFinal && filasEnCodex === 0;
+        return { ok, detail: JSON.stringify({ proveedor, apagadoAlAbrir, encendido, menuAbierto, enEstado, enChip, apagadoAlFinal, filasEnCodex }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      }
+    },
+  },
+  {
+    // 0.1.6, grupo C: una creadora con dos subsesiones («Hola 1», «Hola 2»). El lateral las anida bajo ella (guía
+    // vertical + chevron que las pliega), el chat lleva una tarjeta por `mage_create_session` y las dos respuestas
+    // recibidas seguidas son UNA línea «Recibió 2 mensajes» que, desplegada, enseña las dos. Todo sembrado en el
+    // estado (historial y bloques): no spawnea ningún CLI ni manda ningún turno.
+    name: 'Subsesiones: nombre, anidadas en el lateral, tarjeta en el chat y respuestas agrupadas',
+    state: { tabs: 1 },
+    async run(page, { runDir }) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, blocksByChat: s.blocksByChat, allConversationHistory: s.allConversationHistory, loadConversationHistory: s.loadConversationHistory };
+      });
+      try {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const s = store.getState();
+          const creadora = 'vg58-madre';
+          const subsesiones = [['Hola 1', 'vg58-h1'], ['Hola 2', 'vg58-h2']];
+          const herramienta = ([title, conversationId], i) => ({
+            kind: 'tool', id: `vg58-t${i}`, toolUseId: `u-vg58-${i}`, tool: 'mcp__mage__mage_create_session', toolClass: 'command', command: '', meta: 'ok',
+            isError: false, output: [], filePath: null, diff: null, writtenContent: null, artifact: null, artifactDraft: null,
+            delegation: { title, conversationId }, delegationDraft: { title }, parentToolUseId: null,
+          });
+          const respuesta = ([title, conversationId], i) => ({
+            kind: 'user', id: `vg58-u${i}`, text: `<mage-session-result name="${title}" id="${conversationId}">\nhola desde ${title}\n</mage-session-result>`,
+            time: '12:00', attachments: [], nativeId: null,
+          });
+          const cwd = s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? '';
+          const hijas = subsesiones.map(([title, sessionId], i) => ({
+            accountId: s.activeAccountId,
+            item: { configDir: '', title, privacy: 'shared', sizeBytes: 1, isScheduled: false, sessionId, cwd, updatedAtMs: Date.now() - i * 1000, createdByConversationId: creadora },
+          }));
+          store.setState({
+            loadConversationHistory: async () => undefined,
+            allConversationHistory: hijas,
+            tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, resumeSessionId: creadora } : t)),
+            blocksByChat: { ...s.blocksByChat, [s.activeTabId]: [...subsesiones.map(herramienta), ...subsesiones.map(respuesta)] },
+          });
+        });
+        await page.locator('[data-delegation-card]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const medir = () => page.evaluate(() => {
+          const rama = [...document.querySelectorAll('[data-chat-sidebar] [data-row-branch]')].find((n) => n.querySelector(':scope > [data-sidebar-row] [data-row-fold]') !== null) ?? null;
+          const hijos = rama?.querySelector(':scope > [data-row-children]') ?? null;
+          return {
+            ramas: document.querySelectorAll('[data-chat-sidebar] [data-row-branch]').length,
+            guia: hijos === null ? null : getComputedStyle(hijos).borderLeftWidth,
+            hijas: hijos === null ? [] : [...hijos.querySelectorAll('[data-sidebar-row]')].map((n) => n.textContent?.trim()),
+            plegado: rama?.querySelector('[data-row-fold]')?.getAttribute('data-row-fold') ?? null,
+          };
+        });
+        const desplegado = await medir();
+        await page.screenshot({ path: path.join(runDir, 'subsesiones-lateral-y-tarjetas-grupo-plegado.png') });
+        const chevron = page.locator('[data-chat-sidebar] [data-row-fold]').first();
+        await chevron.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const plegado = await medir();
+        await chevron.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const vuelto = await medir();
+        const tarjetas = await page.evaluate(() => [...document.querySelectorAll('[data-delegation-card]')].map((n) => ({ id: n.getAttribute('data-delegation-card'), texto: n.textContent?.trim() })));
+        const grupo = page.locator('[data-session-results]');
+        const grupos = await grupo.count();
+        const resumen = ((await grupo.locator('summary').first().textContent()) ?? '').trim();
+        // `ui()` no formatea plurales: se pide el texto al traductor de la propia app.
+        const esperado = await page.evaluate(() => window.__mageDev.t('chat.sessionResult.received', { count: 2 }));
+        const abiertoAntes = await grupo.first().evaluate((n) => n.open);
+        await grupo.locator('summary').first().click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const respuestas = await grupo.first().locator('[data-session-result]').count();
+        await page.screenshot({ path: path.join(runDir, 'subsesiones-grupo-desplegado.png') });
+        const ok = desplegado.ramas === 1 && desplegado.guia === '1px' && desplegado.hijas.join('|') === 'Hola 1|Hola 2' && desplegado.plegado === 'open'
+          && plegado.hijas.length === 0 && plegado.plegado === 'closed' && vuelto.hijas.length === 2
+          && tarjetas.map((c) => c.texto).join('|') === 'Hola 1|Hola 2' && tarjetas.map((c) => c.id).join('|') === 'vg58-h1|vg58-h2'
+          && grupos === 1 && resumen === esperado && abiertoAntes === false && respuestas === 2;
+        return { ok, detail: JSON.stringify({ desplegado, plegado, vuelto, tarjetas, grupos, resumen, abiertoAntes, respuestas }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      }
+    },
+  },
+  {
+    // Decisión 13-11 (devolución 92): una subsesión del MCP no abre pestaña. Se siembra la entrada de segundo plano
+    // con su sesión del host (como la deja `adoptLiveSession`) y se mide que cuelga de su creadora con su aviso, que
+    // sube a la creadora plegada y a la carpeta, y que pulsarla (fila o tarjeta) pide abrirla con
+    // `openDelegatedSession`, sustituida por un registro. No spawnea ningún CLI, no pulsa Enter y no llama a
+    // `attachSession`.
+    name: 'Subsesiones sin pestaña: fila anidada con su aviso, sube a la creadora plegada y a la carpeta, y se abre al pulsarla',
+    state: { tabs: 1 },
+    async run(page, { runDir }) {
+      const carpeta = path.join(runDir, 'vg92-proyecto');
+      fs.mkdirSync(carpeta, { recursive: true });
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return {
+          tabs: s.tabs, activeTabId: s.activeTabId, blocksByChat: s.blocksByChat, allConversationHistory: s.allConversationHistory,
+          loadConversationHistory: s.loadConversationHistory, backgroundSessions: s.backgroundSessions, openDelegatedSession: s.openDelegatedSession, settings: s.settings, trustRequests: s.trustRequests,
+        };
+      });
+      try {
+        await page.evaluate((cwd) => {
+          const store = window.__mageDev.store;
+          const s = store.getState();
+          const herramienta = {
+            kind: 'tool', id: 'vg92-t0', toolUseId: 'u-vg92-0', tool: 'mcp__mage__mage_create_session', toolClass: 'command', command: '', meta: 'ok',
+            isError: false, output: [], filePath: null, diff: null, writtenContent: null, artifact: null, artifactDraft: null,
+            delegation: { title: 'VG hija', conversationId: 'vg92-hija' }, delegationDraft: { title: 'VG hija' }, parentToolUseId: null,
+          };
+          const hostSession = {
+            sessionId: 'vg92-hija', conversationId: 'vg92-hija', nativeId: null, provider: 'claude', accountId: s.activeAccountId, configDir: s.activeAccountId,
+            cwd, model: 'haiku', title: 'VG hija', origin: 'mcp', createdBy: { conversationId: 'vg92-madre', sessionId: 'vg92-madre-viva' },
+          };
+          store.setState({
+            loadConversationHistory: async () => undefined,
+            allConversationHistory: [],
+            openDelegatedSession: async (id) => { window.__vg92Abiertas = [...(window.__vg92Abiertas ?? []), id]; },
+            tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, resumeSessionId: 'vg92-madre', cwd } : t)),
+            blocksByChat: { ...s.blocksByChat, [s.activeTabId]: [herramienta] },
+            backgroundSessions: {
+              ...s.backgroundSessions,
+              'vg92-hija': { sessionId: 'vg92-hija', conversationId: 'vg92-hija', title: 'VG hija', accountId: s.activeAccountId, state: 'needs_action', sinceMs: Date.now(), hostSession },
+            },
+          });
+        }, carpeta);
+        const medido = {};
+        // Cambiar el `cwd` de la pestaña hace que git pregunte por la confianza de la carpeta (una vez por carpeta; la
+        // decide main, no los ajustes del renderer). Se espera a esa petición y se descarta del estado SIN contestarla:
+        // contestar escribiría en los ajustes de main. Sin descartarla, su diálogo modal tapa el lateral.
+        await page.waitForFunction((cwd) => window.__mageDev.store.getState().trustRequests.includes(cwd), carpeta, { timeout: 10_000 }).catch(() => undefined);
+        await page.evaluate((cwd) => window.__mageDev.store.setState((s) => ({ trustRequests: s.trustRequests.filter((f) => f !== cwd) })), carpeta);
+        const hija = page.locator('[data-chat-sidebar] [data-row-children] [data-history-session="vg92-hija"]');
+        await hija.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const filaHija = page.locator('[data-sidebar-row]', { has: page.locator('[data-history-session="vg92-hija"]') });
+        medido.hijaAtencion = await filaHija.locator('[data-row-indicator="attention"]').count();
+        medido.pestanas = await page.evaluate(() => window.__mageDev.store.getState().tabs.length);
+        const proyecto = page.locator('[data-sidebar-group="project"]', { has: page.locator('[data-project-key$="/vg92-proyecto"]') });
+        medido.atencionCarpeta = await proyecto.locator('[data-project-attention]').first().getAttribute('data-project-attention');
+        medido.filasCarpeta = await proyecto.locator('[data-project-count]').first().getAttribute('data-project-count');
+        await page.screenshot({ path: path.join(runDir, 'subsesion-sin-pestana.png') });
+        const chevron = proyecto.locator('[data-row-fold]').first();
+        await chevron.click();
+        await page.locator('[data-history-session="vg92-hija"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        medido.madrePlegada = await proyecto.locator('[data-row-branch] > [data-sidebar-row]').first().locator('[data-row-indicator="attention"]').count();
+        await page.screenshot({ path: path.join(runDir, 'subsesion-creadora-plegada.png') });
+        await chevron.click();
+        await hija.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await hija.click();
+        await page.waitForFunction(() => window.__vg92Abiertas?.length === 1, undefined, { timeout: CONFIG.actionTimeoutMs });
+        await page.locator('[data-delegation-card="vg92-hija"]').click();
+        await page.waitForFunction(() => window.__vg92Abiertas?.length === 2, undefined, { timeout: CONFIG.actionTimeoutMs });
+        medido.abiertas = await page.evaluate(() => window.__vg92Abiertas);
+        const ok = medido.hijaAtencion === 1 && medido.pestanas === previo.tabs.length && medido.atencionCarpeta === '1' && medido.filasCarpeta === '2'
+          && medido.madrePlegada === 1 && JSON.stringify(medido.abiertas) === JSON.stringify(['vg92-hija', 'vg92-hija']);
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.evaluate(() => { delete window.__vg92Abiertas; });
+        fs.rmSync(carpeta, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      }
     },
   },
   {
@@ -3280,6 +3617,8 @@ const CHECKS = [
       // el aviso del dialogo sigue en el DOM y se contaria como si fuera el del estado vacio (dos
       // recuadros en vez de uno). Con `modalExitMs` la medida salia distinta segun la ejecucion.
       await page.locator(NEW_TAB_DIALOG).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      // Abre el menú del modelo para que su fila «Esfuerzo» (si la hay) esté en el DOM al medir.
+      await page.locator('[data-model-menu]').first().click();
       const measured = await page.evaluate((head) => {
         // El chip de la PromptBar es el unico role=status con aria-label; el recuadro del estado vacio
         // lleva el aviso como TEXTO. Distinguirlos importa: si se contaran juntos, tener solo uno de los
@@ -3300,11 +3639,14 @@ const CHECKS = [
             return `${node.tagName.toLowerCase()}${inDialog ? ' en-dialogo' : ''}${nested ? ' anidado' : ''}`;
           }),
           permissionModeControls: document.querySelectorAll(`[aria-label^="${window.__mageDev.t('chat.permissions.mode.title').replace(/["\\]/g, '\\$&')}"]`).length,
-          effortControls: document.querySelectorAll(`[aria-label="${window.__mageDev.t('prompt.effort.ariaLabel').replace(/["\\]/g, '\\$&')}"]`).length,
-          modelControls: document.querySelectorAll(`[aria-label="${window.__mageDev.t('prompt.model.ariaLabel').replace(/["\\]/g, '\\$&')}"]`).length,
+          // El esfuerzo es una fila del menú del modelo: se cuenta con el menú abierto (más abajo).
+          effortControls: document.querySelectorAll('[data-menu-effort]').length,
+          modelControls: document.querySelectorAll('[data-model-menu]').length,
           modelo: (() => { const s = window.__mageDev.store.getState(); return s.tabs.find((t) => t.id === s.activeTabId)?.model ?? null; })(),
         };
       }, NO_PERMISSION_HEAD);
+      await page.keyboard.press('Escape');
+      await page.locator('[data-model-menu][aria-expanded="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       // Un modelo de agy con sufijo de esfuerzo lo fija y oculta el control (I2, `agyModelFixesEffort`).
       const esfuerzoFijado = typeof measured.modelo === 'string' && AGY_EFFORT_LEVELS_FUENTE.some((nivel) => measured.modelo.endsWith(`-${nivel}`));
       const esfuerzoEsperado = esfuerzoFijado ? 0 : 1;
@@ -3910,6 +4252,8 @@ const CHECKS = [
           pastillas: document.querySelectorAll('[data-background-badge]').length,
           estado: badge?.getAttribute('data-background-badge') ?? null,
           texto: (row?.textContent ?? '').trim(),
+          // U-A2: la fila ya no escribe el estado en una segunda línea; lo dice la pastilla y el nombre accesible.
+          nombreAccesible: row?.querySelector('button[data-history-session]')?.getAttribute('aria-label') ?? '',
         };
       });
 
@@ -3920,7 +4264,7 @@ const CHECKS = [
         cerrado.sigueAbierta === false &&
         fila.pastillas === 1 &&
         fila.estado === 'done' &&
-        fila.texto.includes(ui('history.background.done'));
+        fila.nombreAccesible.includes(ui('history.background.done'));
       return {
         ok,
         detail: `al cerrar: estado=${cerrado.estado} pestaña cerrada=${!cerrado.sigueAbierta} · fila: pastillas=${fila.pastillas} estado=${fila.estado} texto=${JSON.stringify(fila.texto)}`,
@@ -4328,7 +4672,9 @@ const CHECKS = [
           const controles = pane?.querySelector('[data-prompt-controls="true"]');
           if (!host || !fila || !mas || !enviar || !controles) return null;
           const [f, h, m, e, c] = [fila, host, mas, enviar, controles].map((n) => n.getBoundingClientRect());
-          return { filaBottom: f.bottom, editorTop: h.top, editorRight: h.right, editorAlto: h.height, masBottom: m.bottom, enviarTop: e.top, enviarLeft: e.left, enviarBottom: e.bottom, controlesTop: c.top };
+          const linea = host.querySelector('.cm-line')?.getBoundingClientRect();
+          const centro = (r) => (r ? (r.top + r.bottom) / 2 : null);
+          return { centroLinea: centro(linea), centroEnviar: centro(e), centroMas: centro(m), filaBottom: f.bottom, editorTop: h.top, editorRight: h.right, editorAlto: h.height, masBottom: m.bottom, enviarTop: e.top, enviarLeft: e.left, enviarBottom: e.bottom, controlesTop: c.top };
         }, tabId);
       // El editor se carga en diferido: sin esperarlo, la primera medida de una tanda corta sale null.
       await page.locator(`[data-pane-tab-id="${tabId}"] [data-prompt-editor="true"] .cm-editor`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -4339,7 +4685,13 @@ const CHECKS = [
         await page.waitForTimeout(CONFIG.settleMs * 3);
         const largo = await medir();
         // Con el texto largo el editor crece hacia arriba: enviar se queda abajo y por encima de él no hay texto.
-        const ok = caso(vacio) && caso(largo) && largo.editorAlto > vacio.editorAlto + 10 && largo.enviarTop > largo.editorTop + 10;
+        // U-A1: con UNA línea, su centro coincide (±1,5 px) con el de enviar y el de «+».
+        const centrado =
+          vacio !== null &&
+          vacio.centroLinea !== null &&
+          Math.abs(vacio.centroLinea - vacio.centroEnviar) <= 1.5 &&
+          Math.abs(vacio.centroLinea - vacio.centroMas) <= 1.5;
+        const ok = centrado && caso(vacio) && caso(largo) && largo.editorAlto > vacio.editorAlto + 10 && largo.enviarTop > largo.editorTop + 10;
         return { ok, detail: JSON.stringify({ vacio, largo }) };
       } finally {
         await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, null), tabId);
@@ -4363,7 +4715,7 @@ const CHECKS = [
     // P-028, punto 2: cada pestaña lleva el MONOGRAMA de su cuenta y, si no es de Claude, una marca
     // corta del proveedor; la barra de estado dice el proveedor de la pestaña ENFOCADA. Se simula una
     // pestaña de agy cambiando solo su `provider` en el store (no se lanza nada) y se restaura.
-    name: '2: la pestaña lleva el monograma del PROVEEDOR (Q03) y la barra de estado dice el proveedor de la enfocada',
+    name: '2: la pestaña lleva el monograma del PROVEEDOR (Q03) y la barra de estado no nombra cuenta ni proveedor',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -4378,7 +4730,6 @@ const CHECKS = [
         const marca = () => pestana()?.querySelector('[data-tab-monogram]') ?? null;
         const monogramaClaude = marca()?.textContent ?? null;
         const tipClaude = marca()?.getAttribute('data-tip') ?? null;
-        const proveedorAntes = document.querySelector('[data-status-provider]')?.textContent ?? null;
         const marcaProveedorViejaAntes = pestana()?.querySelector('[data-tab-provider]') !== null;
         store.setState({ tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, provider: 'agy' } : t)) });
         await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -4386,10 +4737,10 @@ const CHECKS = [
           monogramaClaude,
           alias: cuenta?.alias ?? null,
           tipClaude,
-          marcaClaude: proveedorAntes,
           marcaProveedorViejaAntes,
           monogramaAgy: marca()?.textContent ?? null,
-          barraAgy: document.querySelector('[data-status-provider]')?.textContent ?? null,
+          // U-A3: la barra de estado ya no nombra cuenta ni proveedor.
+          barraConProveedor: document.querySelector('[data-status-bar] [data-status-provider]') !== null,
         };
       });
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
@@ -4398,10 +4749,9 @@ const CHECKS = [
         medido.monogramaClaude === 'C' &&
         medido.alias !== null &&
         (medido.tipClaude ?? '').includes(medido.alias) && // la cuenta exacta va en el tooltip
-        medido.marcaClaude === 'Claude' &&
         medido.marcaProveedorViejaAntes === false && // el recuadro de texto «claude» ya no existe
         medido.monogramaAgy === 'A' &&
-        medido.barraAgy === 'agy';
+        medido.barraConProveedor === false;
       return { ok, detail: JSON.stringify(medido) };
     },
   },
@@ -4565,8 +4915,8 @@ const CHECKS = [
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const siguen = await page.evaluate(() => window.__mageDev.store.getState().accounts.length);
       const ok =
-        !principalOfrece && otraOfrece && privateLineRegExp().test(texto) && texto.includes(ui('accounts.delete.sharedUntouched')) && siguen === cuentas.length;
-      return { ok, detail: JSON.stringify({ principalOfrece, otraOfrece, dicePrivadas: privateLineRegExp().test(texto), siguen }) };
+        !principalOfrece && otraOfrece && texto.includes(ui('accounts.delete.loginAndSettings')) && texto.includes(ui('accounts.delete.sharedUntouched')) && siguen === cuentas.length;
+      return { ok, detail: JSON.stringify({ principalOfrece, otraOfrece, dice: texto.includes(ui('accounts.delete.loginAndSettings')), siguen }) };
     },
   },
   {
@@ -4581,7 +4931,8 @@ const CHECKS = [
       await openTemporaryConversation(page);
       await page.waitForTimeout(CONFIG.settleMs);
       const medido = await page.evaluate(() => {
-        const selector = document.querySelector(`[aria-label="${window.__mageDev.t('prompt.model.ariaLabel').replace(/["\\]/g, '\\$&')}"]`);
+        // La etiqueta del modelo va dentro de `[data-model-menu]`; el esfuerzo, apagado, va al lado.
+        const selector = document.querySelector('[data-model-menu] [data-model-label]');
         const etiqueta = (selector?.textContent ?? '').replace(/[▾⌄]/g, '').trim();
         const visibles = [...document.querySelectorAll('body *')].filter(
           (n) => n.children.length === 0 && (n.textContent ?? '').replace(/[▾⌄]/g, '').trim() === etiqueta && n.getClientRects().length > 0,
@@ -4595,9 +4946,34 @@ const CHECKS = [
     },
   },
   {
+    // B1 (0.1.6, U-B2): debajo del input, a la derecha, primero PERMISOS y después MODELO (el esfuerzo vive
+    // dentro del menú del modelo). Se mide por posición, en la fila de información del chat.
+    name: 'Prompt: debajo del input, permisos antes que modelo',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      try {
+        const modelo = page.locator('[data-chat-info-bar] [data-model-menu]').first();
+        await modelo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const permisos = page.locator('[data-chat-info-bar] [data-permission-mode]').first();
+        await permisos.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const [p, m] = [await permisos.boundingBox(), await modelo.boundingBox()];
+        // Mismo renglón y el de permisos a la izquierda; si la fila se parte en dos líneas, el de permisos va antes.
+        const antes = p.y < m.y - 1 || (Math.abs(p.y - m.y) <= 1 && p.x + p.width <= m.x);
+        return { ok: antes, detail: `permisos=${JSON.stringify({ x: p.x, y: p.y, w: p.width })} modelo=${JSON.stringify({ x: m.x, y: m.y, w: m.width })}` };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
     // P-038: el «+» de abajo a la izquierda de la caja agrupa «Adjuntar imagen» (antes un clip suelto) y las acciones
     // del antiguo «⋯». «Abrir carpeta» sigue fuera: la carpeta se abre desde su insignia. Se abre y se cierra con Escape.
-    name: 'Menú «+» del prompt: con «Adjuntar imagen» y «Abrir terminal», sin «Abrir carpeta»',
+    name: 'Menú «+» del prompt: con «Adjuntar archivo» y «Abrir terminal», sin «Abrir carpeta»',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -4620,7 +4996,7 @@ const CHECKS = [
     // P-026, 1.7 (D19): la fila de una pestaña ABIERTA dice lo mismo que la de una cerrada —cuando y
     // cuanto pesa—, no `claude · opus[1m]`. Pestaña propia con un `resumeSessionId` falso y su fila de
     // historial inyectada; nada se spawnea.
-    name: 'Historial lateral: la fila de una pestaña abierta dice proveedor, cuenta y tiempo, sin peso ni modelo',
+    name: 'Historial lateral: la fila de un chat dice solo su nombre',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -4643,12 +5019,20 @@ const CHECKS = [
         const aguanta = await page.evaluate(() => window.__mageDev.store.getState().allConversationHistory.some((c) => c.item.sessionId === 'vg-fila'));
         if (aguanta) break;
       }
-      const linea = await page.evaluate(() => document.querySelector('button[aria-current="true"] [data-row-meta]')?.textContent?.trim() ?? null);
+      // U-A2: la fila activa es UNA línea con el título: sin segunda línea, sin monograma, sin cuenta ni tiempo.
+      const fila = await page.evaluate(() => {
+        const boton = document.querySelector('button[aria-current="true"]');
+        if (!boton) return null;
+        return {
+          meta: boton.querySelector('[data-row-meta]') !== null || boton.querySelector('[data-provider-monogram]') !== null,
+          texto: boton.textContent?.trim() ?? '',
+          alto: boton.getBoundingClientRect().height,
+        };
+      });
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
-      // Q02: la fila ya NO lleva el peso (va a la barra de estado): dice monograma del proveedor, cuenta y tiempo.
-      const ok = linea !== null && relativeTimeRegExp().test(linea) && !/\b(B|kB|MB)\b/.test(linea) && !/· (opus|sonnet|haiku)/.test(linea);
-      return { ok, detail: `segunda linea=${JSON.stringify(linea)}` };
+      const ok = fila !== null && !fila.meta && !relativeTimeRegExp().test(fila.texto) && !fila.texto.includes('·') && fila.alto <= 30;
+      return { ok, detail: `fila=${JSON.stringify(fila)}` };
     },
   },
   {
@@ -4934,6 +5318,46 @@ const CHECKS = [
       await restoreTurnState(page, previo);
       const ok = numeros[0] === '14' && numeros[1] === '' && pintado !== null && pintado.fondos.length === 3 && pintado.colores > 1;
       return { ok, detail: `columnas=${JSON.stringify(numeros)} fondos=${JSON.stringify(pintado?.fondos ?? null)} colores=${pintado?.colores ?? 0} (hunk real: oldStart=${REAL_HUNK.oldStart})` };
+    },
+  },
+  {
+    // Punto 14 de P-043: tras rebobinar, Actividad sigue enseñando lo descartado, atenuado y bajo «Rama descartada». Se monta el
+    // estado que deja `applyRewind` (rama guardada y bloques sustituidos); la captura la cubre discardedBranch.test.ts.
+    name: 'Punto 14: Actividad enseña la rama descartada atenuada y con su etiqueta',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      try {
+        await openTemporaryConversation(page);
+        await injectTurn(page, [
+          { kind: 'thinking_delta', text: 'pensamiento descartado' },
+          { kind: 'tool_use', tool: { toolUseId: 'v14-t1', toolName: 'Bash', input: { command: 'ls' } } },
+          { kind: 'tool_result', result: { toolUseId: 'v14-t1', isError: false, output: 'salida v14', durationMs: 3 } },
+        ]);
+        await page.locator('[data-turn-status]').first().click();
+        await page.locator('[data-panel="activity"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.evaluate(() => {
+          const st = window.__mageDev.store.getState();
+          const id = st.activeTabId;
+          const rama = (st.blocksByChat[id] ?? []).map((b) => ({ ...b, id: `discarded:${b.id}` }));
+          window.__mageDev.store.setState({ discardedBranchByChat: { ...st.discardedBranchByChat, [id]: rama }, blocksByChat: { ...st.blocksByChat, [id]: [] }, statusByChat: { ...st.statusByChat, [id]: 'idle' } });
+        });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const medido = await page.evaluate(() => {
+          const rama = document.querySelector('[data-panel="activity"] [data-activity-discarded="true"]');
+          return {
+            rama: rama !== null,
+            filas: rama?.querySelectorAll('[data-activity-row]').length ?? 0,
+            filasFuera: [...document.querySelectorAll('[data-panel="activity"] [data-activity-row]')].filter((n) => rama === null || !rama.contains(n)).length,
+            etiqueta: rama?.querySelector('[data-activity-discarded-label]')?.textContent?.trim() ?? '',
+            opacidad: rama === null ? null : getComputedStyle(rama).opacity,
+          };
+        });
+        const ok = medido.rama && medido.filas === 2 && medido.filasFuera === 0 && medido.etiqueta === uiPlural('chat.activity.discardedBranch', { count: 2 }) && medido.opacidad === '0.5';
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate(() => window.__mageDev.store.setState({ discardedBranchByChat: {} }));
+        await restoreTurnState(page, previo);
+      }
     },
   },
   {
@@ -5311,10 +5735,10 @@ const CHECKS = [
           return id;
         });
         const status = () => page.evaluate((id) => window.__mageDev.store.getState().statusByChat[id], tabId);
-        await page.locator(`button[aria-label="${cssAttr(ui('prompt.model.ariaLabel'))}"]`).first().click();
-        await page.locator('[role="listbox"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.locator('[data-model-menu]').first().click();
+        await page.locator('[role="menuitemradio"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         await page.keyboard.press('Escape');
-        await page.locator('[role="listbox"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await page.locator('[role="menuitemradio"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         const trasDesplegable = await status();
         // Deja que venza el aplazamiento del contador antes de abrir el segundo menú.
         await page.waitForTimeout(CONFIG.settleMs);
@@ -5618,8 +6042,18 @@ const CHECKS = [
           conMensaje: text.includes(window.__mageDev.t('settings.hooks.noHooks')) || text.includes(window.__mageDev.t('settings.hooks.noRules')) || text.includes(window.__mageDev.t('settings.hooks.intro.union')),
         };
       }, { reglas: uiPrefix('settings.hooks.rulesHeading') });
+      // D3 (13-11): «Contestar permisos desde la terminal» sale APAGADA y cambia el ajuste.
+      const casilla = page.locator('[data-host-permission-answers="true"]');
+      await casilla.scrollIntoViewIfNeeded();
+      measured.casillas = await casilla.count();
+      measured.terminalAntes = await casilla.isChecked();
+      await casilla.click();
+      measured.ajusteTrasPulsar = await page.evaluate(() => window.__mageDev.store.getState().settings.hostPermissionAnswers);
+      await casilla.click();
+      measured.ajusteAlFinal = await page.evaluate(() => window.__mageDev.store.getState().settings.hostPermissionAnswers);
       await closeDialog(page);
-      const ok = measured.errores === 0 && measured.conHooks && measured.conReglas && measured.conMensaje;
+      const ok = measured.errores === 0 && measured.conHooks && measured.conReglas && measured.conMensaje
+        && measured.casillas === 1 && measured.terminalAntes === false && measured.ajusteTrasPulsar === true && measured.ajusteAlFinal === false;
       return { ok, detail: `seccion=${JSON.stringify(measured)}` };
     },
   },
@@ -7245,15 +7679,13 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
 
       const todo = { ...medido, scratchResuelto, etiquetaScratch };
-      const sharedLabel = ui('chat.info.shared');
       const ok =
         todo.hayFila &&
         todo.esSublinea &&
         todo.debajoDelInput === true &&
-        // Cuenta + carpeta + privacidad (P-038 V3; el scratchpad no es un repositorio: sin rama; sin dato aún no hay % de
-        // contexto). El modelo no va (D18).
-        todo.etiquetas.length === 3 &&
-        todo.etiquetas[2]?.texto === sharedLabel &&
+        // Cuenta + carpeta (el scratchpad no es un repositorio: sin rama; sin dato aún no hay % de contexto). Ni el
+        // modelo (D18) ni la privacidad, que se retiró.
+        todo.etiquetas.length === 2 &&
         // Solo la carpeta hace algo: un boton que no lleva a ningun sitio es una promesa rota.
         todo.pulsables === 1 &&
         todo.desborda === false &&
@@ -7295,10 +7727,14 @@ const CHECKS = [
             bloqueada: rama?.getAttribute('aria-disabled') === 'true',
             motivo: rama?.getAttribute('aria-label') ?? '',
             cambios: document.querySelector('[data-git-diff]')?.textContent?.trim() ?? null,
-            boton: document.querySelectorAll('[data-git-commit]').length,
+            // «Pedir commit al agente» vive en el menú «+»: el botón suelto ya no existe en la página.
+            botonSuelto: document.querySelectorAll('[data-git-commit]').length,
           };
         });
-        await page.locator('[data-git-commit]').first().click();
+        await page.locator('[data-prompt-actions] button[aria-haspopup="menu"]').first().click();
+        const entradasCommit = await page.locator('[data-prompt-actions] [data-action="git-commit"]').count();
+        await page.screenshot({ path: path.join(CONFIG.outDir, 'b1-menu-mas-commit.png') });
+        await page.locator('[data-prompt-actions] [data-action="git-commit"]').first().click();
         await page.waitForTimeout(CONFIG.settleMs);
         const trasConfirmar = await page.evaluate(() => {
           const s = window.__mageDev.store.getState();
@@ -7323,13 +7759,14 @@ const CHECKS = [
           sucio.bloqueada &&
           sucio.motivo.includes(ui('history.branchSwitch.dirty')) &&
           sucio.cambios === '+2−0' &&
-          sucio.boton === 1 &&
+          sucio.botonSuelto === 0 &&
+          entradasCommit === 1 &&
           trasConfirmar.borrador.startsWith('Haz commit de los cambios pendientes') &&
           trasConfirmar.enElEditor.includes('Haz commit') &&
           trasConfirmar.estado === 'idle' &&
           trasConfirmar.mensajes === 0 &&
           ramas.join(',') === 'main,otra';
-        return { ok, detail: `antes=${chipsAntesDeConfiar} sucio=${JSON.stringify(sucio)} confirmar=${JSON.stringify({ ...trasConfirmar, enElEditor: trasConfirmar.enElEditor.slice(0, 30) })} ramas=${JSON.stringify(ramas)}` };
+        return { ok, detail: `antes=${chipsAntesDeConfiar} sucio=${JSON.stringify(sucio)} entradasCommit=${entradasCommit} confirmar=${JSON.stringify({ ...trasConfirmar, enElEditor: trasConfirmar.enElEditor.slice(0, 30) })} ramas=${JSON.stringify(ramas)}` };
       } finally {
         await page.evaluate((cwd) => window.__mageDev.store.getState().revokeTrustedFolder(cwd), repo);
         await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
@@ -8580,7 +9017,7 @@ const CHECKS = [
     },
   },
   {
-    name: 'P-038 V3: «Compartido» va en la fila de la conversación y el % de contexto en la barra de estado',
+    name: 'P-038 V3: la fila de la conversación no lleva privacidad y el % de contexto va en la barra de estado',
     async run(page) {
       await openTemporaryConversation(page);
       await page.evaluate(() => {
@@ -8589,17 +9026,15 @@ const CHECKS = [
         store.setState((s) => ({ contextUsageByChat: { ...s.contextUsageByChat, [tabId]: { totalTokens: 84_800, maxTokens: 200_000, percentage: 42.4, categories: [] } } }));
       });
       await page.waitForTimeout(CONFIG.settleMs);
-      const medido = await page.evaluate((textos) => {
+      const medido = await page.evaluate(() => {
         const pane = document.querySelector(`[data-pane-tab-id="${window.__mageDev.store.getState().activeTabId}"]`);
-        const sublinea = pane?.querySelector('[data-tab-subline]');
-        const compartidos = [...(pane?.querySelectorAll('span') ?? [])].filter((n) => n.children.length === 0 && n.textContent?.trim() === textos.shared);
         return {
-          privacidad: sublinea?.querySelector('[data-tab-subline-privacy]')?.getAttribute('data-tab-subline-privacy') ?? null,
+          sublinea: pane?.querySelector('[data-tab-subline]') !== null,
+          privacidad: pane?.querySelector('[data-tab-subline-privacy]') !== null,
           contexto: document.querySelector('[data-status-context]')?.textContent?.replace('·', '').trim() ?? null,
-          compartidosFueraDeLaSublinea: compartidos.filter((n) => !sublinea?.contains(n)).length,
         };
-      }, { shared: ui('chat.info.shared') });
-      const ok = medido.privacidad === 'shared' && medido.contexto === ui('tabs.subline.context', { pct: 42 }) && medido.compartidosFueraDeLaSublinea === 0;
+      });
+      const ok = medido.sublinea && !medido.privacidad && medido.contexto === ui('tabs.subline.context', { pct: 42 });
       return { ok, detail: JSON.stringify(medido) };
     },
   },
@@ -8796,7 +9231,6 @@ const CHECKS = [
             avisoEn7d: meter('7d')?.querySelector('svg') !== null,
             severidad7d: meter('7d')?.getAttribute('data-usage-severity') ?? null,
             centros: {
-              proveedor: centro(bar.querySelector('[data-status-provider]')),
               cincoH: centro(meter('5h')?.lastElementChild ?? null),
               sieteD: centro(meter('7d')?.lastElementChild ?? null),
               servicio: centro(bar.lastElementChild),
@@ -8804,7 +9238,7 @@ const CHECKS = [
           };
         });
         const centros = Object.values(medido.centros).filter((c) => c !== null);
-        const ok = !medido.avisoEn5h && medido.avisoEn7d && medido.severidad7d === 'warn' && centros.length === 4 && Math.max(...centros) - Math.min(...centros) <= 1;
+        const ok = !medido.avisoEn5h && medido.avisoEn7d && medido.severidad7d === 'warn' && centros.length === 3 && Math.max(...centros) - Math.min(...centros) <= 1;
         return { ok, detail: JSON.stringify(medido) };
       } finally {
         await page.evaluate((cuentas) => window.__mageDev.store.setState({ accounts: cuentas }), previo);
@@ -8837,8 +9271,9 @@ const CHECKS = [
             ],
           });
         });
-        // Los grupos del lateral nacen plegados: se despliega el de la carpeta de las filas.
-        await page.locator('[data-project-key$="/vg-cuenta"]').click();
+        // Los grupos del lateral nacen desplegados (U-A4); si no lo estuviera, se despliega el de la carpeta de las filas.
+        await page.locator('[data-project-key$="/vg-cuenta"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        if ((await page.locator('[data-history-session="vg-cuenta-desconocida"]').count()) === 0) await page.locator('[data-project-key$="/vg-cuenta"]').click();
         await page.locator('[data-history-session="vg-cuenta-desconocida"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const medido = await page.evaluate(() => {
           const s = window.__mageDev.store.getState();
@@ -8846,7 +9281,8 @@ const CHECKS = [
           const meta = (id) => document.querySelector(`[data-history-session="${id}"]`)?.textContent ?? null;
           return { alias, conocida: meta('vg-cuenta-conocida'), desconocida: meta('vg-cuenta-desconocida') };
         });
-        const ok = medido.alias.length > 0 && (medido.conocida ?? '').includes(medido.alias) && medido.desconocida !== null && !medido.desconocida.includes(medido.alias);
+        // U-A2: la fila ya no nombra ninguna cuenta; su texto es solo el título (ni la activa ni otra).
+        const ok = medido.alias.length > 0 && medido.conocida === 'VG conocida' && medido.desconocida === 'VG desconocida';
         return { ok, detail: JSON.stringify(medido) };
       } finally {
         await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
@@ -8974,6 +9410,11 @@ const CHECKS = [
           const alto0 = (await cabecera.boundingBox()).height;
           const menu = dialogo.locator(`[data-account-menu="${cssAttr(otra)}"]`);
           await menu.click();
+          await dialogo.locator('[role="menu"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await page.keyboard.press('Escape');
+          await dialogo.locator('[role="menu"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+          medido.pantallaTrasEscape = await page.locator('[data-accounts-usage]').count();
+          await menu.click();
           await page.getByRole('menuitem', { name: ui('accountsUsage.rename') }).click();
           const campo = dialogo.locator(`[data-account-rename="${cssAttr(otra)}"] input`);
           await campo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -8999,7 +9440,7 @@ const CHECKS = [
         const kpisBase = ['cost', 'tokens', 'turns', 'limits'];
         const ok = medido.barras30 === 30 && medido.barras7 === 7 && medido.filas === previo.cuentas.length + 1 && medido.anadir === 1
           && medido.adminAntes === 0 && medido.version === 'admin'
-          && (otra === null || (kpisBase.every((k) => medido.kpis.includes(k)) && medido.altoConRenombrar === 0 && medido.altoConColor === 0
+          && (otra === null || (kpisBase.every((k) => medido.kpis.includes(k)) && medido.pantallaTrasEscape === 1 && medido.altoConRenombrar === 0 && medido.altoConColor === 0
             && medido.renombrada === 'VG renombrada' && (medido.precio === undefined || medido.precio === 19_990_000) && medido.oculta === true));
         return { ok, detail: JSON.stringify(medido) };
       } finally {
@@ -9013,6 +9454,169 @@ const CHECKS = [
           store.getState().setAdminMode(estado.admin);
           store.getState().closeAccountsUsage();
         }, previo);
+      }
+    },
+  },
+  {
+    // Historial SEMBRADO (no lee transcripciones) y ventanas sembradas. Mide columnas, totales, series, filas
+    // ordenadas, reparto de tokens, acierto de caché, mapa de horas y medidores contra la siembra. Capturas en oscuro y en
+    // claro. No spawnea ningún CLI ni pulsa Enter.
+    name: 'Métricas: «Cuentas y consumo» responde las cinco preguntas con datos sembrados',
+    async run(page, { runDir }) {
+      const siembra = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        const cuentas = s.accounts.filter((a) => a.providerId === 'claude' && !a.apiBilled).slice(0, 2).map((a) => a.id);
+        if (cuentas.length < 2) return { cuentas };
+        window.__vg95Previo = { refreshUsage: s.refreshUsage, usageByAccount: s.usageByAccount, load: window.__mageDev.usageHistorySource.load, theme: s.settings.theme, admin: s.settings.adminMode };
+        const ahora = new Date();
+        const hoy = new Date(ahora.getTime() - ahora.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+        const dia = (atras) => new Date(Date.parse(`${hoy}T00:00:00Z`) - atras * 86_400_000).toISOString().slice(0, 10);
+        const uso = (input, output, cacheRead, cacheWrite5m, turns) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWrite5mTokens: cacheWrite5m, cacheWrite1hTokens: 0, turns });
+        const horas = (hora, turnos) => { const h = new Array(24).fill(0); h[hora] = turnos; return h; };
+        const detalle = (day, byModel, hora, turnos, cwd, tokens, sesion) => ({ day, byModel, limits: { fiveHour: 0, weekly: 0, other: 0 }, hours: horas(hora, turnos), tools: { Read: 1 }, sessions: [sesion], projects: { [cwd]: tokens } });
+        const totales = (d) => {
+          const usos = Object.values(d.byModel);
+          const suma = (k) => usos.reduce((acc, u) => acc + u[k], 0);
+          return { day: d.day, inputTokens: suma('inputTokens'), outputTokens: suma('outputTokens'), cacheReadTokens: suma('cacheReadTokens'), cacheCreationTokens: suma('cacheWrite5mTokens') + suma('cacheWrite1hTokens'), turns: suma('turns') };
+        };
+        const a = [
+          detalle(dia(2), { 'gpt-6.1-sol': uso(3000, 1000, 0, 0, 1) }, 15, 1, '/vg95/beta', 4000, 'vg95-a2'),
+          detalle(hoy, { 'claude-opus-5-5': uso(1000, 2000, 7000, 0, 4), 'claude-haiku-5-5': uso(500, 500, 0, 1000, 2) }, 10, 6, '/vg95/alfa', 12000, 'vg95-a1'),
+        ];
+        const b = [detalle(hoy, { 'claude-sonnet-5-5': uso(100, 100, 0, 0, 1) }, 10, 1, '/vg95/alfa', 200, 'vg95-b1')];
+        const historia = { generatedAt: Date.now(), fromDay: dia(29), unattributed: [], accounts: [
+          { accountId: cuentas[0], days: a.map(totales), detail: a, windows: [] },
+          { accountId: cuentas[1], days: b.map(totales), detail: b, windows: [] },
+        ] };
+        window.__mageDev.usageHistorySource.load = async () => historia;
+        const ventana = (utilization, horasHastaReset) => ({ utilization, resetsAt: Date.now() + horasHastaReset * 3_600_000 });
+        window.__mageDev.store.setState({
+          refreshUsage: async () => undefined,
+          usageByAccount: { ...s.usageByAccount,
+            [cuentas[0]]: { fiveHour: ventana(40, 2), sevenDay: ventana(85, 72), limits: [], apiCreditsMinor: null, fetchedAt: Date.now() },
+            [cuentas[1]]: { fiveHour: ventana(0, 5), sevenDay: ventana(10, 100), limits: [], apiCreditsMinor: null, fetchedAt: Date.now() } },
+        });
+        s.setAdminMode(false);
+        return { cuentas, hoy, ayer: dia(1), antes: dia(2) };
+      });
+      if (siembra.cuentas.length < 2) return { ok: false, detail: `Hacen falta dos cuentas de Claude de prueba: ${JSON.stringify(siembra.cuentas)}` };
+      const medido = {};
+      try {
+        await page.locator('[data-usage-summary]').first().click();
+        const dialogo = page.locator('[data-accounts-usage]');
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialogo.getByRole('radio', { name: ui('accountsUsage.period', { days: 7 }) }).click();
+        await dialogo.locator('[data-account-row="all"]').click();
+        await dialogo.locator('[data-usage-question="top"] [data-ranked-row]').first().waitFor({ state: 'visible', timeout: 60_000 });
+        const tendencia = dialogo.locator('[data-usage-question="trend"]');
+        const grafico = tendencia.locator('[data-accounts-usage-chart]');
+        const total = (dia) => grafico.locator(`[data-day="${dia}"]`).getAttribute('data-total');
+        const series = () => tendencia.locator('[data-usage-legend] [data-series]').evaluateAll((n) => n.map((x) => x.getAttribute('data-series')));
+        await tendencia.locator('[data-usage-toggle="measure"] [data-option="tokens"]').click();
+        medido.medida = await grafico.getAttribute('data-measure');
+        medido.columnas = await grafico.locator('[data-day]').count();
+        medido.totales = [await total(siembra.antes), await total(siembra.ayer), await total(siembra.hoy)];
+        medido.segmentosHoy = await grafico.locator(`[data-day="${siembra.hoy}"] [data-segment]`).count();
+        medido.seriesModelo = await series();
+        await tendencia.locator('[data-usage-toggle="by"] [data-option="account"]').click();
+        medido.seriesCuenta = await series();
+        medido.totalHoyPorCuenta = await total(siembra.hoy);
+        await tendencia.locator('[data-usage-table] summary').click();
+        medido.filasTabla = await tendencia.locator('[data-usage-table] tbody tr').count();
+        const filas = (cual) => dialogo.locator(`[data-usage-ranked="${cual}"] [data-ranked-row]`).evaluateAll((n) => n.map((x) => [x.getAttribute('data-ranked-row'), x.getAttribute('data-value')]));
+        medido.modelos = await filas('models');
+        medido.proyectos = await filas('projects');
+        medido.partes = await dialogo.locator('[data-token-part]').evaluateAll((n) => Object.fromEntries(n.map((x) => [x.getAttribute('data-token-part'), x.getAttribute('data-tokens')])));
+        medido.acierto = await dialogo.locator('[data-cache-hit]').getAttribute('data-cache-hit');
+        medido.celdas = await dialogo.locator('[data-heat-cell]').evaluateAll((n) => n.map((x) => Number(x.getAttribute('data-turns'))));
+        medido.horaPunta = await dialogo.locator('[data-heat-peak]').getAttribute('data-heat-peak');
+        await page.screenshot({ path: path.join(runDir, 'metricas-oscuro.png') });
+        await page.evaluate(() => window.__mageDev.store.getState().setTheme('light'));
+        await page.waitForFunction(() => document.documentElement.dataset.theme === 'light', null, { timeout: CONFIG.actionTimeoutMs });
+        await page.screenshot({ path: path.join(runDir, 'metricas-claro.png') });
+        await dialogo.locator('[data-usage-question="tokens"]').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(runDir, 'metricas-claro-abajo.png') });
+        await dialogo.locator(`[data-account-row="${cssAttr(siembra.cuentas[0])}"]`).click();
+        const queda = dialogo.locator('[data-usage-question="remaining"]');
+        await queda.locator('[data-meter="fiveHour"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.quedan = await queda.locator('[data-meter]').evaluateAll((n) => n.map((x) => [x.getAttribute('data-meter'), x.getAttribute('data-remaining'), x.getAttribute('data-severity')]));
+        medido.toggleEnUnaCuenta = await dialogo.locator('[data-usage-toggle="by"]').count();
+        medido.seriesCuentaA = (await series()).length;
+        const celdas = medido.celdas;
+        const igual = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+        const ok = medido.medida === 'tokens' && medido.columnas === 7
+          && igual(medido.totales, ['4000', '0', '12200']) && medido.segmentosHoy === 3
+          && igual(medido.seriesModelo, ['claude-opus-5-5', 'gpt-6.1-sol', 'claude-haiku-5-5', '__other__'])
+          && igual(medido.seriesCuenta, siembra.cuentas) && medido.totalHoyPorCuenta === '12200' && medido.filasTabla === 7
+          && igual(medido.modelos, [['claude-opus-5-5', '10000'], ['gpt-6.1-sol', '4000'], ['claude-haiku-5-5', '2000'], ['claude-sonnet-5-5', '200']])
+          && igual(medido.proyectos, [['/vg95/alfa', '12200'], ['/vg95/beta', '4000']])
+          && igual(medido.partes, { input: '4600', output: '3600', cacheRead: '7000', cacheWrite: '1000' }) && medido.acierto === '56'
+          && celdas.length === 168 && celdas.reduce((x, y) => x + y, 0) === 8 && Math.max(...celdas) === 7 && medido.horaPunta === '10'
+          && igual(medido.quedan, [['fiveHour', '60', 'ok'], ['sevenDay', '15', 'warn']])
+          && medido.toggleEnUnaCuenta === 0 && medido.seriesCuentaA === 3;
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          store.getState().closeAccountsUsage();
+          const p = window.__vg95Previo;
+          if (p === undefined) return;
+          window.__mageDev.usageHistorySource.load = p.load;
+          store.setState({ refreshUsage: p.refreshUsage, usageByAccount: p.usageByAccount });
+          store.getState().setTheme(p.theme);
+          store.getState().setAdminMode(p.admin);
+          delete window.__vg95Previo;
+        });
+        await page.locator('[data-accounts-usage]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      }
+    },
+  },
+  {
+    // «Todas las cuentas» enseña todas las cuentas con consumo, de cualquier proveedor: una de Claude, una de Codex y una de agy
+    // sembradas en el historial por el puente (sin transcripciones ni CLI). Sin Enter.
+    name: 'Métricas: «Todas las cuentas» lista Claude, Codex y agy en «Por cuenta»',
+    async run(page) {
+      const siembra = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        const claude = s.accounts.find((a) => a.providerId === 'claude')?.id ?? null;
+        if (claude === null) return { claude };
+        window.__vgCuentasPrevio = { refreshUsage: s.refreshUsage, load: window.__mageDev.usageHistorySource.load };
+        const ahora = new Date();
+        const hoy = new Date(ahora.getTime() - ahora.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+        const uso = (input, output, cacheRead, turns) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, turns });
+        const dia = (byModel, sesion) => ({ day: hoy, byModel, limits: { fiveHour: 0, weekly: 0, other: 0 }, hours: new Array(24).fill(0), tools: {}, sessions: [sesion], projects: {} });
+        const cuenta = (accountId, detail) => ({ accountId, days: [], detail, windows: [] });
+        const historia = { generatedAt: Date.now(), fromDay: hoy, unattributed: [], accounts: [
+          cuenta(claude, [dia({ 'claude-opus-5-5': uso(1000, 2000, 7000, 4) }, 'vg-cuentas-c')]),
+          cuenta('vg-cuentas-codex', [dia({ 'gpt-6.1-sol': uso(3000, 1000, 0, 1) }, 'vg-cuentas-x')]),
+          cuenta('vg-cuentas-agy', [dia({ 'agy:1318': uso(1500, 500, 0, 1) }, 'vg-cuentas-a')]),
+        ] };
+        window.__mageDev.usageHistorySource.load = async () => historia;
+        window.__mageDev.store.setState({ refreshUsage: async () => undefined });
+        return { claude };
+      });
+      if (siembra.claude === null) return { ok: false, detail: 'Hace falta una cuenta de Claude de prueba' };
+      try {
+        await page.locator('[data-usage-summary]').first().click();
+        const dialogo = page.locator('[data-accounts-usage]');
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialogo.locator('[data-account-row="all"]').click();
+        const filas = dialogo.locator('[data-usage-ranked="accounts"] [data-ranked-row]');
+        await filas.first().waitFor({ state: 'visible', timeout: 60_000 });
+        const medido = await filas.evaluateAll((n) => n.map((x) => [x.getAttribute('data-ranked-row'), x.getAttribute('data-value')]));
+        const ok = JSON.stringify(medido) === JSON.stringify([[siembra.claude, '10000'], ['vg-cuentas-codex', '4000'], ['vg-cuentas-agy', '2000']]);
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          store.getState().closeAccountsUsage();
+          const p = window.__vgCuentasPrevio;
+          if (p === undefined) return;
+          window.__mageDev.usageHistorySource.load = p.load;
+          store.setState({ refreshUsage: p.refreshUsage });
+          delete window.__vgCuentasPrevio;
+        });
+        await page.locator('[data-accounts-usage]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       }
     },
   },
@@ -9047,6 +9651,71 @@ const CHECKS = [
         return { ok, detail: JSON.stringify({ raizLocal, ...medido, masProyectos }) };
       } finally {
         await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      }
+    },
+  },
+  {
+    // U-A5 (punto 9): las carpetas solo cambian de orden si las mueve el usuario. Tres carpetas A > B > C por recencia;
+    // al hacer a C la más reciente el orden NO cambia; Alt+↑ sube C una posición y el orden queda en disco. El arrastre
+    // con el ratón NO se simula por CDP: va a la lista manual del informe.
+    name: 'Lateral: las carpetas no se reordenan solas y se mueven arrastrando o con Alt+↑/↓',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { allConversationHistory: s.allConversationHistory, settings: s.settings, loadConversationHistory: s.loadConversationHistory };
+      });
+      const ordenVg = () =>
+        page.evaluate(() =>
+          [...document.querySelectorAll('[data-project-key]')]
+            .map((n) => /vg-ord-(\w)$/.exec(n.getAttribute('data-project-key') ?? '')?.[1] ?? null)
+            .filter((letra) => letra !== null)
+            .join(''),
+        );
+      const ordenEnDisco = () =>
+        page.evaluate(async () => {
+          const guardado = await window.mage.loadSettings();
+          return guardado.projectOrder.map((k) => /vg-ord-(\w)$/.exec(k)?.[1] ?? null).filter((letra) => letra !== null).join('');
+        });
+      const sembrar = (recencias) =>
+        page.evaluate((r) => {
+          const store = window.__mageDev.store;
+          const accountId = store.getState().activeAccountId;
+          const filas = Object.entries(r).map(([letra, ms]) => ({
+            accountId,
+            item: { configDir: '', title: `vg ord ${letra}`, privacy: 'shared', sizeBytes: 1, isScheduled: false, sessionId: `vg-ord-${letra}`, cwd: `C:\\vg\\vg-ord-${letra}`, updatedAtMs: ms },
+          }));
+          store.setState({ allConversationHistory: filas });
+        }, recencias);
+      try {
+        const ahora = Date.now();
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          store.setState({ loadConversationHistory: async () => undefined, settings: { ...store.getState().settings, projectOrder: [] } });
+        });
+        await sembrar({ a: ahora - 1000, b: ahora - 2000, c: ahora - 3000 });
+        await page.waitForFunction(() => ['a', 'b', 'c'].every((l) => window.__mageDev.store.getState().settings.projectOrder.some((k) => k.endsWith(`vg-ord-${l}`))), undefined, { timeout: CONFIG.actionTimeoutMs });
+        const inicial = await ordenVg();
+        // C pasa a ser la más reciente: antes subía la primera sola.
+        await sembrar({ a: ahora - 1000, b: ahora - 2000, c: ahora + 60_000 });
+        await page.waitForTimeout(CONFIG.settleMs * 2);
+        const trasRecencia = await ordenVg();
+        await page.locator('[data-project-key$="/vg-ord-c"]').focus();
+        await page.keyboard.press('Alt+ArrowUp');
+        await page.waitForTimeout(CONFIG.settleMs * 2);
+        const trasAlt = await ordenVg();
+        // Captura ANTES de restaurar: la automática del caso sale ya con el lateral vacío.
+        await page.screenshot({ path: path.join(CONFIG.outDir, 'lateral-carpetas-desplegadas.png') });
+        let enDisco = '';
+        for (let intento = 0; intento < 10 && enDisco !== 'acb'; intento += 1) {
+          enDisco = await ordenEnDisco();
+          if (enDisco !== 'acb') await page.waitForTimeout(CONFIG.settleMs);
+        }
+        const ok = inicial === 'abc' && trasRecencia === 'abc' && trasAlt === 'acb' && enDisco === 'acb';
+        return { ok, detail: JSON.stringify({ inicial, trasRecencia, trasAlt, enDisco }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.evaluate((guardado) => window.mage.saveSettings(guardado), previo.settings);
+        await page.waitForTimeout(CONFIG.settleMs);
       }
     },
   },
@@ -10089,15 +10758,18 @@ const CHECKS = [
         const item = { sessionId: 'verify-project-chat', configDir: '.claude', cwd: 'C:/proyecto/python', title: 'Chat Python de prueba', privacy: 'shared', updatedAtMs: Date.now(), sizeBytes: 100, isScheduled: false };
         window.__mageDev.store.setState((s) => ({ conversationHistory: [item], allConversationHistory: [{ accountId: s.activeAccountId, item }] }));
       });
-      // Q02: el lateral agrupa por carpeta y los grupos nacen plegados: se despliega el de la carpeta de la fila.
-      await page.locator('[data-project-key$="/proyecto/python"]').click();
+      // Q02: el lateral agrupa por carpeta y los grupos nacen desplegados (U-A4): se despliega el de la carpeta de la fila solo si no lo está.
+      const carpetaPython = page.locator('[data-project-key$="/proyecto/python"]');
+      await carpetaPython.waitFor({ state: 'visible' });
+      if ((await carpetaPython.getAttribute('aria-expanded')) !== 'true') await carpetaPython.click();
       const history = page.locator('[data-history-session="verify-project-chat"]');
       await history.waitFor({ state: 'visible' });
       await waitForStillBox(page, '[data-history-session="verify-project-chat"]');
       await history.click({ button: 'right' });
       await page.getByRole('menuitem', { name: 'Python' }).click();
-      // La fila pasa al proyecto del usuario, que también nace plegado.
-      await project.locator('[data-project-key]').click();
+      // La fila pasa al proyecto del usuario, que también nace desplegado.
+      const cabeceraProyecto = project.locator('[data-project-key]');
+      if ((await cabeceraProyecto.getAttribute('aria-expanded')) !== 'true') await cabeceraProyecto.click();
       const assigned = await project.locator('[data-history-session="verify-project-chat"]').count();
       const saved = await page.evaluate(() => window.__mageDev.store.getState().settings.chatProjects[0]);
       await project.getByRole('button', { name: uiRegExp('dialogs.newTab.title') }).click();
@@ -10116,7 +10788,7 @@ const CHECKS = [
   // cuentas, una real y una ficticia) y el estado previo se restaura. Mientras se mide, la recarga del
   // historial por IPC se apaga (pisaría las filas sintéticas); el restaurado la repone.
   {
-    name: 'Q02: el lateral va Fijadas → Proyectos → Sin proyecto → Privadas',
+    name: 'Q02: el lateral va Fijadas → Sin proyecto → Proyectos',
     async run(page) {
       const previo = await seedSidebar(page);
       try {
@@ -10138,11 +10810,11 @@ const CHECKS = [
           };
         });
         const ok =
-          medido.orden.join(',') === 'pinned,project,unassigned,private' &&
+          medido.orden.join(',') === 'pinned,unassigned,project' &&
           !medido.archivadaPresente &&
           /^proyecto-a\s*2$/.test(medido.proyecto) &&
           medido.filasConPeso === 0 &&
-          medido.filas >= 5;
+          medido.filas >= 4;
         return { ok, detail: JSON.stringify(medido) };
       } finally {
         await restoreSidebar(page, previo);
@@ -10308,7 +10980,7 @@ const CHECKS = [
     },
   },
   {
-    name: 'Q03: la sublínea dice cuenta · carpeta · rama y el input ya no repite carpeta',
+    name: 'Q03: la sublínea dice cuenta · carpeta · rama, sin «Compartido», y el input ya no repite carpeta',
     state: { tabs: 1 },
     async run(page) {
       const medido = await page.evaluate(() => {
@@ -10321,9 +10993,11 @@ const CHECKS = [
           texto: (subline?.textContent ?? '').trim(),
           carpetas: carpetas.length,
           carpetaEnSublinea: carpetas.length === 1 && carpetas[0].closest('[data-tab-subline]') !== null,
+          // Las conversaciones privadas se retiraron: la fila ya no lleva su chip.
+          hayChipDePrivacidad: document.querySelector('[data-tab-subline-privacy]') !== null,
         };
       });
-      const ok = medido.alias !== null && medido.texto.includes(medido.alias) && medido.carpetas === 1 && medido.carpetaEnSublinea;
+      const ok = medido.alias !== null && medido.texto.includes(medido.alias) && medido.carpetas === 1 && medido.carpetaEnSublinea && !medido.hayChipDePrivacidad;
       return { ok, detail: JSON.stringify(medido) };
     },
   },
@@ -10449,20 +11123,23 @@ const CHECKS = [
       try {
         const cabecera = page.locator('[data-project-key$="/proyecto-a"]');
         await cabecera.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-        // Los grupos nacen plegados; si ya estuviera abierto, se pliega antes de medir el despliegue.
-        if ((await cabecera.getAttribute('aria-expanded')) === 'true') {
-          await cabecera.click();
-          await page.waitForTimeout(300);
-        }
+        // U-A4: los grupos nacen DESPLEGADOS (90°): se pliega (0°) y se vuelve a desplegar (90°).
+        const angulo = () =>
+          page.evaluate(() => {
+            const chevron = document.querySelector('[data-project-key$="/proyecto-a"] [aria-hidden="true"] > span');
+            if (chevron === null) return null;
+            const m = new DOMMatrix(getComputedStyle(chevron).transform);
+            return Math.round((Math.atan2(m.b, m.a) * 180) / Math.PI);
+          });
+        const inicial = await angulo();
         await cabecera.click();
         await page.waitForTimeout(300);
-        const medido = await page.evaluate(() => {
-          const chevron = document.querySelector('[data-project-key$="/proyecto-a"] [aria-hidden="true"] > span');
-          if (chevron === null) return { angulo: null };
-          const m = new DOMMatrix(getComputedStyle(chevron).transform);
-          return { angulo: Math.round((Math.atan2(m.b, m.a) * 180) / Math.PI) };
-        });
-        return { ok: medido.angulo === 90, detail: JSON.stringify(medido) };
+        const plegado = await angulo();
+        await cabecera.click();
+        await page.waitForTimeout(300);
+        const desplegado = await angulo();
+        const medido = { inicial, plegado, desplegado };
+        return { ok: inicial === 90 && plegado === 0 && desplegado === 90, detail: JSON.stringify(medido) };
       } finally {
         await restoreSidebar(page, previo);
       }
@@ -10827,6 +11504,111 @@ const CHECKS = [
           await setTurn(false);
         }
       });
+    },
+  },
+  {
+    // Historial de prompts con ↑/↓ como el CLI: con el borrador vacío, ↑ trae el último mensaje enviado de ESTA conversación y
+    // otro ↑ el anterior; ↓ vuelve y al final deja el borrador como estaba. Bloques sembrados por el puente; sin Enter.
+    name: 'Prompt: ↑ y ↓ recorren los mensajes enviados de la conversación',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      try {
+        await page.evaluate((id) => {
+          const bloque = (n, text) => ({ kind: 'user', id: `vg-hist-${n}`, text, time: '10:00', attachments: [], nativeId: null });
+          const st = window.__mageDev.store;
+          st.setState({ blocksByChat: { ...st.getState().blocksByChat, [id]: [bloque(1, 'primero'), bloque(2, 'segundo')] } });
+        }, tabId);
+        await clearPrompt(page);
+        const borrador = () => page.evaluate((id) => window.__mageDev.store.getState().draftByChat[id]?.text ?? '', tabId);
+        const pasos = [];
+        for (const tecla of ['ArrowUp', 'ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown']) {
+          await page.keyboard.press(tecla);
+          await page.waitForTimeout(CONFIG.settleMs);
+          pasos.push(await borrador());
+        }
+        const ok = JSON.stringify(pasos) === JSON.stringify(['segundo', 'primero', 'primero', 'segundo', '']);
+        return { ok, detail: JSON.stringify(pasos) };
+      } finally {
+        await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+      }
+    },
+  },
+  {
+    // Punto 23 de P-043 (D2): una pestaña con proceso vivo, sin actividad y fuera de la vista suelta el proceso; la pestaña se
+    // queda con su conversación y vuelve a tener sesión al pedirla. Con 0 minutos no se suelta. Reloj adelantado por el puente.
+    name: 'Punto 23: una pestaña inactiva fuera de la vista suelta su proceso y se reanuda; con 0 no',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      let temporal = null;
+      const minutosPrevios = await page.evaluate(() => window.__mageDev.store.getState().settings.idleCloseMinutes);
+      try {
+        ({ tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: IDLE_PROVIDER, model: 'fake:eco' }));
+        const viva = await page.evaluate((id) => window.__mageDev.store.getState().ensureSession(id), tabId);
+        await openTemporaryConversation(page);
+        temporal = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+        const medido = await page.evaluate(async (id) => {
+          const dev = window.__mageDev;
+          const st = () => dev.store.getState();
+          const ahora = Date.now();
+          const tarde = ahora + 31 * 60_000;
+          await dev.sweepIdleSessions(ahora, [id]);
+          st().setIdleCloseMinutes(0);
+          const conCero = await dev.sweepIdleSessions(tarde, [id]);
+          st().setIdleCloseMinutes(30);
+          const conTreinta = await dev.sweepIdleSessions(tarde, [id]);
+          const tab = st().tabs.find((t) => t.id === id);
+          const trasSoltar = { pestana: tab !== undefined, viva: st().sessionIdByChat[id] ?? null, reanuda: tab?.resumeSessionId ?? null };
+          const nueva = await st().ensureSession(id);
+          return { conCero, conTreinta, trasSoltar, reanudada: typeof nueva === 'string' && nueva.length > 0 };
+        }, tabId);
+        const ok = medido.conCero.length === 0 && medido.conTreinta.length === 1 && medido.trasSoltar.pestana && medido.trasSoltar.viva === null && medido.trasSoltar.reanuda === viva && medido.reanudada;
+        return { ok, detail: JSON.stringify({ viva, ...medido }) };
+      } finally {
+        await page.evaluate(async ({ ids, minutos }) => {
+          const st = window.__mageDev.store.getState();
+          st.setIdleCloseMinutes(minutos);
+          for (const id of ids) if (id !== null) await window.__mageDev.store.getState().closeTab(id);
+        }, { ids: [temporal, tabId], minutos: minutosPrevios });
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), IDLE_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
+    // Punto 15 de P-043 (D1): «Adjuntar archivo» con ficheros REALES (`DOM.setFileInputFiles`, así tienen ruta). Dentro de la
+    // carpeta entra como mención `@ruta` con su ficha; fuera, como su ruta entre comillas invertidas. No envía nada.
+    name: 'Punto 15: adjuntar un fichero que no es imagen lo menciona; fuera de la carpeta deja su ruta',
+    async run(page, { userDataDir }) {
+      const fuera = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-adjunto-'));
+      const ajeno = path.join(fuera, 'ajeno.txt');
+      fs.writeFileSync(ajeno, 'fuera de la carpeta');
+      const cdp = await page.context().newCDPSession(page);
+      try {
+        return await withMentionTab(page, userDataDir, async ({ tabId, cwd }) => {
+          await clearPrompt(page);
+          const elegir = async (fichero) => {
+            const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+            const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: `[data-pane-tab-id="${tabId}"] input[data-attach-input="image"]` });
+            await cdp.send('DOM.setFileInputFiles', { nodeId, files: [fichero] });
+          };
+          await elegir(path.join(cwd, 'notas.md'));
+          await page.locator('[data-mention-chip="notas.md"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await elegir(ajeno);
+          await page.waitForFunction((id) => (window.__mageDev.store.getState().draftByChat[id]?.text ?? '').includes('ajeno.txt'), tabId, { timeout: CONFIG.actionTimeoutMs });
+          const borrador = await page.evaluate((id) => {
+            const d = window.__mageDev.store.getState().draftByChat[id];
+            return { texto: d?.text ?? '', menciones: (d?.mentions ?? []).map((m) => m.relPath), imagenes: d?.attachments.length ?? 0 };
+          }, tabId);
+          await clearPrompt(page);
+          const ok = borrador.texto.includes('@notas.md ') && borrador.texto.includes(`\`${ajeno}\``) && borrador.menciones.length === 1 && borrador.menciones[0] === 'notas.md' && borrador.imagenes === 0;
+          return { ok, detail: JSON.stringify({ borrador, ajeno }) };
+        });
+      } finally {
+        await cdp.detach();
+        fs.rmSync(fuera, { recursive: true, force: true });
+      }
     },
   },
   {
@@ -11501,6 +12283,108 @@ const CHECKS = [
     },
   },
   {
+    // «Capacidades». Skills con su ORIGEN (catálogo con skills sembradas) y Organización con las políticas
+    // FALSAS del HOME de prueba (policy-limits, remote-settings, managed-settings y un drop-in). Mide que ningún valor
+    // secreto sembrado llega al DOM. No lanza ningún CLI ni pulsa Enter. Abre Configuración y la cierra (error 5);
+    // autosuficiente con --only=Capacidades (error 8). Siembra y deshace lo suyo.
+    name: 'Capacidades: Skills con su origen y Organización con las políticas sembradas, sin secretos en el DOM',
+    async run(page, { userDataDir, runDir }) {
+      if (HARNESS_HOME === os.homedir()) return { ok: false, notRunnable: true, detail: 'HOME real: no se escribe en él' };
+      const cuenta = path.join(HARNESS_HOME, '.claude');
+      const sembrados = seedCapabilitiesFixture(cuenta, userDataDir);
+      await openSettingsDialog(page);
+      try {
+        const skills = await measureSkillsPage(page, { cuenta, runDir });
+        const organizacion = await measureOrganizationPage(page, { cuenta, runDir });
+        const secretoEnDom = await page.evaluate((secretos) => secretos.some((s) => document.documentElement.outerHTML.includes(s)), CAPABILITY_SECRETS);
+        return { ok: skills.ok && organizacion.ok && !secretoEnDom, detail: JSON.stringify({ skills, organizacion, secretoEnDom }) };
+      } finally {
+        await page.keyboard.press('Escape');
+        await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        restoreCapabilitiesFixture(sembrados);
+      }
+    },
+  },
+  {
+    // Detalle de una skill: sin fichero, «Contenido» lo dice; con fichero, «Resumen» trae su ruta y «Contenido» su cabecera en
+    // tabla y su cuerpo. «Probar en chat» cierra Configuración y deja «/vg-mia » en el prompt de una pestaña nueva de esa cuenta,
+    // sin enviar ni arrancar el CLI. Siembra y deshace lo suyo; cierra la pestaña y repone la cuenta activa.
+    name: 'Capacidades: el detalle de una skill enseña su SKILL.md y «Probar en chat» deja /nombre sin enviar',
+    async run(page, { userDataDir, runDir }) {
+      if (HARNESS_HOME === os.homedir()) return { ok: false, notRunnable: true, detail: 'HOME real: no se escribe en él' };
+      const cuenta = path.join(HARNESS_HOME, '.claude');
+      const cuentaPrevia = await page.evaluate(() => window.__mageDev.store.getState().activeAccountId);
+      const sembrados = seedCapabilitiesFixture(cuenta, userDataDir);
+      let pestanaNueva = null;
+      await openSettingsDialog(page);
+      try {
+        await page.locator(MODAL).first().getByRole('tab', { name: uiRegExp('settings.sections.skills.nav') }).click();
+        if (!(await selectCapabilityAccount(page, cuenta))) return { ok: false, detail: 'sin la cuenta de prueba en el selector' };
+        const medido = {};
+        await page.locator('[data-capability-row="vg-proyecto"] [data-capability-open]').click();
+        await page.locator('[data-skill-detail="vg-proyecto"] [data-skill-detail-tab="content"]').click();
+        medido.sinFichero = await page.locator('[data-skill-content="missing"]').count();
+        await page.locator('[data-skill-detail-back]').click();
+        await page.locator('[data-capability-row="vg-mia"] [data-capability-open]').click();
+        const detalle = page.locator('[data-skill-detail="vg-mia"]');
+        await detalle.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.linea = await detalle.locator('[data-skill-byline]').textContent();
+        await detalle.locator('[data-skill-field="location"] dd').filter({ hasText: 'vg-mia' }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.ruta = await detalle.locator('[data-skill-field="location"] dd').textContent();
+        await detalle.locator('[data-skill-detail-tab="content"]').click();
+        const contenido = detalle.locator('[data-skill-content="ok"]');
+        await contenido.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.cabecera = await detalle.locator('[data-frontmatter-key]').evaluateAll((n) => n.map((x) => x.getAttribute('data-frontmatter-key')));
+        medido.cuerpo = (await contenido.textContent()) ?? '';
+        await page.screenshot({ path: path.join(runDir, 'capacidades-skill-detalle.png') });
+        await detalle.locator('[data-skill-try]').click();
+        await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await page.waitForFunction(() => { const s = window.__mageDev.store.getState(); return s.draftByChat[s.activeTabId]?.text === '/vg-mia '; }, null, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+        const tras = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          const tab = s.tabs.find((t) => t.id === s.activeTabId);
+          return { tabId: s.activeTabId, cuenta: tab?.accountId ?? null, borrador: s.draftByChat[s.activeTabId]?.text ?? null, sesion: s.sessionIdByChat[s.activeTabId] ?? null };
+        });
+        pestanaNueva = tras.tabId;
+        const ok = medido.sinFichero === 1 && (medido.linea ?? '').includes('/vg-mia') && (medido.ruta ?? '').includes('vg-mia')
+          && JSON.stringify(medido.cabecera) === JSON.stringify(['name', 'description']) && medido.cuerpo.includes('Cuerpo de prueba.')
+          && tras.borrador === '/vg-mia ' && (tras.cuenta ?? '').toLowerCase() === cuenta.toLowerCase() && tras.sesion === null;
+        return { ok, detail: JSON.stringify({ medido, tras }) };
+      } finally {
+        if (pestanaNueva !== null) {
+          await page.evaluate((id) => { const st = window.__mageDev.store.getState(); st.setDraft(id, null); return st.closeTab(id); }, pestanaNueva);
+        }
+        if ((await page.locator(MODAL).count()) > 0) {
+          await page.keyboard.press('Escape');
+          await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        }
+        await page.evaluate((id) => window.__mageDev.store.getState().setActiveAccount(id), cuentaPrevia);
+        restoreCapabilitiesFixture(sembrados);
+      }
+    },
+  },
+  {
+    // Plugins (los instalados y Descubrir de un marketplace FALSO del HOME de prueba, ordenado por instalaciones)
+    // y «MCP y conectores» con la tabla de Conectores y su Descubrir. NO pulsa Instalar: lanzaría el CLI. Sin Enter. Abre
+    // Configuración y la cierra (error 5); autosuficiente con --only=Capacidades: Plugins (error 8). Siembra y deshace lo suyo.
+    name: 'Capacidades: Plugins (tuyos y descubrir) y MCP y conectores en tabla, sin instalar nada',
+    async run(page, { runDir }) {
+      if (HARNESS_HOME === os.homedir()) return { ok: false, notRunnable: true, detail: 'HOME real: no se escribe en él' };
+      const cuenta = path.join(HARNESS_HOME, '.claude');
+      const sembrados = seedPluginsFixture(cuenta);
+      await openSettingsDialog(page);
+      try {
+        const plugins = await measurePluginsPage(page, { cuenta, runDir });
+        const conectores = await measureConnectorsPage(page, { runDir });
+        return { ok: plugins.ok && conectores.ok, detail: JSON.stringify({ plugins, conectores }) };
+      } finally {
+        await page.keyboard.press('Escape');
+        await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        restorePluginsFixture(sembrados);
+      }
+    },
+  },
+  {
     // F11b (carril S, S05): el panel «Navegador» con una sesión del RUNTIME PROPIO (servidor falso, sin CLI, sin cuota y sin
     // pulsar Enter en el prompt). Una página de prueba local (`spike/__fixtures__/browser-test-page.html`) se abre por la barra
     // de direcciones; la pluma dibuja una caja y adjunta la captura al borrador (una sola por turno); la barra de control se
@@ -11578,51 +12462,64 @@ const CHECKS = [
     },
   },
   {
-    // Carril R (R04): la sección «Tareas» del lateral. Solo mide el DOM: no pulsa Enter ni lanza ningún CLI.
-    name: 'R: el lateral tiene la sección Tareas con Nueva tarea',
+    // Carril R (R04): la entrada «Tareas programadas» del lateral (sustituye a la sección «Tareas»). Solo mide el DOM:
+    // no pulsa Enter ni lanza ningún CLI.
+    name: 'R: el lateral tiene la entrada Tareas programadas',
     async run(page) {
       const medido = await page.evaluate(() => {
         const sidebar = document.querySelector('[data-chat-sidebar]');
-        const section = sidebar?.querySelector('[data-tasks-section]') ?? null;
-        const boton = section?.querySelector('[data-new-task]') ?? null;
-        const others = [...(sidebar?.querySelector('[data-sidebar-list]')?.children ?? [])].filter((node) => node !== section);
+        const entrada = sidebar?.querySelector('[data-scheduled-tasks-entry]') ?? null;
+        const others = [...(sidebar?.querySelector('[data-sidebar-list]')?.children ?? [])].filter((node) => node !== entrada);
         return {
           lateral: document.querySelectorAll('[data-chat-sidebar]').length,
-          secciones: sidebar?.querySelectorAll('[data-tasks-section]').length ?? 0,
-          botones: sidebar?.querySelectorAll('[data-new-task]').length ?? 0,
-          botonDentro: boton !== null,
+          entradas: sidebar?.querySelectorAll('[data-scheduled-tasks-entry]').length ?? 0,
+          seccionesViejas: sidebar?.querySelectorAll('[data-tasks-section]').length ?? 0,
           // Antes que cualquier otro grupo del lateral (si no hay ninguno, basta con que exista).
           otrosGrupos: others.length,
-          antes: section !== null && others.every((node) => (section.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0),
+          antes: entrada !== null && others.every((node) => (entrada.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0),
         };
       });
-      const ok = medido.lateral === 1 && medido.secciones === 1 && medido.botones === 1 && medido.botonDentro && medido.antes;
+      const ok = medido.lateral === 1 && medido.entradas === 1 && medido.seccionesViejas === 0 && medido.antes;
       return { ok, detail: JSON.stringify(medido) };
     },
   },
   {
-    // Carril R (R04): «Nueva tarea» abre el diálogo modal; sin carpeta no deja empezar (el selector nativo no se puede
-    // pulsar desde CDP) y Escape lo cierra. Quien abre el diálogo lo cierra (error 5) y se espera a su desmontaje (error 6).
-    name: 'R: Nueva tarea abre el diálogo, no deja empezar sin carpeta y Escape lo cierra',
+    // Carril R (R04): la entrada del lateral abre la pantalla «Tareas programadas»; «Nueva tarea» abre el diálogo modal; sin
+    // carpeta no deja guardar (el selector nativo no se puede pulsar desde CDP) y Escape cierra SOLO el diálogo. Quien abre
+    // un diálogo lo cierra (error 5) y se espera a su desmontaje (error 6).
+    name: 'R: Tareas programadas: Nueva tarea no deja guardar sin carpeta y Escape solo cierra el diálogo',
     async run(page) {
-      const nueva = page.locator('[data-chat-sidebar] [data-new-task]');
-      if (await nueva.count() !== 1) return { ok: false, detail: `botones «Nueva tarea»: ${await nueva.count()} (se esperaba 1)` };
-      await nueva.click();
-      const dialogo = page.locator(MODAL).filter({ has: page.locator('[data-task-goal]') });
-      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const entrada = page.locator('[data-chat-sidebar] [data-scheduled-tasks-entry]');
+      if (await entrada.count() !== 1) return { ok: false, detail: `entradas «Tareas programadas»: ${await entrada.count()} (se esperaba 1)` };
+      await entrada.click();
+      const pantalla = page.locator('[data-scheduled-tasks]');
+      await pantalla.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       try {
+        await page.locator('[data-scheduled-new]').click();
+        const dialogo = page.locator(MODAL).filter({ has: page.locator('[data-task-goal]') });
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialogo.locator('[data-task-name]').fill('R verify: nombre de prueba');
         await dialogo.locator('[data-task-goal]').fill('R verify: objetivo de prueba');
         const empezar = dialogo.locator('[data-task-start]');
         const deshabilitado = await empezar.isDisabled();
         const botones = await empezar.count();
+        const textoBoton = (await empezar.textContent())?.trim() ?? '';
         await page.keyboard.press('Escape');
-        await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-        return { ok: deshabilitado && botones === 1, detail: JSON.stringify({ empezarDeshabilitadoSinCarpeta: deshabilitado, botonesEmpezar: botones, cerradoConEscape: true }) };
+        await page.locator('[data-task-goal]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const pantallaSigue = await pantalla.count();
+        await page.locator('[data-scheduled-close]').click();
+        await pantalla.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const ok = deshabilitado && botones === 1 && textoBoton === ui('tasks.dialog.save') && pantallaSigue === 1;
+        return { ok, detail: JSON.stringify({ empezarDeshabilitadoSinCarpeta: deshabilitado, botonesEmpezar: botones, textoBoton, pantallaSigueTrasEscape: pantallaSigue }) };
       } finally {
-        // Si algo falló antes de cerrar, no se deja el diálogo abierto a las siguientes.
+        // Si algo falló antes de cerrar, no se deja nada abierto a las siguientes.
         if (await page.locator('[data-task-goal]').count() > 0) {
           await page.keyboard.press('Escape');
           await page.locator('[data-task-goal]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        }
+        if (await pantalla.count() > 0) {
+          await page.evaluate(() => window.__mageDev.store.getState().closeScheduledTasks());
+          await pantalla.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         }
       }
     },
@@ -11649,33 +12546,164 @@ const CHECKS = [
         await page.waitForFunction(() => window.__mageDev !== undefined);
         await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
         await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('conversations'));
-        await page.locator('[data-tasks-section]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.evaluate(() => window.__mageDev.store.getState().openScheduledTasks());
+        await page.locator('[data-scheduled-tasks]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       };
       let taskId = null;
       try {
         const antes = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
         const creada = await page.evaluate((draft) => window.mage.createTask(draft), {
-          goal: 'R verify', language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
+          name: 'R verify', schedule: null, goal: 'R verify', language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
         });
         taskId = creada.id;
         const comprobada = await page.evaluate((params) => window.mage.verifyTask(params), { taskId, declared: ['hecho.md', 'no-existe.md', '../fuera.txt'] });
         const estados = comprobada.deliverables.map((entry) => entry.status);
         const listada = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
         await reloadList();
-        const fila = page.locator(`[data-task-row="${taskId}"]`);
+        const fila = page.locator(`[data-scheduled-card="${taskId}"]`);
         await fila.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const fase = await fila.getAttribute('data-task-phase');
         await page.evaluate((id) => window.mage.removeTask(id), taskId);
         taskId = null;
         await reloadList();
-        const filasTrasQuitar = await page.locator(`[data-task-row="${creada.id}"]`).count();
+        const filasTrasQuitar = await page.locator(`[data-scheduled-card="${creada.id}"]`).count();
         const despues = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
         const ok = JSON.stringify(estados) === '["ok","missing","outsideScope"]' && listada.length === antes.length + 1 && listada.includes(creada.id)
           && fase === 'needsReview' && filasTrasQuitar === 0 && JSON.stringify(despues) === JSON.stringify(antes);
         return { ok, detail: JSON.stringify({ estados, fase, tareasAntes: antes.length, tareasConLaSembrada: listada.length, filasTrasQuitar, tareasDespues: despues.length }) };
       } finally {
         if (taskId !== null) await page.evaluate((id) => window.mage.removeTask(id), taskId);
+        await page.evaluate(() => window.__mageDev.store.getState().closeScheduledTasks());
         fs.rmSync(raiz, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      }
+    },
+  },
+  {
+    // Carril R (R04): la pantalla «Tareas programadas» entera, con tareas sembradas por IPC. No pulsa «Ejecutar ahora», no
+    // pulsa Enter y no lanza ningún CLI. El menú ⋯ se cierra con Escape y la pantalla sigue abierta (decisión 13-11: el
+    // Escape es del menú mientras esté abierto, `useDialogA11y`). Escribe un SKILL.md en el HOME de PRUEBA: nunca contra el HOME real.
+    name: 'Tareas programadas: pantalla, programar, activar, buscar, duplicar, eliminar, Mantener activo y De Claude Desktop',
+    async run(page, { userDataDir, runDir }) {
+      const cuenta = await page.evaluate(() => {
+        const state = window.__mageDev.store.getState();
+        const active = state.accounts.find((account) => account.id === state.activeAccountId);
+        return active === undefined ? null : { id: active.id, providerId: active.providerId };
+      });
+      if (cuenta === null || cuenta.providerId !== 'claude') return { ok: false, notRunnable: true, detail: 'sin cuenta de Claude' };
+      if (HARNESS_HOME === os.homedir()) return { ok: false, notRunnable: true, detail: 'HOME real: no se escribe en él' };
+      const raiz = path.join(runDir, 'vg-programadas');
+      const trabajo = path.join(raiz, 'trabajo');
+      const carpetaDesktop = path.join(HARNESS_HOME, '.claude', 'scheduled-tasks', 'vg-desktop');
+      fs.mkdirSync(trabajo, { recursive: true });
+      fs.mkdirSync(carpetaDesktop, { recursive: true });
+      fs.writeFileSync(path.join(carpetaDesktop, 'SKILL.md'), '---\nname: vg-desktop\ndescription: Tarea de prueba de Desktop\n---\n\nDi hola.\n');
+      const idsAntes = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
+      const medido = {};
+      const tarjeta = (id) => page.locator(`[data-scheduled-card="${id}"]`);
+      const abrirMenu = async (id) => {
+        await tarjeta(id).locator('[data-scheduled-menu]').click();
+        await page.locator('[role="menu"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      };
+      const conPantalla = (n) => page.waitForFunction((esperadas) => document.querySelectorAll('[data-scheduled-card]').length === esperadas, n, { timeout: CONFIG.actionTimeoutMs });
+      try {
+        // Paso 1 — crear y ver la tarjeta.
+        const creada = await page.evaluate((draft) => window.mage.createTask(draft), {
+          name: 'VG programada', goal: 'VG', language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
+          schedule: await page.evaluate(() => ({ kind: 'weekly', weekday: (new Date().getDay() + 3) % 7, time: { hour: 10, minute: 0 }, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })),
+        });
+        await page.evaluate(() => window.__mageDev.taskStore.getState().load());
+        await page.locator('[data-chat-sidebar] [data-scheduled-tasks-entry]').click();
+        await page.locator('[data-scheduled-tasks]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await tarjeta(creada.id).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.nextRun = await tarjeta(creada.id).getAttribute('data-next-run');
+        medido.resumen = await tarjeta(creada.id).locator('[data-scheduled-summary]').textContent();
+        const nextRunOk = medido.nextRun === String(creada.nextRunAtMs) && creada.nextRunAtMs > Date.now() && (medido.resumen ?? '').includes('10:00');
+        await page.screenshot({ path: path.join(runDir, 'tareas-programadas.png') });
+        // Paso 2 — activar y desactivar.
+        await tarjeta(creada.id).locator('[data-scheduled-toggle]').click();
+        await page.locator(`[data-scheduled-card="${creada.id}"][data-enabled="false"]`).waitFor({ state: 'attached', timeout: CONFIG.actionTimeoutMs });
+        const apagada = (await page.evaluate(() => window.mage.listTasks())).find((task) => task.id === creada.id);
+        await page.screenshot({ path: path.join(runDir, 'tareas-programadas-desactivada.png') });
+        await tarjeta(creada.id).locator('[data-scheduled-toggle]').click();
+        await page.locator(`[data-scheduled-card="${creada.id}"][data-enabled="true"]`).waitFor({ state: 'attached', timeout: CONFIG.actionTimeoutMs });
+        const encendida = (await page.evaluate(() => window.mage.listTasks())).find((task) => task.id === creada.id);
+        const toggleOk = apagada.enabled === false && apagada.nextRunAtMs === null && encendida.enabled === true && encendida.nextRunAtMs !== null;
+        // Paso 3 — buscar.
+        await page.locator('[data-scheduled-search]').fill('zzz-vg-sin-coincidencias');
+        await page.locator('[data-scheduled-empty]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.tarjetasSinCoincidencia = await page.locator('[data-scheduled-card]').count();
+        await page.locator('[data-scheduled-search]').fill('');
+        await tarjeta(creada.id).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        // Paso 4 — duplicar (y comprobar que «Ejecutar ahora» está, sin pulsarlo).
+        await abrirMenu(creada.id);
+        medido.ejecutarAhora = await page.getByRole('menuitem', { name: ui('scheduledTasks.menu.runNow'), exact: true }).count();
+        await page.keyboard.press('Escape');
+        await page.locator('[role="menu"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        medido.pantallaTrasEscape = await page.locator('[data-scheduled-tasks]').count();
+        await abrirMenu(creada.id);
+        await page.getByRole('menuitem', { name: ui('scheduledTasks.menu.duplicate'), exact: true }).click();
+        await conPantalla(idsAntes.length + 2);
+        const copia = (await page.evaluate(() => window.mage.listTasks())).find((task) => !idsAntes.includes(task.id) && task.id !== creada.id);
+        medido.nombreCopia = copia?.name ?? null;
+        const copiaOk = copia !== undefined && copia.name === ui('scheduledTasks.copyName', { name: 'VG programada' });
+        // Paso 5 — Mantener activo.
+        const ajustes = path.join(userDataDir, 'app-settings.json');
+        await page.locator('[data-keep-awake]').click();
+        const encendido = await waitForFile(ajustes, (texto) => JSON.parse(texto).scheduledTasksKeepAwake === true);
+        await page.locator('[data-keep-awake]').click();
+        const apagado = await waitForFile(ajustes, (texto) => JSON.parse(texto).scheduledTasksKeepAwake === false);
+        const keepOk = encendido !== null && JSON.parse(encendido).scheduledTasksKeepAwake === true && apagado !== null && JSON.parse(apagado).scheduledTasksKeepAwake === false;
+        // Paso 6 — De Claude Desktop.
+        const sembrarHistorial = () => page.evaluate((cwd) => window.__mageDev.store.setState((s) => ({
+          allConversationHistory: [...s.allConversationHistory, { accountId: s.activeAccountId, item: { sessionId: 'vg-sched-desktop-run', configDir: '.claude', cwd, title: 'vg-desktop', updatedAtMs: Date.now(), sizeBytes: 100, isScheduled: true } }],
+        })), trabajo);
+        await sembrarHistorial();
+        await page.locator('[data-scheduled-tab="desktop"]').click();
+        const desktop = page.locator('[data-desktop-task="vg-desktop"]');
+        await desktop.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const corrida = desktop.locator('[data-desktop-run="vg-sched-desktop-run"]');
+        // El refresco del historial (cada 30 s) puede haber pisado la siembra: se vuelve a sembrar UNA vez.
+        const aparecio = await corrida.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false);
+        if (!aparecio) {
+          await sembrarHistorial();
+          await corrida.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).catch(() => { medido.historialNoSembrado = true; });
+        }
+        const textoDesktop = (await desktop.textContent()) ?? '';
+        medido.desktop = {
+          descripcion: textoDesktop.includes('Tarea de prueba de Desktop'), prompt: textoDesktop.includes('Di hola.'),
+          gestionada: await desktop.locator('[data-desktop-managed]').count(), corridas: await desktop.locator('[data-desktop-run="vg-sched-desktop-run"]').count(),
+          interruptores: await page.locator('[data-scheduled-toggle]').count(), avisos: await page.locator('[data-scheduled-banner]').count(),
+        };
+        await page.screenshot({ path: path.join(runDir, 'tareas-programadas-desktop.png') });
+        // Paso 7 — eliminar las dos por el menú.
+        await page.locator('[data-scheduled-tab="mine"]').click();
+        for (const id of [copia?.id, creada.id].filter((id) => id !== undefined)) {
+          await abrirMenu(id);
+          await page.getByRole('menuitem', { name: ui('scheduledTasks.menu.delete'), exact: true }).click();
+          await tarjeta(id).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        }
+        const idsDespues = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
+        const eliminarOk = JSON.stringify(idsDespues) === JSON.stringify(idsAntes);
+        // Paso 8 — cerrar.
+        await page.locator('[data-scheduled-close]').click();
+        await page.locator('[data-scheduled-tasks]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const desktopOk = medido.desktop.descripcion && medido.desktop.prompt && medido.desktop.gestionada === 1 && medido.desktop.interruptores === 0 && medido.desktop.avisos === 0;
+        // La siembra del historial es informativa si no se sostiene ni con el reintento (no cuenta para `ok`).
+        const corridaOk = medido.desktop.corridas === 1 || medido.historialNoSembrado === true;
+        const ok = nextRunOk && toggleOk && medido.tarjetasSinCoincidencia === 0 && medido.ejecutarAhora === 1 && medido.pantallaTrasEscape === 1 && copiaOk && keepOk && desktopOk && corridaOk && eliminarOk;
+        return { ok, detail: JSON.stringify({ ...medido, nextRunOk, toggleOk, copiaOk, keepOk, desktopOk, corridaOk, eliminarOk }) };
+      } finally {
+        for (const task of await page.evaluate(() => window.mage.listTasks())) {
+          if (!idsAntes.includes(task.id)) await page.evaluate((id) => window.mage.removeTask(id), task.id);
+        }
+        fs.rmSync(carpetaDesktop, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+        fs.rmSync(raiz, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+        await page.evaluate(() => {
+          const state = window.__mageDev.store.getState();
+          state.setScheduledTasksKeepAwake(false);
+          state.closeScheduledTasks();
+        });
+        await page.evaluate(() => window.__mageDev.taskStore.getState().load());
       }
     },
   },
@@ -11867,7 +12895,8 @@ const CHECKS = [
   {
     // El botón «Adjuntar imagen» y soltar ficheros en el chat reutilizan `addFiles` del pegado: mismas
     // validaciones y mismo error. Sin abrir el diálogo nativo (`setInputFiles`) y sin pulsar Enter.
-    name: 'I2: el botón y soltar adjuntan una imagen; un .exe y una de más de 5 MiB dan error',
+    // Un .exe sintético no tiene ruta en el disco: da error por eso (punto 15).
+    name: 'I2: el botón y soltar adjuntan una imagen; un fichero sin ruta y una de más de 5 MiB dan error',
     async run(page) {
       const previo = await page.evaluate(() => {
         const st = window.__mageDev.store.getState();
@@ -12090,14 +13119,19 @@ const CHECKS = [
       try {
         return await withEnglish(page, async () => {
           const creada = await page.evaluate((draft) => window.mage.createTask(draft), {
-            goal: F36_LONG_TEXT, language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
+            name: F36_LONG_TEXT.slice(0, 80), schedule: null, goal: F36_LONG_TEXT, language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
           });
           taskId = creada.id;
           await page.reload();
           await page.waitForFunction(() => window.__mageDev !== undefined);
           await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
           await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('conversations'));
-          await page.locator(`[data-task-row="${taskId}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          // La tarea ya no vive en el lateral: se mide en la pantalla «Tareas programadas», que se abre y se cierra aquí.
+          await page.evaluate(() => window.__mageDev.store.getState().openScheduledTasks());
+          await page.locator(`[data-scheduled-card="${taskId}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          const tareas = await textFitProblems(page, '[data-scheduled-tasks]');
+          await page.evaluate(() => window.__mageDev.store.getState().closeScheduledTasks());
+          await page.locator('[data-scheduled-tasks]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
           projectCreated = true;
           await page.evaluate(async ({ id, name, title, cwd }) => {
             const dev = window.__mageDev;
@@ -12107,7 +13141,8 @@ const CHECKS = [
           }, { id: projectId, name: F36_LONG_TEXT, title: F36_LONG_TEXT, cwd: F36_LONG_TOKEN });
           const proyecto = page.locator(`[data-chat-project="${projectId}"]`);
           await proyecto.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-          await proyecto.locator('[data-project-key]').click();
+          const cabeceraF36 = proyecto.locator('[data-project-key]');
+          if ((await cabeceraF36.getAttribute('aria-expanded')) !== 'true') await cabeceraF36.click();
           await proyecto.locator('[data-history-session="vg-f36-chat"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
           await waitForStillBox(page, '[data-history-session="vg-f36-chat"]');
           // La franja sale en la pestaña cuya sesión es la de la tarea: se enlaza una pestaña temporal a una sesión ficticia (no se lanza nada).
@@ -12121,7 +13156,7 @@ const CHECKS = [
           await page.locator('[data-task-strip]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
           return textFitOutcome({
             lateral: await textFitProblems(page, '[data-chat-sidebar]'),
-            tareas: await textFitProblems(page, '[data-tasks-section]'),
+            tareas,
             franja: await textFitProblems(page, '[data-task-strip]'),
           });
         });
@@ -12609,12 +13644,12 @@ async function readModelSelectorColors(page, trigger, tema) {
   });
   await page.mouse.move(2, 2);
   await trigger.click();
-  await page.getByRole('listbox', { name: ui('prompt.model.ariaLabel') }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await page.getByRole('menu', { name: ui('prompt.model.ariaLabel') }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  // El modelo elegido lleva un ✓ y la tinta normal del menú: se mide su color contra el fondo del propio menú.
   const opcion = await page.evaluate(() => {
-    const elegida = document.querySelector('[role="listbox"] [role="option"][aria-selected="true"]');
+    const elegida = document.querySelector('[role="menu"] [role="menuitemradio"][aria-checked="true"]');
     if (elegida === null) throw new Error('el selector abierto no tiene ninguna opción elegida');
-    const estilo = getComputedStyle(elegida);
-    return { color: estilo.color, fondo: estilo.backgroundColor };
+    return { color: getComputedStyle(elegida).color, fondo: getComputedStyle(elegida.closest('[role="menu"]')).backgroundColor };
   });
   await page.screenshot({ path: path.join(CONFIG.outDir, `i2-selector-${tema}.png`) });
   await page.mouse.click(2, 2);
@@ -12847,20 +13882,27 @@ async function focusLocation(page) {
   }, MODAL);
 }
 
-// Abre un Dropdown propio por su aria-label, elige la primera opcion que case y devuelve su texto (null si
-// ninguna casa: el menu se cierra con Escape para no dejar un popover abierto).
-async function pickDropdownOption(page, ariaLabel, pattern) {
-  await page.getByRole('button', { name: ariaLabel }).click();
-  const listbox = page.getByRole('listbox', { name: ariaLabel });
-  await listbox.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-  const labels = await listbox.getByRole('option').evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim() ?? ''));
-  const match = labels.find((label) => pattern.test(label));
+// Abre el menú del modelo, elige el primer modelo que case (en la lista principal y, si no, en «Más modelos»)
+// y devuelve su etiqueta (null si ninguno casa: se cierra con Escape para no dejar el menú abierto).
+async function pickModelOption(page, pattern) {
+  await page.locator('[data-model-menu]').first().click();
+  const menu = page.locator('[role="menu"][aria-label]').filter({ has: page.locator('[role="menuitemradio"]') }).first();
+  await menu.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const labelsOf = (root) => root.getByRole('menuitemradio').evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim() ?? ''));
+  let root = menu;
+  let match = (await labelsOf(root)).find((label) => pattern.test(label));
+  if (match === undefined && (await page.locator('[data-menu-more]').count()) > 0) {
+    await page.locator('[data-menu-more]').click();
+    root = page.locator('[data-model-submenu="more"]');
+    await root.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+    match = (await labelsOf(root)).find((label) => pattern.test(label));
+  }
   if (match === undefined) {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(CONFIG.settleMs);
     return null;
   }
-  await listbox.getByRole('option', { name: match, exact: true }).first().click();
+  await root.getByRole('menuitemradio', { name: match, exact: true }).first().click();
   return match;
 }
 
@@ -13323,6 +14365,235 @@ function seedCommandCatalog(userDataDir) {
   return accounts.length;
 }
 
+// Valores «secretos» sembrados en las políticas y en los ajustes gestionados: ninguno puede llegar al DOM.
+const CAPABILITY_SECRETS = ['vg-secreto-politica', 'vg-secreto-gestionado'];
+// Comandos del catálogo con la forma de `COMMAND_SCHEMA`: cuatro skills de origen distinto y un prompt de MCP.
+const CAPABILITY_SKILLS = [
+  { name: 'vg-mia', description: 'Skill mía de prueba (user)', argumentHint: null, aliases: [] },
+  { name: 'vg-proyecto', description: 'Skill del proyecto de prueba (project)', argumentHint: null, aliases: [] },
+  { name: 'vgplug:vg-de-plugin', description: 'Skill de un plugin de prueba', argumentHint: null, aliases: [] },
+  { name: 'vg-org', description: 'Skill de la organización de prueba (claude.ai sync)', argumentHint: null, aliases: [] },
+  { name: 'vgserver:prompt (MCP)', description: 'Prompt de un MCP de prueba', argumentHint: null, aliases: [] },
+];
+
+// Políticas, plugin instalado, ajustes gestionados y skills FALSOS en el HOME de prueba. Devuelve lo que hay que deshacer.
+function seedCapabilitiesFixture(cuenta, userDataDir) {
+  const managed = path.join(HARNESS_HOME, 'managed-settings');
+  const files = {
+    [path.join(cuenta, 'policy-limits.json')]: {
+      restrictions: { allow_remote_control: { allowed: false }, require_trusted_devices: { allowed: true }, vg_unknown_flag: { allowed: true } },
+      compliance_taints: [],
+      monitoring_notice: null,
+      defaults: { remote_control_at_startup: false },
+      vg_extra: { token: CAPABILITY_SECRETS[0] },
+    },
+    [path.join(cuenta, 'remote-settings.json')]: { channelsEnabled: true },
+    [path.join(cuenta, 'plugins', 'installed_plugins.json')]: {
+      version: 2,
+      plugins: {
+        'vgplug@vg-market': [
+          { scope: 'user', installPath: path.join(cuenta, 'plugins', 'cache', 'vgplug'), version: '1.0.0', installedAt: '2026-01-01T00:00:00.000Z', lastUpdated: '2026-01-01T00:00:00.000Z' },
+        ],
+      },
+    },
+    [path.join(managed, 'managed-settings.json')]: { permissions: { deny: ['Bash(rm:*)'] }, env: { VG_SECRET: CAPABILITY_SECRETS[1] } },
+    [path.join(managed, 'managed-settings.d', '10-vg.json')]: { vgDropIn: true },
+  };
+  const dirs = [path.join(cuenta, 'plugins'), path.join(cuenta, 'skills'), managed].filter((dir) => !fs.existsSync(dir));
+  for (const [file, json] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(json), 'utf-8');
+  }
+  // SKILL.md de la skill del usuario y de la del plugin (los lee el detalle de Skills). Sus carpetas son solo nuestras.
+  const skillDirs = [path.join(cuenta, 'skills', 'vg-mia'), path.join(cuenta, 'plugins', 'cache', 'vgplug')];
+  const skillTexts = {
+    [path.join(skillDirs[0], 'SKILL.md')]: '---\nname: vg-mia\ndescription: Skill mía de prueba\n---\n# Skill mía\n\nCuerpo de prueba.\n',
+    [path.join(skillDirs[1], 'skills', 'vg-de-plugin', 'SKILL.md')]: '---\nname: vg-de-plugin\ndescription: Skill de un plugin de prueba\n---\nCuerpo del plugin.\n',
+  };
+  for (const [file, text] of Object.entries(skillTexts)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text, 'utf-8');
+  }
+  const catalogPath = path.join(userDataDir, 'command-catalog.json');
+  const catalogBefore = readIfExists(catalogPath);
+  const catalog = catalogBefore === null ? { version: 1, byAccount: {} } : JSON.parse(catalogBefore);
+  const previo = catalog.byAccount[cuenta] ?? { measuredAtMs: 1, commands: [] };
+  catalog.byAccount[cuenta] = { ...previo, commands: [...previo.commands, ...CAPABILITY_SKILLS] };
+  fs.writeFileSync(catalogPath, JSON.stringify(catalog, null, 2), 'utf-8');
+  return { files: Object.keys(files), dirs: [...dirs, ...skillDirs], catalogPath, catalogBefore };
+}
+
+function restoreCapabilitiesFixture({ files, dirs, catalogPath, catalogBefore }) {
+  for (const file of files) fs.rmSync(file, { force: true });
+  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  if (catalogBefore === null) fs.rmSync(catalogPath, { force: true });
+  else fs.writeFileSync(catalogPath, catalogBefore, 'utf-8');
+}
+
+// Un marketplace FALSO con tres plugins, uno instalado y activado, otro sin manifiesto y la caché de instalaciones. Devuelve lo que hay que deshacer.
+function seedPluginsFixture(cuenta) {
+  const market = path.join(HARNESS_HOME, 'vg-market');
+  const plugins = path.join(cuenta, 'plugins');
+  const dirs = [plugins, market].filter((dir) => !fs.existsSync(dir));
+  const settingsPath = path.join(cuenta, 'settings.json');
+  const settingsBefore = readIfExists(settingsPath);
+  const lastUpdated = '2026-01-01T00:00:00.000Z';
+  const files = {
+    [path.join(plugins, 'known_marketplaces.json')]: {
+      'vg-market': { source: { source: 'directory', path: market }, installLocation: market, lastUpdated },
+      'vg-missing': { source: { source: 'github', repo: 'vg/missing' }, installLocation: path.join(HARNESS_HOME, 'vg-no-existe'), lastUpdated },
+    },
+    [path.join(market, '.claude-plugin', 'marketplace.json')]: {
+      name: 'vg-market',
+      owner: { name: 'vg' },
+      plugins: [
+        { name: 'vgplug', description: 'Plugin instalado de prueba', category: 'development', source: './vgplug' },
+        { name: 'vg-popular', description: 'Plugin popular de prueba', category: 'productivity', author: { name: 'VG' }, homepage: 'https://vg.invalid', source: './vg-popular' },
+        { name: 'vg-raro', description: 'Plugin poco usado de prueba', category: 'development', source: './vg-raro' },
+      ],
+    },
+    [path.join(plugins, 'plugin-catalog-cache.json')]: {
+      version: 1,
+      fetchedAt: lastUpdated,
+      catalog: { plugins: { 'vg-popular@vg-market': { unique_installs: 900, components: { skills: [{ name: 'a' }, { name: 'b' }] } }, 'vg-raro@vg-market': { unique_installs: 3, components: { skills: [] } } } },
+    },
+    [path.join(plugins, 'installed_plugins.json')]: {
+      version: 2,
+      plugins: { 'vgplug@vg-market': [{ scope: 'user', installPath: path.join(plugins, 'cache', 'vgplug'), version: '1.0.0', installedAt: lastUpdated, lastUpdated }] },
+    },
+  };
+  for (const [file, json] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(json), 'utf-8');
+  }
+  const settings = { ...(settingsBefore === null ? {} : JSON.parse(settingsBefore)), enabledPlugins: { 'vgplug@vg-market': true } };
+  fs.writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8');
+  return { files: Object.keys(files), dirs, settingsPath, settingsBefore };
+}
+
+function restorePluginsFixture({ files, dirs, settingsPath, settingsBefore }) {
+  for (const file of files) fs.rmSync(file, { force: true });
+  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  if (settingsBefore === null) fs.rmSync(settingsPath, { force: true });
+  else fs.writeFileSync(settingsPath, settingsBefore, 'utf-8');
+}
+
+// Plugins: «Tuyos» y «Descubrir» del marketplace falso. NUNCA pulsa [data-plugin-install]: lanzaría el CLI de verdad.
+async function measurePluginsPage(page, { cuenta, runDir }) {
+  await page.locator(MODAL).first().getByRole('tab', { name: uiRegExp('settings.sections.plugins.nav') }).click();
+  if (!(await selectCapabilityAccount(page, cuenta))) return { ok: false, motivo: 'sin la cuenta de prueba' };
+  const fila = page.locator('[data-capability-row="vgplug@vg-market"]');
+  await fila.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const activado = await fila.getAttribute('data-plugin-enabled');
+  await page.screenshot({ path: path.join(runDir, 'capacidades-plugins.png') });
+  await page.locator('[data-capability-tab="discover"]').click();
+  await page.locator('[data-discover-plugin="vg-popular@vg-market"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const lista = () => page.locator('[data-discover-plugin]').evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-discover-plugin')));
+  const orden = await lista();
+  const instalado = await page.locator('[data-discover-plugin="vgplug@vg-market"]').getAttribute('data-discover-installed');
+  const botonEnInstalado = await page.locator('[data-discover-plugin="vgplug@vg-market"] [data-plugin-install]').count();
+  const botonEnRaro = await page.locator('[data-discover-plugin="vg-raro@vg-market"] [data-plugin-install]').count();
+  const sinCatalogo = await page.locator('[data-marketplace-missing="vg-missing"]').count();
+  const biblioteca = await page.locator('[data-library-section]').count();
+  const avisoCompartido = await page.locator('[data-plugins-shared-warning]').count();
+  await page.locator('[data-capability-choice="category"]').selectOption('productivity');
+  const trasCategoria = await lista();
+  await page.locator('[data-capability-choice="category"]').selectOption('');
+  await page.screenshot({ path: path.join(runDir, 'capacidades-plugins-descubrir.png') });
+  await page.locator('[data-capability-tab="mine"]').click();
+  const ok =
+    activado === 'true' &&
+    JSON.stringify(orden) === JSON.stringify(['vg-popular@vg-market', 'vg-raro@vg-market', 'vgplug@vg-market']) &&
+    instalado === 'true' && botonEnInstalado === 0 && botonEnRaro === 1 && sinCatalogo === 1 && biblioteca === 1 &&
+    avisoCompartido === 1 &&
+    JSON.stringify(trasCategoria) === JSON.stringify(['vg-popular@vg-market']);
+  return { ok, activado, orden, instalado, botonEnInstalado, botonEnRaro, sinCatalogo, biblioteca, avisoCompartido, trasCategoria };
+}
+
+// MCP y conectores: la tabla de Conectores (cuatro columnas, «Claude in Chrome» incluido) y el Descubrir con el directorio.
+async function measureConnectorsPage(page, { runDir }) {
+  await page.locator(MODAL).first().getByRole('tab', { name: uiRegExp('mcp.section.tabsAria') }).click();
+  await page.locator('[data-mcp-tab="connectors"]').click();
+  const tabla = page.locator('[data-mcp-connector-group] table').first();
+  await tabla.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const columnas = await tabla.locator('th').count();
+  const chrome = await page.locator('[data-mcp-connector-group]').first().locator('[data-mcp-connector="Claude in Chrome"]').innerText();
+  await page.screenshot({ path: path.join(runDir, 'capacidades-conectores.png') });
+  await page.locator('[data-mcp-tab="servers"]').click();
+  await page.locator('[data-capability-tab="discover"]').click();
+  await page.locator('[data-connectors-directory]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const biblioteca = await page.locator('[data-library-section]').count();
+  await page.locator('[data-capability-tab="mine"]').click();
+  await page.locator('[data-mcp-section]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const ok = columnas === 4 && chrome.includes(ui('capabilities.connectors.chip.included')) && chrome.includes(ui('mcp.connectors.desktopOnly')) && biblioteca === 1;
+  return { ok, columnas, chrome, biblioteca };
+}
+
+// Elige en el selector de cuenta de la cabecera la que se llama como `cuenta` (sin distinguir mayúsculas).
+async function selectCapabilityAccount(page, cuenta) {
+  const selector = page.locator('[data-capability-choice="account"]');
+  await selector.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const valor = await selector.locator('option').evaluateAll((options, wanted) => options.map((o) => o.value).find((v) => v.toLowerCase() === wanted.toLowerCase()) ?? null, cuenta);
+  if (valor === null) return false;
+  await selector.selectOption(valor);
+  return true;
+}
+
+async function measureSkillsPage(page, { cuenta, runDir }) {
+  await page.locator(MODAL).first().getByRole('tab', { name: uiRegExp('settings.sections.skills.nav') }).click();
+  if (!(await selectCapabilityAccount(page, cuenta))) return { ok: false, motivo: 'sin la cuenta de prueba en el selector' };
+  await page.locator('[data-capability-row="vg-mia"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const filas = page.locator('[data-capability-row]');
+  const origenes = Object.fromEntries(await filas.evaluateAll((nodes) => nodes.map((n) => [n.getAttribute('data-capability-row'), n.getAttribute('data-skill-origin')])));
+  const textoPlugin = await page.locator('[data-capability-row="vgplug:vg-de-plugin"] [data-capability-origin]').innerText();
+  await page.screenshot({ path: path.join(runDir, 'capacidades-skills.png') });
+  await page.locator('[data-capability-search]').fill('proyecto de prueba');
+  const trasBuscar = await filas.count();
+  await page.locator('[data-capability-search]').fill('');
+  await page.locator('[data-capability-choice="filter"]').selectOption('organization');
+  const trasFiltrar = await filas.evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-capability-row')));
+  await page.locator('[data-capability-choice="filter"]').selectOption('all');
+  await page.locator('[data-capability-tab="discover"]').click();
+  await page.locator('[data-library-section]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const selectorDeBiblioteca = await page.locator('[data-library-account]').count();
+  await page.locator('[data-capability-tab="mine"]').click();
+  const sembradas = { 'vg-mia': 'user', 'vg-proyecto': 'project', 'vgplug:vg-de-plugin': 'plugin', 'vg-org': 'organization' };
+  const ok =
+    Object.entries(sembradas).every(([nombre, origen]) => origenes[nombre] === origen) &&
+    !('vgserver:prompt (MCP)' in origenes) &&
+    !('compact' in origenes) &&
+    textoPlugin.includes('vg-market') &&
+    trasBuscar === 1 &&
+    JSON.stringify(trasFiltrar) === JSON.stringify(['vg-org']) &&
+    selectorDeBiblioteca === 0;
+  const sembradasMedidas = Object.fromEntries(Object.keys(sembradas).map((nombre) => [nombre, origenes[nombre] ?? null]));
+  return { ok, origenes: sembradasMedidas, textoPlugin, trasBuscar, trasFiltrar, selectorDeBiblioteca };
+}
+
+async function measureOrganizationPage(page, { cuenta, runDir }) {
+  await page.locator(MODAL).first().getByRole('tab', { name: uiRegExp('settings.sections.organization.nav') }).click();
+  const bloque = page.locator(`[data-org-account="${cssAttr(cuenta)}"]`);
+  await bloque.locator('[data-org-restriction]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const control = await bloque.locator('[data-org-restriction="allow_remote_control"]').innerText();
+  const desconocida = await bloque.locator('[data-org-restriction="vg_unknown_flag"]').innerText();
+  const canales = await bloque.locator('[data-org-remote="channelsEnabled"]').innerText();
+  const extra = await bloque.locator('[data-org-extra="vg_extra"]').innerText();
+  const gestionado = await page.locator('[data-org-managed]').innerText();
+  // No se pulsa el enlace de administración: abriría el navegador del sistema.
+  const admin = await page.locator('[data-org-admin-link]').count();
+  await page.screenshot({ path: path.join(runDir, 'capacidades-organizacion.png') });
+  const ok =
+    control.includes(ui('capabilities.org.policy.allowRemoteControl')) &&
+    control.includes(ui('capabilities.org.state.off')) &&
+    desconocida.includes('vg_unknown_flag') &&
+    canales.includes(ui('capabilities.org.state.on')) &&
+    extra.includes('{token}') &&
+    // El título del grupo va en versales por CSS (`uppercase`) y `innerText` lo respeta: se compara sin mayúsculas.
+    ['permissions', 'VG_SECRET', '10-vg.json'].every((texto) => gestionado.toLowerCase().includes(texto.toLowerCase())) &&
+    admin === 1;
+  return { ok, control, desconocida, canales, extra, gestionado: gestionado.slice(0, 300), admin };
+}
+
 // --- Fase A: hidratacion del chat por el puente de desarrollo -------------------------------------
 
 // Cuantos bloques hidrata la comprobacion de 2.6. El colapso a 2 px SOLO aparece con desbordamiento:
@@ -13472,8 +14743,20 @@ function waitForNoExitingToasts(page) {
   );
 }
 
-// Tolerancia de «no se ha movido» del chip y del popover de un StepSlider entre pasos (subpixel).
-const SLIDER_STILL_TOLERANCE_PX = 0.5;
+// Catálogo sembrado para medir el menú del modelo (B1): varias versiones por familia. Los ids de las cuatro
+// primeras coinciden con los del catálogo de reserva, para que el modelo de la pestaña siga siendo uno de ellos.
+const MODEL_MENU_CATALOG = [
+  { id: 'opus', label: 'Opus 5.5' },
+  { id: 'sonnet', label: 'Sonnet 5.5' },
+  { id: 'claude-fable-5-2', label: 'Fable 5.2' },
+  { id: 'haiku', label: 'Haiku 5.5' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-opus-4-8', label: 'Opus 4.8' },
+];
+const MODEL_MENU_NEWEST = ['Opus 5.5', 'Sonnet 5.5', 'Fable 5.2', 'Haiku 5.5'];
 
 // Espera a que TERMINEN las animaciones finitas del documento (WAAPI de motion y transiciones CSS; las
 // infinitas, como la constelacion, no). No vale un tiempo fijo: con la ventana tapada por otras (el usuario
@@ -13492,8 +14775,6 @@ async function waitForFiniteAnimations(page) {
     if (!done) throw new Error(`${finite.length} animaciones sin terminar tras ${timeoutMs} ms`);
   }, CONFIG.actionTimeoutMs);
 }
-
-const STEP_SLIDER_POPOVER = '[data-step-slider-popover="true"]';
 
 // Frames seguidos con la caja quieta para darla por asentada.
 const STILL_FRAMES = 3;
@@ -13522,83 +14803,6 @@ async function waitForStillBox(page, selector) {
       }),
     { selector, frames: STILL_FRAMES, timeoutMs: CONFIG.actionTimeoutMs },
   );
-}
-
-// Abre el deslizador de `caso.chip`, lo lleva al primer paso con Home y lo recorre con ArrowRight hasta el
-// ultimo. En CADA paso mide la caja del chip y la del popover (su mayor desviacion respecto a la de
-// apertura) y, pasada la transicion, donde esta el pulgar dibujado respecto a la fraccion que le toca.
-// Deja el valor como lo encontro (Home + tantos ArrowRight como su posicion inicial) y cierra con Escape.
-async function walkStepSlider(page, caso) {
-  const trigger = page.locator(caso.chip).first();
-  await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-  await trigger.click();
-  const popover = page.locator('[data-step-slider-popover="true"]');
-  await popover.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-  // La entrada del popover: opacidad por WAAPI y escala 0,97 -> 1 por el bucle de motion.
-  await waitForStillBox(page, STEP_SLIDER_POPOVER);
-  const range = popover.locator('input[type="range"]');
-  const inicio = await range.evaluate((el) => ({ value: Number(el.value), max: Number(el.max), valuetext: el.getAttribute('aria-valuetext') ?? '' }));
-  const fila = page.locator('[data-prompt-controls="true"]').first();
-  // El chip se mide RELATIVO a su fila de controles y la fila, aparte: son dos fallos distintos. El chip
-  // cambiaba de ancho (Manual sin icono); la fila bajaba 5,5 px cuando el aviso de coste de «Muy alto»
-  // pasaba a dos lineas y la columna, con el estado vacio sin encoger, desbordaba.
-  const chipEnFila = async () => {
-    const [chip, row] = [await trigger.boundingBox(), await fila.boundingBox()];
-    return { x: chip.x - row.x, y: chip.y - row.y, width: chip.width, height: chip.height };
-  };
-  const chipAbs = await trigger.boundingBox();
-  const chip0 = await chipEnFila();
-  const fila0 = await fila.boundingBox();
-  const pop0 = await popover.boundingBox();
-  // Mayor desviacion por eje ({x, y, width, height}) de una caja respecto a la de apertura.
-  const chipDeriva = { x: 0, y: 0, width: 0, height: 0 };
-  const popDeriva = { x: 0, y: 0, width: 0, height: 0 };
-  const filaDeriva = { x: 0, y: 0, width: 0, height: 0 };
-  const acumular = (acc, box, base) => {
-    for (const eje of Object.keys(acc)) acc[eje] = Math.max(acc[eje], Number(Math.abs(box[eje] - base[eje]).toFixed(2)));
-  };
-  let errorPulgar = 0;
-  let recorridos = 0;
-  await range.press('Home');
-  for (let paso = 0; paso <= inicio.max; paso += 1) {
-    if (paso > 0) await range.press('ArrowRight');
-    await waitForStillBox(page, STEP_SLIDER_POPOVER); // la transicion del pulgar y lo que mueva el cambio de paso
-    const pulgar = await popover.evaluate((el) => {
-      const pista = el.querySelector('.mg-step-thumb-track').getBoundingClientRect();
-      const punto = el.querySelector('.mg-step-thumb-dot').getBoundingClientRect();
-      return { offset: punto.left - pista.left, recorrido: pista.width, value: Number(el.querySelector('input[type="range"]').value) };
-    });
-    if (pulgar.value === paso) recorridos += 1;
-    const esperado = inicio.max === 0 ? 0 : (paso / inicio.max) * pulgar.recorrido;
-    errorPulgar = Math.max(errorPulgar, Math.abs(pulgar.offset - esperado));
-    acumular(chipDeriva, await chipEnFila(), chip0);
-    acumular(filaDeriva, await fila.boundingBox(), fila0);
-    acumular(popDeriva, await popover.boundingBox(), pop0);
-  }
-  const transicion = await popover.locator('.mg-step-thumb').evaluate((el) => getComputedStyle(el).transitionDuration);
-  await range.press('Home');
-  for (let paso = 0; paso < inicio.value; paso += 1) await range.press('ArrowRight');
-  const final = await range.evaluate((el) => Number(el.value));
-  await page.keyboard.press('Escape');
-  await popover.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-  const gapBelow = Math.abs(pop0.y - (chipAbs.y + chipAbs.height));
-  const gapAbove = Math.abs(chipAbs.y - (pop0.y + pop0.height));
-  return {
-    chip: caso.chip,
-    gap: Math.min(gapBelow, gapAbove),
-    pasos: inicio.max + 1,
-    esperados: caso.pasos,
-    recorridos,
-    desplazamientoChip: Math.max(...Object.values(chipDeriva)),
-    desplazamientoPopover: Math.max(...Object.values(popDeriva)),
-    chipDeriva,
-    popDeriva,
-    filaDeriva,
-    errorPulgar: Number(errorPulgar.toFixed(2)),
-    transicion,
-    vuelveAlInicio: final === inicio.value,
-    valuetext: inicio.valuetext,
-  };
 }
 
 // Siembra el lateral de Q02 con 6 conversaciones sintéticas de dos cuentas (una real y una ficticia): 1 fijada, 2
@@ -13649,7 +14853,7 @@ async function seedSidebar(page) {
     const s = store.getState();
     const real = s.activeAccountId;
     const scratch = s.scratchRoots[0] ?? s.scratchDir ?? '';
-    const base = { configDir: '', title: 'fila', privacy: 'shared', sizeBytes: 3_900_000, isScheduled: false };
+    const base = { configDir: '', title: 'fila', sizeBytes: 3_900_000, isScheduled: false };
     const row = (accountId, over) => ({ accountId, item: { ...base, ...over } });
     store.setState({
       loadConversationHistory: async () => undefined,
@@ -13658,7 +14862,6 @@ async function seedSidebar(page) {
         row(real, { sessionId: 'vg-q02-p1', title: 'Proyecto uno', cwd: 'C:\\vg\\proyecto-a', updatedAtMs: Date.now() - 2000 }),
         row('vg-q02-cuenta-b', { sessionId: 'vg-q02-p2', title: 'Proyecto dos', cwd: 'C:\\vg\\proyecto-a', updatedAtMs: Date.now() - 3000 }),
         row('vg-q02-cuenta-b', { sessionId: 'vg-q02-un', title: window.__mageDev.t('sidebar.unassigned.title'), cwd: `${scratch}/vg-q02`, providerId: 'codex', updatedAtMs: Date.now() - 4000 }),
-        row(real, { sessionId: 'vg-q02-priv', title: 'Privada', cwd: 'C:\\vg\\priv', privacy: 'private', updatedAtMs: Date.now() - 5000 }),
         row(real, { sessionId: 'vg-q02-arch', title: 'Archivada', cwd: 'C:\\vg\\arch', updatedAtMs: Date.now() - 6000 }),
       ],
       settings: { ...s.settings, pinnedConversations: ['vg-q02-pin'], archivedConversations: ['vg-q02-arch'] },
@@ -14529,6 +15732,7 @@ async function measureBrowserClose(page, sessionId) {
 // --- Q06: menciones @ con el runtime propio contra el servidor falso --------------------------------------------
 
 const MENTION_PROVIDER = { id: 'custom:vg-menciones', label: 'VG menciones' };
+const IDLE_PROVIDER = { id: 'custom:vg-inactividad', label: 'VG inactividad' };
 const MENTION_MODEL = 'fake:eco';
 // PNG de 1×1 píxel.
 const MENTION_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -14700,8 +15904,10 @@ async function measureHostTab(instance, { profile, codexHome, runDir, setClient 
   }, sessionId);
   await page.screenshot({ path: path.join(runDir, 'host-tab.png') });
   const ctx = { client, page, sessionId, tabId: adoptada.tabId };
-  const primero = await answerFromHost(ctx);
-  const segundo = await answerFromWindow(ctx, primero.requestId);
+  const { primero, segundo } = await withHostPermissionAnswers(page, async () => {
+    const desdeHost = await answerFromHost(ctx);
+    return { primero: desdeHost, segundo: await answerFromWindow(ctx, desdeHost.requestId) };
+  });
   const hidratada = await measureAdoptedDuplicates(page, adoptada.tabId);
   await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), adoptada.tabId);
   const lista = await client.call('sessions.list');
@@ -14731,6 +15937,19 @@ async function measureAdoptedDuplicates(page, tabId) {
     return { duplicados: [...firmas.values()].filter((n) => n > 1).length, bloques: bloques.length };
   }, tabId);
   return { idle, ...duplicados };
+}
+
+// D3 (13-11): contestar permisos desde la terminal sale APAGADO y main lo lee en cada llamada. La prueba lo enciende en
+// la instancia que contesta y lo devuelve a su valor al acabar, haya fallado o no.
+async function withHostPermissionAnswers(page, run) {
+  const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.hostPermissionAnswers);
+  await page.evaluate(() => window.__mageDev.store.getState().setHostPermissionAnswers(true));
+  await page.waitForTimeout(CONFIG.settleMs);
+  try {
+    return await run();
+  } finally {
+    await page.evaluate((valor) => window.__mageDev.store.getState().setHostPermissionAnswers(valor), previo);
+  }
 }
 
 // Pasos 5 y 6: el permiso 1 se contesta por el host y la pestaña lo retira.

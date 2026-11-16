@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { CapabilityEngine, NativeInstall } from './capabilityPackage';
-import { nativeInstallCommands, nativeListCommand, nativeUninstallCommands, withPlatformLauncher } from './nativeCommands';
+import {
+  nativeInstallCommands,
+  nativeListCommand,
+  nativeUninstallCommands,
+  pluginActionCommand,
+  withPlatformLauncher,
+} from './nativeCommands';
 
 const mcp: NativeInstall = { type: 'mcpStdio', name: 'demo', command: 'node', args: ['server.js', '--flag'] };
 const plugin: NativeInstall = { type: 'plugin', name: 'tool', marketplace: { name: 'mk', source: 'owner/repo' } };
@@ -172,5 +178,15 @@ describe('withPlatformLauncher', () => {
   it('withPlatformLauncher_plugin_unchanged', () => {
     // Arrange / Act / Assert
     expect(withPlatformLauncher(plugin, 'win32')).toBe(plugin);
+  });
+});
+
+describe('pluginActionCommand', () => {
+  it.each(['install', 'uninstall', 'enable', 'disable'] as const)('pluginActionCommand_cadaAccion_verboYAmbitoUser (%s)', (action) => {
+    // Arrange / Act
+    const command = pluginActionCommand(action, 'p@m');
+
+    // Assert
+    expect(command).toEqual({ engine: 'claude', args: ['plugin', action, 'p@m', '--scope', 'user'] });
   });
 });

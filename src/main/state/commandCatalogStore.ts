@@ -22,6 +22,8 @@ export interface CommandCatalogEntry {
   // Catalogo de modelos de la cuenta (P-026 2.4), del MISMO `initialize` que los comandos. Opcional: un
   // fichero de antes no lo trae y sigue valiendo (misma version).
   readonly models?: readonly ProviderModel[];
+  // Carpeta de la sesión que midió el catálogo: de ahí salen las skills «(project)». Opcional: un fichero de antes no la trae.
+  readonly cwd?: string;
 }
 
 export interface CommandCatalogFile {
@@ -42,6 +44,7 @@ const ENTRY_SCHEMA = z.object({
   measuredAtMs: z.number().int().nonnegative(),
   commands: z.array(COMMAND_SCHEMA),
   models: z.array(MODEL_SCHEMA).optional(),
+  cwd: z.string().min(1).optional().catch(undefined),
 });
 
 const CATALOG_FILE_SCHEMA = z.object({
@@ -69,15 +72,23 @@ export class CommandCatalogStore {
 
   // Reescribe el catalogo de UNA cuenta conservando el de las demas. `measuredAtMs` lo pasa el llamante
   // (main tiene el reloj; este modulo no lo inventa) para que el fichero diga cuando se midio.
-  save(accountDir: string, commands: readonly SlashCommandInfo[], measuredAtMs: number): void {
+  save(accountDir: string, commands: readonly SlashCommandInfo[], measuredAtMs: number, cwd: string | null = null): void {
     // Los modelos de la entrada se conservan: los comandos y los modelos se cachean por separado.
-    this.writeEntry(accountDir, measuredAtMs, (entry) => ({ ...entry, commands }));
+    this.writeEntry(accountDir, measuredAtMs, (entry) => {
+      const { cwd: _previous, ...rest } = entry;
+      return cwd === null ? { ...rest, commands } : { ...rest, commands, cwd };
+    });
   }
 
   // Modelos cacheados de UNA cuenta. Vacio en los mismos casos que `load`: entonces el selector usa la
   // lista de reserva, que es lo de antes de la cache.
   loadModels(accountDir: string): readonly ProviderModel[] {
     return this.readFileOrNull()?.byAccount[accountDir]?.models ?? EMPTY_MODELS;
+  }
+
+  // Carpeta de la última sesión que midió el catálogo de UNA cuenta, o null.
+  loadCwd(accountDir: string): string | null {
+    return this.readFileOrNull()?.byAccount[accountDir]?.cwd ?? null;
   }
 
   saveModels(accountDir: string, models: readonly ProviderModel[], measuredAtMs: number): void {

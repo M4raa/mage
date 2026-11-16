@@ -1,6 +1,7 @@
 // Persistencia de las tareas (F8) en `<userData>/tasks/tasks.json`. El FS llega inyectado.
 import { dirname } from 'node:path';
 import { z } from 'zod';
+import { taskScheduleSchema } from '@shared/taskSchedule';
 import type { TaskRecord } from '@shared/tasks';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 
@@ -20,7 +21,22 @@ const deliverableSchema = z.object({
   kind: z.string(),
 });
 
+// Un registro anterior a las tareas programadas se lee con name '', sin programación, activado y sin ejecuciones.
 const recordSchema = z.object({
+  name: z.string().catch(''),
+  schedule: taskScheduleSchema.nullable().catch(null),
+  enabled: z.boolean().catch(true),
+  nextRunAtMs: z.number().int().nullable().catch(null),
+  lastRun: z
+    .object({
+      atMs: z.number().int(),
+      scheduledForMs: z.number().int().nullable(),
+      late: z.boolean(),
+      outcome: z.enum(['started', 'failed']),
+      error: z.string().nullable(),
+    })
+    .nullable()
+    .catch(null),
   goal: z.string(),
   language: z.enum(['es', 'en']),
   provider: z.enum(['claude', 'codex']),

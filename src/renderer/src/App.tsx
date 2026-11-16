@@ -34,6 +34,7 @@ import { OnboardingWizard } from './workbench/components/OnboardingWizard';
 
 const SettingsView = lazy(() => import('./workbench/components/SettingsView').then((m) => ({ default: m.SettingsView })));
 const AccountsUsageView = lazy(() => import('./workbench/components/AccountsUsageView').then((m) => ({ default: m.AccountsUsageView })));
+const ScheduledTasksView = lazy(() => import('./workbench/tasks/ScheduledTasksView').then((m) => ({ default: m.ScheduledTasksView })));
 // Novedades, tambien en diferido: arrastra el changelog entero y casi nunca se abre.
 // El de «actualización lista», en diferido: sale una vez por version.
 const UpdateReadyDialog = lazy(() => import('./workbench/components/UpdateReadyDialog').then((m) => ({ default: m.UpdateReadyDialog })));
@@ -48,6 +49,11 @@ import { usePanelLayoutStore } from './workbench/panelLayoutStore';
 import { useDockDefaults } from './workbench/dockDefaults';
 import { useGlobalKeybindings } from './workbench/keybindings/useGlobalKeybindings';
 import { useT } from './i18n/uiLanguage';
+import { realScheduledRunsDeps } from './workbench/tasks/taskActions';
+import { startScheduledRuns } from './workbench/tasks/taskRunner';
+import { startIdleSessionCloser } from './workbench/idleSessionCloser';
+import { useTaskStore } from './workbench/tasks/taskStore';
+import { startTaskWatcher } from './workbench/tasks/taskWatcher';
 
 // Asidero de desarrollo para `pnpm verify:gui` (deja hidratar el chat sin gastar un turno real). El
 // import es DINAMICO y bajo `import.meta.env.DEV`, que Vite reemplaza por `false` al construir: la rama
@@ -178,6 +184,7 @@ function SplitLayoutView({
 // Ventana principal de Mage — Workbench (handoff 3a). Columna de alto completo: fila principal
 // (rail · sidebar · centro · inspector) + barra de estado.
 export function App(): React.JSX.Element {
+  const t = useT();
   const init = useWorkbenchStore((s) => s.init);
   const initPanelLayout = usePanelLayoutStore((s) => s.init);
   const themePref = useWorkbenchStore((s) => s.settings.theme);
@@ -190,6 +197,16 @@ export function App(): React.JSX.Element {
   }, []);
   // Al montar: suscribe el store al stream del motor y carga las cuentas reales (una vez).
   useEffect(() => init(), [init]);
+  // Tareas: vigilante de entregables y primera carga de la lista (las ve la pantalla «Tareas programadas»).
+  useEffect(() => {
+    startTaskWatcher();
+    void useTaskStore.getState().load().catch((err: unknown) => reportActionError(t('tasks.error.verifyFailed'), err, 'tasks'));
+  }, [t]);
+  // Tareas programadas: con el espacio de trabajo ya restaurado, recoge y lanza las que main marca como pendientes.
+  const workspaceReady = useWorkbenchStore((s) => s.workspaceReady);
+  useEffect(() => (workspaceReady ? startScheduledRuns(realScheduledRunsDeps()) : undefined), [workspaceReady]);
+  // Punto 23 (D2): suelta el proceso de las pestañas inactivas fuera de la vista de ESTA ventana.
+  useEffect(() => (workspaceReady ? startIdleSessionCloser() : undefined), [workspaceReady]);
   // Layout de paneles acoplables (F6 Fase 4): carga async por IPC: NUNCA roba el foco al hidratar
   // (§6) — el store ya pinta con los defaults sincronos del registro hasta que esto resuelva.
   useEffect(() => initPanelLayout(), [initPanelLayout]);
@@ -294,6 +311,7 @@ export function App(): React.JSX.Element {
         <AccountSwitchDialog />
         <SettingsView />
         <AccountsUsageView />
+        <ScheduledTasksView />
         <UpdateReadyDialog />
       </Suspense>
       <TrustFolderDialog />

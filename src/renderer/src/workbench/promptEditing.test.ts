@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { continueListOnNewline, indentLines, outdentLines, type TextState } from './promptEditing';
+import { continueListOnNewline, indentLines, outdentLines, removeListMarker, type TextState } from './promptEditing';
 
 // Helper: construye un TextState marcando el cursor/seleccion con '|' (uno = colapsado, dos = rango).
 function at(marked: string): TextState {
@@ -134,5 +134,59 @@ describe('outdentLines', () => {
 
     expect(result.selectionStart).toBeGreaterThanOrEqual(0);
     expect(result.selectionEnd).toBeGreaterThanOrEqual(result.selectionStart);
+  });
+});
+
+describe('removeListMarker', () => {
+  it('removeListMarker_ordinalVacio_loBorraEntero', () => {
+    const result = removeListMarker(at('1. a\n2. |'));
+
+    expect(result?.value).toBe('1. a\n');
+    expect(result?.selectionStart).toBe('1. a\n'.length);
+    expect(result?.selectionEnd).toBe('1. a\n'.length);
+  });
+
+  it('removeListMarker_ordinalConContenido_dejaElTexto', () => {
+    const result = removeListMarker(at('2. |hola'));
+
+    expect(result?.value).toBe('hola');
+    expect(result?.selectionStart).toBe(0);
+  });
+
+  it('removeListMarker_ordinalDosCifras', () => {
+    const result = removeListMarker(at('10) |'));
+
+    expect(result?.value).toBe('');
+    expect(result?.selectionStart).toBe(0);
+  });
+
+  it('removeListMarker_conIndentacion_laConserva', () => {
+    const result = removeListMarker(at('  3. |'));
+
+    expect(result?.value).toBe('  ');
+    expect(result?.selectionStart).toBe(2);
+  });
+
+  it('removeListMarker_bullet_loBorra', () => {
+    const result = removeListMarker(at('- |'));
+
+    expect(result?.value).toBe('');
+    expect(result?.selectionStart).toBe(0);
+  });
+
+  it('removeListMarker_cursorDentroDelMarcador_null', () => {
+    expect(removeListMarker(at('2|. '))).toBeNull();
+  });
+
+  it('removeListMarker_cursorEnElTexto_null', () => {
+    expect(removeListMarker(at('2. ho|la'))).toBeNull();
+  });
+
+  it('removeListMarker_conSeleccion_null', () => {
+    expect(removeListMarker(at('2. |ho|la'))).toBeNull();
+  });
+
+  it('removeListMarker_noEsLista_null', () => {
+    expect(removeListMarker(at('hola|'))).toBeNull();
   });
 });

@@ -416,9 +416,7 @@ describe('transcriptToBlocks — subagentes, pensamiento y lineas de sistema', (
   });
 });
 
-// El CLI persiste sus bloques `thinking` vacios (medido: solo la firma). Mage guarda el texto aparte y
-// lo devuelve al hidratar; el emparejamiento es POR ORDEN, que es lo unico que hay — el CLI no da
-// ningun id con el que casarlos.
+// El CLI persiste sus bloques `thinking` vacios (medido: solo la firma). Mage guarda el texto aparte y casan POR LA COLA (`@shared/thinkingBlocks`).
 describe('transcriptToBlocks — pensamientos guardados por Mage', () => {
   const conPensamiento = (index: number): TranscriptEntry =>
     entry('assistant', { message: { content: [{ type: 'thinking', thinking: '', signature: 'firma' }, { type: 'text', text: 'hola' }] } }, index);
@@ -439,13 +437,20 @@ describe('transcriptToBlocks — pensamientos guardados por Mage', () => {
     expect(pensamiento?.runs).toEqual([]);
   });
 
-  it('transcriptToBlocks_conMenosGuardadosQueBloques_rellenaLosPrimeros', () => {
+  it('transcriptToBlocks_conMenosGuardadosQueBloques_rellenaLosUltimos', () => {
     // Puede pasar de verdad: una conversacion que ya existia y a la que se le añaden turnos nuevos.
     const blocks = transcriptToBlocks([conPensamiento(0), conPensamiento(1)], ['solo uno']);
     const pensamientos = blocks.filter((b) => b.kind === 'thinking');
 
-    expect(pensamientos[0]?.runs.map((r) => r.text).join('')).toBe('solo uno');
-    expect(pensamientos[1]?.runs).toEqual([]);
+    expect(pensamientos[0]?.runs).toEqual([]);
+    expect(pensamientos[1]?.runs.map((r) => r.text).join('')).toBe('solo uno');
+  });
+
+  it('transcriptToBlocks_conMasGuardadosQueBloques_usaLosUltimos', () => {
+    const blocks = transcriptToBlocks([conPensamiento(0)], ['viejo', 'nuevo']);
+    const [pensamiento] = blocks.filter((b) => b.kind === 'thinking');
+
+    expect(pensamiento?.runs.map((r) => r.text).join('')).toBe('nuevo');
   });
 });
 

@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { dirname } from 'node:path';
 import type { ImageAttachment } from '@shared/ipc';
 import type { PermissionDecision } from '@shared/events';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
@@ -55,7 +54,7 @@ export class SessionManager {
   // eventos (P-028, raiz de los puntos 17 y 36): un permiso pendiente se quedaba colgado para siempre
   // y reabrir la pestaña chocaba con "esa conversacion ya esta abierta".
   private readonly owners = new Map<string, number>();
-  // Config dir EFECTIVO de cada sesion (el de la cuenta o su `mage-private`). Hace falta para parar
+  // Config dir de la cuenta de cada sesion. Hace falta para parar
   // las sesiones de una cuenta que se va a borrar, esten en la ventana que esten (P-028, punto 30).
   private readonly accountDirs = new Map<string, string>();
 
@@ -189,11 +188,11 @@ export class SessionManager {
     return owned;
   }
 
-  // Para todas las sesiones que corren bajo `configDir` o bajo su perfil privado (hijo directo).
+  // Para todas las sesiones que corren bajo `configDir`.
   // Devuelve los ids que paro. Antes de borrar una cuenta: un CLI vivo sobre un dir borrado lo recrearia.
   stopByConfigDir(configDir: string): readonly string[] {
     const ids = [...this.accountDirs]
-      .filter(([, dir]) => pathEquals(dir, configDir) || pathEquals(dirname(dir), configDir))
+      .filter(([, dir]) => pathEquals(dir, configDir))
       .map(([id]) => id);
     for (const id of ids) this.stop(id);
     return ids;

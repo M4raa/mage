@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { foreignText, localized } from '@shared/i18n/localizedText';
 import type { McpExtensionView, McpInventory, McpInventoryRow } from '@shared/mcp';
-import { mcpAuthMessage, buildClaudeConnectorGroups, buildMcpTable, buildServersTable, describeCheckedAt, filterMcpTable, mcpStatusLabel, mergeLiveStatuses, statusTone, summarizeStatus, tagSessionServers } from './mcpView';
+import { mcpAuthMessage, buildClaudeConnectorGroups, connectorColumns, buildMcpTable, buildServersTable, describeCheckedAt, filterMcpTable, mcpStatusLabel, mergeLiveStatuses, statusTone, summarizeStatus, tagSessionServers } from './mcpView';
 
 const row = (patch: Partial<McpInventoryRow>): McpInventoryRow => ({
   name: 'a',
@@ -253,6 +253,15 @@ describe('pestaña Conectores', () => {
 
   it('buildClaudeConnectorGroups_sinCuentas_vacio', () => {
     expect(buildClaudeConnectorGroups(input({ accountIds: [] }))).toEqual([]);
+  });
+
+  it.each([
+    ['web', null, true],
+    ['plugin', null, false],
+    ['extension', 'custom', false],
+    ['desktopOnly', 'included', false],
+  ] as const)('connectorColumns_cadaTipo_chipYAutorizacion (%s)', (kind, chip, individualAuth) => {
+    expect(connectorColumns(kind)).toEqual({ chip, individualAuth });
   });
 });
 

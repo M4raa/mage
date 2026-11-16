@@ -2,7 +2,6 @@
 // cuenta y privacidad. Una conversacion abierta (pestana) se muestra con su estado vivo; el resto del
 // historial se muestra como filas reabribles. Sin store ni IPC -> testable.
 import type { ConversationSummary } from '@shared/conversations';
-import type { ConversationPrivacy } from '@shared/state';
 import type { Tab } from './types';
 import type { ReopenedTabPrefs } from './conversationPrefs';
 import { conversationIdOfTab } from './conversationId';
@@ -29,44 +28,15 @@ export function filterConversationRows(rows: readonly ConversationRow[], query: 
   return rows.filter((row) => rowTitle(row).toLowerCase().includes(needle));
 }
 
-// Devuelve las filas de una seccion (cuenta+privacidad) ordenadas por RECENCIA (mas reciente primero),
-// mezclando pestanas abiertas e historial en la misma escala de tiempo. Deliberadamente NO se ponen las
-// pestanas abiertas primero: abrir una conversacion no debe moverla de sitio (feedback GUI A6); solo
-// ESCRIBIR en ella la sube al principio (el store fija `lastMessageAtMs` al enviar). Se deduplica por
-// sessionId (la sesion viva o el resumeSessionId de una pestana === el sessionId del historial).
-export function mergeConversationRows(
-  tabs: readonly Tab[],
-  history: readonly ConversationSummary[],
-  sessionIdByChat: Readonly<Record<string, string>>,
-  accountId: string,
-  privacy: ConversationPrivacy,
-): ConversationRow[] {
-  const openTabs = tabs.filter((tab) => tab.accountId === accountId && tab.privacy === privacy);
-  // Indice sessionId -> resumen del historial (acceso O(1)): deduplica, data una pestaña reabierta que
-  // aun no ha recibido mensajes en esta ejecucion y le da su peso en disco.
-  const historyBySession = new Map(history.map((item) => [item.sessionId, item]));
-  const openSessionIds = new Set(
-    openTabs.map((tab) => sessionIdOf(tab, sessionIdByChat)).filter((id): id is string => id !== undefined),
-  );
-  const rows: ConversationRow[] = [
-    ...openTabs.map((tab) => tabRow(tab, historyBySession.get(sessionIdOf(tab, sessionIdByChat) ?? ''))),
-    ...history
-      .filter((item) => item.privacy === privacy && !openSessionIds.has(item.sessionId))
-      .map((item): ConversationRow => ({ kind: 'history', item })),
-  ];
-  return rows.sort((a, b) => rowRecency(b) - rowRecency(a));
-}
-
-function tabRow(tab: Tab, history: ConversationSummary | undefined): ConversationRow {
-  return history === undefined ? { kind: 'tab', tab } : { kind: 'tab', tab, history };
-}
-
-// Instante (ms epoch) por el que se ordena una fila. Para una pestana: su ultimo mensaje enviado en
-// esta ejecucion, o el mtime de su transcripcion, o cuando se creo. 0 si no se sabe nada (pestanas
-// restauradas de un formato anterior sin marcas de tiempo) -> al final, pero nunca rompe el orden.
+// Instante (ms epoch) por el que se ordena una fila: la ultima INTERACCION. Para una pestana, el mayor
+// de su ultimo mensaje enviado y el mtime de su transcripcion (la respuesta del agente tambien escribe,
+// asi que cuenta; abrir un chat no escribe nada y no lo sube); si no hay ninguno, cuando se creo. 0 si
+// no se sabe nada (pestanas restauradas de un formato anterior sin marcas de tiempo) -> al final, pero
+// nunca rompe el orden.
 export function rowRecency(row: ConversationRow): number {
   if (row.kind === 'history') return row.item.updatedAtMs;
-  return row.tab.lastMessageAtMs ?? row.history?.updatedAtMs ?? row.tab.createdAtMs ?? 0;
+  const interaction = Math.max(row.tab.lastMessageAtMs ?? 0, row.history?.updatedAtMs ?? 0);
+  return interaction > 0 ? interaction : (row.tab.createdAtMs ?? 0);
 }
 
 // --- Formato de la segunda linea de una fila (antes dentro de ChatSidebar) -------------------------
@@ -136,10 +106,11 @@ export function tabFromConversation(context: ConversationTabContext): Tab {
     // El runtime con el que se abrio (P-032 R4); lo antiguo, y lo que no dejo nada guardado, es Claude.
     provider: item.providerId ?? prefs.provider ?? 'claude',
     title: item.title,
-    privacy: item.privacy,
     resolvedConfigDir: item.configDir,
     resumeSessionId: item.sessionId,
     ...(prefs.effort === undefined ? {} : { effort: prefs.effort }),
+    // Ultracode solo existe en Claude: si el historial la abre con otro CLI, no se arrastra.
+    ...(prefs.ultracode === true && (item.providerId ?? prefs.provider ?? 'claude') === 'claude' ? { ultracode: true } : {}),
     ...(prefs.permissionMode === undefined ? {} : { permissionMode: prefs.permissionMode }),
   };
 }

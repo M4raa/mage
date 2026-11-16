@@ -10,9 +10,10 @@ import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
 import { popoverAnchor } from '../popoverAnchor';
 import type { ProviderModel } from '@shared/providers';
-import { continueListOnNewline, indentLines, outdentLines, type TextState } from '../promptEditing';
+import { continueListOnNewline, indentLines, outdentLines, removeListMarker, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
-import { ALLOWED_IMAGE_TYPES, assertPastedImages, base64ByteLength, sourcePathOf, validateAttachmentSet, type ImageSource } from '@shared/attachments';
+import { historyDown, historyUp, IDLE_PROMPT_HISTORY, sentPrompts, type PromptHistoryState } from '../promptHistory';
+import { assertPastedImages, base64ByteLength, sourcePathOf, validateAttachmentSet, type ImageSource } from '@shared/attachments';
 import type { PromptEditorHandle } from './PromptEditor';
 import { Icon, type IconName } from './Icon';
 import { SendControls } from './SendControls';
@@ -25,19 +26,22 @@ import { useCachedCommandCatalog } from '../commandCatalogStore';
 import { resolveKeyEvent, shortcutText } from '../keybindings/resolver';
 import { isMacPlatform } from '../keybindings/platform';
 import { ChatInfoBar } from './ChatInfoBar';
+import { diffChip } from '../chatInfoView';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
 import { notify } from '../notificationStore';
 import { displayTitle } from '../conversationTitle';
 import { Dropdown, type DropdownOption } from './Dropdown';
-import { StepSlider } from './StepSlider';
-import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortStepLabel, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
+import { ModelMenu } from './ModelMenu';
+import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
 import { usePaneTabId } from '../paneContext';
 import { renderLocalized, type LocalizedText } from '@shared/i18n/localizedText';
 import { t as translate, useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale } from '../../i18n/format';
 import type { PermissionMode } from '@shared/ipc';
 import { describeError } from '../describeError';
-import { addMention, applyResolution, failedMentions, insertMention, mentionQueryAt, reconcileMentions, removeMentionToken, type MentionFailure } from '../mentionDraft';
+import { fileMentionOf, insertAtCursor, isAttachableImage, pathNoteText, type FileMention } from '../fileAttach';
+import { lookupCandidate } from '../useMentionSuggestions';
+import { addMention, applyResolution, failedMentions, insertMention, mentionQueryAt, mentionToken, reconcileMentions, removeMentionToken, type MentionFailure } from '../mentionDraft';
 import { useMentionPreviews } from '../useMentionPreviews';
 import { MentionChips } from './MentionChips';
 import { useMentionSuggestions } from '../useMentionSuggestions';
@@ -54,9 +58,6 @@ const PromptEditor = lazy(() => import('./PromptEditor').then((m) => ({ default:
 // Referencia estable para "esta pestana no ha reportado comandos": devolver [] recien creado en cada
 // render haria que el selector de Zustand viera un valor nuevo siempre y re-renderizara sin parar.
 const EMPTY_COMMANDS: readonly SlashCommand[] = [];
-
-// Lo que ofrece el selector nativo de «Adjuntar imagen»: los mismos tipos que valida `addFiles`.
-const IMAGE_ACCEPT = [...ALLOWED_IMAGE_TYPES].join(',');
 
 // Los cinco llevan icono: uno sin el hacia que el chip encogiera 16 px al pasar por el y la fila, alineada
 // a la derecha, lo desplazaba.
@@ -185,6 +186,13 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   const sendMessageToTab = useWorkbenchStore((s) => s.sendMessageToTab);
   const activeTab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === activeTabId));
   const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[activeTabId]);
+  const insertCommitPrompt = useWorkbenchStore((s) => s.insertCommitPrompt);
+  // «Pedir commit al agente» (menú «+»): mismo criterio que tenía el botón de GitChips, repo con cambios.
+  const canAskCommit = useWorkbenchStore((s) => {
+    const cwd = s.tabs.find((tab) => tab.id === activeTabId)?.cwd;
+    const snapshot = cwd === undefined ? undefined : s.gitByCwd[cwd]?.snapshot;
+    return snapshot?.kind === 'repo' && diffChip(snapshot) !== null;
+  });
   // #55 (F2.8): la conversación la tiene otra instancia de Mage; aquí se lee pero no se escribe.
   const lock = useWorkbenchStore((s) => s.lockByChat[activeTabId]);
   const readOnlyLock = lock !== undefined && !lock.owner ? lock : null;
@@ -205,6 +213,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   const setActivePermissionMode = useWorkbenchStore((s) => s.setActivePermissionMode);
   const compactActiveSession = useWorkbenchStore((s) => s.compactActiveSession);
   const setActiveEffort = useWorkbenchStore((s) => s.setActiveEffort);
+  const setActiveUltracode = useWorkbenchStore((s) => s.setActiveUltracode);
   const interruptActiveSession = useWorkbenchStore((s) => s.interruptActiveSession);
   const keybindingOverrides = useWorkbenchStore((s) => s.settings.keybindingOverrides);
   // Estado del turno de la pestana activa: con el turno en marcha se ofrece "Parar" en vez de ⏎.
@@ -228,6 +237,11 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   // Autocompletado de comandos "/" (M2.6): indice seleccionado + flag de descartado (Escape).
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
+  // ↑/↓ del historial de prompts de ESTA conversación (como el CLI); se olvida al cambiar de pestaña.
+  const historyRef = useRef<PromptHistoryState>(IDLE_PROMPT_HISTORY);
+  useEffect(() => {
+    historyRef.current = IDLE_PROMPT_HISTORY;
+  }, [activeTabId]);
   const [preview, setPreview] = useState<string | null>(null); // sugerencia de mejora (editable)
   const [busy, setBusy] = useState(false); // mejorando/rehaciendo
   const [error, setError] = useState<string | null>(null);
@@ -459,6 +473,12 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
     setActiveEffort(level);
   };
 
+  // Ultracode (solo Claude): ajuste de arranque, el aviso lo explica.
+  const changeUltracode = (on: boolean): void => {
+    notifyCostAdvice({ severity: 'info', message: t('prompt.ultracode.changed', { state: on ? 'on' : 'off' }) }, activeTabId);
+    setActiveUltracode(on);
+  };
+
   // Pide una mejora del borrador actual y la deja como preview. `redo` distingue el boton Rehacer
   // (mismo origen: el borrador) para el texto del error, pero la logica es la misma.
   const runImprove = async (): Promise<void> => {
@@ -526,6 +546,21 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
     editorRef.current?.applyTextState({ value: inserted.text, selectionStart: inserted.cursor, selectionEnd: inserted.cursor });
   };
 
+  // ↑/↓ sin modificadores: el mensaje anterior o siguiente de la conversación (`promptHistory.ts`). Al aplicarlo se cierra el
+  // popover «/», que un mensaje que empieza por «/» abriría.
+  const recallHistory = (e: KeyboardEvent): boolean => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return false;
+    if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return false;
+    const entries = sentPrompts(useWorkbenchStore.getState().blocksByChat[activeTabId] ?? []);
+    const current = currentTextState();
+    const move = e.key === 'ArrowUp' ? historyUp(entries, historyRef.current, current) : historyDown(entries, historyRef.current, current);
+    if (move === null) return false;
+    historyRef.current = move.state;
+    applyEdit(move.text);
+    setSlashDismissed(true);
+    return true;
+  };
+
   // Puente de teclado del editor (2.7). MISMO orden de precedencia que tenia el textarea, y devuelve
   // `true` SOLO cuando ha actuado: devolver `true` de mas dejaria a CodeMirror sordo a teclas que nadie
   // ha reclamado (moverse, seleccionar, deshacer...).
@@ -551,6 +586,8 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
     }
     // 1b. Popover `@` abierto: mismas teclas que el de `/` (Enter elige y no envia).
     if (mentions.onKeyDown(e)) return true;
+    // 1c. Historial de prompts: después de los dos popovers, que usan las mismas flechas.
+    if (recallHistory(e)) return true;
     // 2. Shift+Enter: continuar lista si aplica; si no, salto de linea del editor. NO es rebindable
     // (D5 §2.2): es la convencion universal de "salto de linea".
     if (e.key === 'Enter' && e.shiftKey) {
@@ -558,6 +595,15 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
       if (result === null) return false;
       applyEdit(result);
       return true;
+    }
+    // 2b. Retroceso justo tras el marcador de lista: lo borra entero. El guion ya es atomico por su widget;
+    // el numero («2.») no, y costaba tres pulsaciones. Si no aplica, sigue como cualquier otra tecla.
+    if (e.key === 'Backspace' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const result = removeListMarker(currentTextState());
+      if (result !== null) {
+        applyEdit(result);
+        return true;
+      }
     }
     // 3. Enter: la decision vive en `enterAction`, PURA y con 12 tests, porque equivocarse aqui cuesta
     // un turno real (enviar un mensaje a medias).
@@ -615,7 +661,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
     }
   };
 
-  // Adjuntar imagenes (2.12.1), por pegado, con el botón «Adjuntar imagen» o soltándolas en el chat. La validacion es la del
+  // Adjuntar imagenes (2.12.1), por pegado, con «Adjuntar archivo» o soltándolas en el chat. La validacion es la del
   // modulo puro y su error se pinta en la linea `role="alert"` que ya existe: un adjunto que se cae en
   // silencio es peor que un error.
   //
@@ -652,15 +698,46 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
       });
   };
 
-  const onPickImages = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    addFiles(Array.from(e.currentTarget.files ?? []), 'disk');
+  // D1 (punto 15): las imágenes van por `addFiles`, como siempre; el resto entra como mención `@ruta` o como ruta.
+  const addAnyFiles = (files: readonly File[]): void => {
+    addFiles(files.filter(isAttachableImage), 'disk');
+    const others = files.filter((file) => !isAttachableImage(file));
+    if (others.length > 0) void attachOtherFiles(others);
+  };
+
+  const attachOtherFiles = async (files: readonly File[]): Promise<void> => {
+    const tabId = activeTabId;
+    const ctx = { cwd: tabCwd, lookup: (relPath: string) => (mentionTab === null ? Promise.resolve(null) : lookupCandidate(mentionTab, relPath)) };
+    try {
+      for (const file of files) applyFileMention(tabId, await fileMentionOf(file.name, window.mage.pathForFile(file), ctx));
+    } catch (err) {
+      setError(t('prompt.attach.failed', { error: describeError(err) }));
+    }
+  };
+
+  const applyFileMention = (tabId: string, outcome: FileMention): void => {
+    if (outcome.kind === 'noPath') {
+      setError(t('prompt.attach.failed', { error: t('prompt.attach.noDiskPath', { name: outcome.name }) }));
+      return;
+    }
+    const latest = draftOf(tabId);
+    const editor = editorRef.current;
+    const end = latest.text.length;
+    const next = insertAtCursor(editor?.getTextState() ?? { value: latest.text, selectionStart: end, selectionEnd: end }, outcome.kind === 'mention' ? `${mentionToken(outcome.candidate.relPath)} ` : pathNoteText(outcome.absPath));
+    const mentions = outcome.kind === 'mention' ? addMention(latest.mentions, outcome.candidate) : latest.mentions;
+    setDraft(tabId, { text: next.value, attachments: latest.attachments, mentions });
+    editor?.applyTextState(next);
+  };
+
+  const onPickFiles = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    addAnyFiles(Array.from(e.currentTarget.files ?? []));
     e.currentTarget.value = ''; // elegir otra vez el mismo fichero vuelve a disparar `change`
   };
 
   // Sin dependencias a propósito: la ref apunta siempre al `addFiles` del último render (lee la pestaña y el borrador de ese render).
   useEffect(() => {
     if (fileDropRef === undefined) return undefined;
-    fileDropRef.current = (files) => addFiles(files, 'disk');
+    fileDropRef.current = (files) => addAnyFiles(files);
     return () => {
       fileDropRef.current = null;
     };
@@ -785,11 +862,11 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
         )}
         {activeTab !== undefined && (
           <>
-            <input ref={imageInputRef} type="file" accept={IMAGE_ACCEPT} multiple hidden data-attach-input="image" onChange={onPickImages} />
+            <input ref={imageInputRef} type="file" multiple hidden data-attach-input="image" onChange={onPickFiles} />
             <ActionsMenu
               busy={busy}
               items={[
-                // Las imágenes entran también pegándolas o soltándolas en el chat.
+                // Las imágenes entran también pegándolas; cualquier fichero, soltándolo en el chat.
                 { icon: 'paperclip', label: t('i2.prompt.attachImage'), onClick: () => imageInputRef.current?.click(), disabled, title: t('i2.prompt.attachImageTip') },
                 { icon: 'sparkles', label: t('prompt.actions.improve'), onClick: () => void runImprove(), disabled: !canImprove, hidden: !isClaude },
                 {
@@ -810,6 +887,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
                   title: canHandoff ? t('prompt.actions.compactTip') : t('prompt.actions.compactDisabled'),
                 },
                 { icon: 'monitor', label: t('prompt.actions.openTerminal'), onClick: () => void window.mage.openTerminal(activeTab.cwd).catch(() => undefined) },
+                { icon: 'branch', label: t('chat.git.askCommit'), onClick: () => insertCommitPrompt(activeTabId), hidden: !canAskCommit, title: t('chat.git.askCommitTip'), action: 'git-commit' },
                 // "Abrir en <editor>": un item por editor detectado; si no hay ninguno, un unico
                 // item deshabilitado con el motivo en el title.
                 ...(editors.length > 0
@@ -901,37 +979,6 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
               {t('prompt.codex.allowWrite')}
             </button>
           )}
-          {activeModel.length > 0 && (isClaude || isCodex || isAgy) && (
-            // Dropdown de modelo en caliente (M2.4, solo Claude): set_model aplica al siguiente turno.
-            <Dropdown
-              value={displayModelId(activeModel, modelOptions)}
-              onChange={changeModel}
-              options={modelOptions.map((option) => ({ value: option.id, label: option.label }))}
-              // El UNICO sitio del modelo (P-026, D18): lo que resolvio la sesion (el alias apunta a la
-              // ultima version de su familia) vive aqui, y no en una insignia aparte.
-              tip={resolvedModel === null ? t('prompt.model.tip') : t('prompt.model.tipResolved', { model: resolvedModel })}
-              ariaLabel={t('prompt.model.ariaLabel')}
-            />
-          )}
-          {activeModel.length > 0 && !isClaude && !isCodex && !isAgy && (
-            <span className="shrink-0 self-center rounded-full border border-mg-border-ctrl px-[8px] py-[2px] text-[10.5px] text-mg-sec">{activeModel}</span>
-          )}
-          {(isClaude || isCodex || (isAgy && !agyModelFixesEffort(activeModel))) && (
-            // Esfuerzo (--effort, M2.4 / B4; P-028 33: deslizador de seis pasos con Auto a la izquierda).
-            // Flag de ARRANQUE del CLI, no hay cambio en caliente: el aviso y la nota lo aclaran.
-            <StepSlider
-              steps={availableEffortSteps}
-              value={effort}
-              onChange={changeEffort}
-              ariaLabel={t('prompt.effort.ariaLabel')}
-              chipLabel={t('prompt.effort.label', { level: effortStepLabel(effort).toLowerCase() })}
-              chipSizers={availableEffortSteps.map((step) => t('prompt.effort.label', { level: step.label.toLowerCase() }))}
-              heading={t('prompt.effort.label', { level: effortStepLabel(effort) })}
-              endLabels={[t('prompt.effort.faster'), t('prompt.effort.smarter')]}
-              tip={isCodex ? t('prompt.effort.tipNextTurn') : isAgy ? t('prompt.effort.tipNextMessage') : t('prompt.effort.tipOnStart')}
-              note={isCodex ? t('prompt.effort.noteNextTurn') : isAgy ? t('prompt.effort.noteNextMessage') : t('prompt.effort.noteOnStart')}
-            />
-          )}
           {(isClaude || isRuntime || isAgy || (isCodex && modeSteps.length > 0)) && (
             // Modo de permiso: un selector (antes deslizador de pasos, P-028 32/33). Los modos son los que EXPONE el CLI
             // (respuesta 18): en Claude, su `--permission-mode`; en Codex, sus perfiles, que aplican al siguiente turno.
@@ -946,6 +993,31 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
               triggerClassName={permissionChipSkin(permissionMode)}
               triggerData={{ 'data-permission-mode': permissionMode }}
               leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
+            />
+          )}
+          {activeModel.length > 0 && (
+            // Modelo y esfuerzo en UN chip (B1): el menú trae los modelos más nuevos, «Esfuerzo» y «Más modelos».
+            // El esfuerzo es un flag de ARRANQUE del CLI (no hay cambio en caliente): su nota lo aclara. El runtime
+            // propio no cambia de modelo en caliente: el chip se pinta sin menú. El UNICO sitio del modelo (P-026,
+            // D18): lo que resolvio la sesion (el alias apunta a la ultima version de su familia) vive en su tip.
+            <ModelMenu
+              models={modelOptions}
+              value={displayModelId(activeModel, modelOptions)}
+              onModel={changeModel}
+              interactive={isClaude || isCodex || isAgy}
+              ariaLabel={t('prompt.model.ariaLabel')}
+              tip={resolvedModel === null ? t('prompt.model.tip') : t('prompt.model.tipResolved', { model: resolvedModel })}
+              effort={
+                isClaude || isCodex || (isAgy && !agyModelFixesEffort(activeModel))
+                  ? {
+                      steps: availableEffortSteps,
+                      value: effort,
+                      onChange: changeEffort,
+                      ultracode: isClaude ? { value: activeTab?.ultracode === true, onChange: changeUltracode } : null,
+                      note: isCodex ? t('prompt.effort.noteNextTurn') : isAgy ? t('prompt.effort.noteNextMessage') : t('prompt.effort.noteOnStart'),
+                    }
+                  : null
+              }
             />
           )}
           </ChatInfoBar>
@@ -1025,6 +1097,7 @@ interface ActionItem {
   readonly disabled?: boolean;
   readonly hidden?: boolean; // no aplica al proveedor/estado actual -> ni se lista
   readonly title?: string; // motivo cuando esta deshabilitado
+  readonly action?: string; // marca estable (`data-action`) para medir la entrada desde verify:gui
 }
 
 // Menu «+» que agrupa las acciones de la barra (adjuntar, mejorar, handoff, compactar, terminal, editor) en un
@@ -1055,6 +1128,7 @@ function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; r
               <button
                 key={item.label}
                 role="menuitem"
+                data-action={item.action}
                 onClick={() => run(item)}
                 disabled={item.disabled === true}
                 data-tip={item.title}

@@ -101,7 +101,7 @@ export function decideTestAnthropicBaseUrl(input: {
   return { kind: 'use', url: url.origin };
 }
 
-function parseLoopbackHttpUrl(raw: string): URL | null {
+export function parseLoopbackHttpUrl(raw: string): URL | null {
   try {
     const url = new URL(raw);
     return url.protocol === 'http:' && LOOPBACK_HOSTNAMES.includes(url.hostname) ? url : null;

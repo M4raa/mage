@@ -23,6 +23,8 @@ export interface ReopenedTabPrefsContext {
 export interface ReopenedTabPrefs {
   readonly model: string;
   readonly effort?: string;
+  // Ultracode (solo Claude); ausente = apagado.
+  readonly ultracode?: boolean;
   readonly permissionMode?: PermissionMode;
   // Reglas "Permitir siempre <tool> aqui" con las que se dejo la conversacion (2.3b).
   readonly alwaysAllowTools?: readonly string[];
@@ -47,6 +49,7 @@ export function resolveReopenedTabPrefs(ctx: ReopenedTabPrefsContext): ReopenedT
     // Las claves ausentes NO se ponen a undefined: `Tab` las declara opcionales y un `effort:
     // undefined` explicito acabaria viajando al workspace persistido como ruido.
     ...(effort === undefined ? {} : { effort }),
+    ...(saved?.ultracode === true ? { ultracode: true } : {}),
     ...(permissionMode === undefined ? {} : { permissionMode }),
     ...(alwaysAllowTools.length === 0 ? {} : { alwaysAllowTools }),
     ...(provider === undefined ? {} : { provider }),
@@ -75,6 +78,7 @@ function firstNonEmpty(value: string | undefined): string | undefined {
 export function toConversationPrefs(tab: {
   readonly model: string;
   readonly effort?: string;
+  readonly ultracode?: boolean;
   readonly permissionMode?: string;
   readonly alwaysAllowTools?: readonly string[];
   readonly provider?: string;
@@ -84,6 +88,8 @@ export function toConversationPrefs(tab: {
     model: tab.model,
     accountId: tab.accountId,
     effort: tab.effort ?? '',
+    // Como `effort`, siempre viaja: `false` es BORRAR el campo del índice (si no, quitarlo no se recordaría).
+    ultracode: tab.ultracode === true,
     ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
     // Se manda SIEMPRE que la pestana tenga el campo, aunque este vacio: la lista es el estado completo
     // de las reglas, y vacia significa "revocadas todas" — omitirla dejaria en el indice las que el

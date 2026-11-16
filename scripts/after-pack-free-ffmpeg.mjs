@@ -27,6 +27,11 @@ const FFMPEG_TARGETS = {
   darwin: { file: 'libffmpeg.dylib', relativeDir: 'Electron Framework.framework/Versions/A/Libraries' },
 };
 
+// Por ruta: en el PATH `powershell` puede ser PowerShell 7, cuyo Expand-Archive (7.7, módulo Archive) falla al
+// extraer (medido el 13-11). El 5.1 viene con todo Windows. ...y sin PSModulePath: heredado de una sesión de
+// PowerShell 7, el 5.1 cargaría el módulo Archive de la 7.7 (medido el 13-11).
+const WINDOWS_POWERSHELL = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+
 export default async function replaceWithFreeFfmpeg(context) {
   const platform = context.electronPlatformName;
   const target = FFMPEG_TARGETS[platform];
@@ -67,10 +72,19 @@ function unzip(zipPath, destDir) {
   // Comillas simples de PowerShell: se escapan duplicandolas, que es lo unico que hay que escapar ahi.
   const quote = (value) => `'${value.replace(/'/g, "''")}'`;
   execFileSync(
-    'powershell',
+    WINDOWS_POWERSHELL,
     ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${quote(zipPath)} -DestinationPath ${quote(destDir)} -Force`],
-    { stdio: 'inherit' },
+    { stdio: 'inherit', env: envWithoutPsModulePath() },
   );
+}
+
+// Copia del entorno sin PSModulePath, sea cual sea su capitalizacion (en Windows la clave puede variar).
+function envWithoutPsModulePath() {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === 'psmodulepath') delete env[key];
+  }
+  return env;
 }
 
 // Ruta del ffmpeg que electron-builder acaba de empaquetar. En macOS cuelga del .app, cuyo nombre

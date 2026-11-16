@@ -24,6 +24,8 @@ export interface CreateSessionCommand {
   readonly model?: string;
   readonly effort?: string;
   readonly permissionMode?: string;
+  // Nombre de la subsesión; ausente = la primera línea del prompt.
+  readonly title?: string;
   readonly requestId: string;
   readonly createdBy?: CreatedBy;
   readonly creatorChain: readonly string[];

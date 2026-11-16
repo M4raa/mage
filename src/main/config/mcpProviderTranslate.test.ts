@@ -107,6 +107,28 @@ describe('Claude', () => {
     expect(args).toEqual({ args: [], env: {} });
   });
 
+  it('toClaudeArgs_conFragmentoYExtra_unSoloSettingsFusionado', () => {
+    const { args } = toClaudeArgs([], { hooks: {} }, () => '', { ultracode: true });
+
+    expect(args).toEqual(['--settings', '{"hooks":{},"ultracode":true}']);
+  });
+
+  it('toClaudeArgs_soloExtra_settingsConExtra', () => {
+    const { args } = toClaudeArgs([], null, () => '', { ultracode: true });
+
+    expect(args).toEqual(['--settings', '{"ultracode":true}']);
+  });
+
+  it('toClaudeArgs_sinNada_sinSettings', () => {
+    const { args } = toClaudeArgs([], null, () => '', {});
+
+    expect(args).not.toContain('--settings');
+  });
+
+  it('claudeSharedLaunch_sinSharedConExtra_settings', () => {
+    expect(claudeSharedLaunch(undefined, '/c', () => '', { ultracode: true })).toEqual({ args: ['--settings', '{"ultracode":true}'], env: {} });
+  });
+
   it('toClaudeArgs_conServidores_ningunValorEnElFicheroNiEnLaLinea', () => {
     let written = '';
     const { args, env } = toClaudeArgs([stdio()], { hooks: {} }, (text) => {

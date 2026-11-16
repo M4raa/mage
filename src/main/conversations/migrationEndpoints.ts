@@ -3,7 +3,6 @@ import type { AccountProviderId } from '@shared/accounts';
 import { adaptCodexLine, codexTurnsToLines, type CodexTurn } from '@shared/codexTranscript';
 import type { NeutralConversation } from '@shared/neutralConversation';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
-import type { ConversationPrivacy } from '@shared/state';
 import { resolveTranscriptPath } from '../transcripts/transcriptPath';
 import type { AgyHistoryService } from './agyHistory';
 import { agyStepsToLines } from './agyHistory';
@@ -25,8 +24,6 @@ export interface MigrationEndpointDeps {
   readonly nowMs: () => number;
   readonly newId: () => string;
   readonly claude: {
-    // Dir efectivo de la conversación: la cuenta, o su perfil privado.
-    readonly effectiveDir: (accountDir: string, privacy: ConversationPrivacy) => string;
     readonly deleteConversation: (ref: ConversationRef) => void;
   };
   readonly codex: {
@@ -60,7 +57,7 @@ function missing(what: string, id: string): never {
 // --- Claude ---------------------------------------------------------------------------------------------------------
 
 function claudeEndpoints(deps: MigrationEndpointDeps): MigrationEndpoints {
-  const pathOf = (ref: ConversationRef): string => resolveTranscriptPath(deps.claude.effectiveDir(ref.accountDir, ref.privacy), ref.cwd, ref.sessionId);
+  const pathOf = (ref: ConversationRef): string => resolveTranscriptPath(ref.accountDir, ref.cwd, ref.sessionId);
   const source: ConversationSource = {
     read: async (ref) => {
       const lines = deps.readText(pathOf(ref)).split('\n').filter((line) => line.trim().length > 0).map((line) => JSON.parse(line) as unknown);
@@ -71,7 +68,7 @@ function claudeEndpoints(deps: MigrationEndpointDeps): MigrationEndpoints {
   const sink: ConversationSink = {
     write: (conversation, dest) => {
       const sessionId = deps.newId();
-      const configDir = deps.claude.effectiveDir(dest.accountDir, dest.privacy);
+      const configDir = dest.accountDir;
       deps.writeText(resolveTranscriptPath(configDir, conversation.cwd, sessionId), claudeTranscriptText(conversation, { sessionId, newId: deps.newId, clock: { baseMs: deps.nowMs() } }));
       return { sessionId, configDir };
     },

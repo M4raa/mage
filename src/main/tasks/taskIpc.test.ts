@@ -7,7 +7,7 @@ import type { TaskService } from './taskService';
 type Listener = (event: unknown, arg: unknown) => unknown;
 
 const DONE: TaskRecord = {
-  id: 't1', goal: 'g', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/w'], documents: [], capabilities: [],
+  id: 't1', name: 'n', schedule: null, enabled: true, nextRunAtMs: null, lastRun: null, goal: 'g', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/w'], documents: [], capabilities: [],
   createdAtMs: 1, sessionId: null, conversationId: null, verifiedAtMs: 2, verdict: 'incomplete',
   deliverables: [
     { declared: 'a.md', path: '/w/a.md', status: 'ok', bytes: 1, modifiedAtMs: 1, kind: 'md' },
@@ -15,9 +15,12 @@ const DONE: TaskRecord = {
   ],
 };
 
-function setup(overrides: { save?: string | null; picked?: readonly string[] } = {}) {
+function setup(overrides: { save?: string | null; picked?: readonly string[]; mainSender?: boolean } = {}) {
   const handlers = new Map<string, Listener>();
-  const service = { list: vi.fn(() => [DONE]), create: vi.fn(), verify: vi.fn(), remove: vi.fn() };
+  const service = {
+    list: vi.fn(() => [DONE]), create: vi.fn(), verify: vi.fn(), remove: vi.fn(),
+    edit: vi.fn(), setEnabled: vi.fn(), runNow: vi.fn(), takeDue: vi.fn(() => [DONE]), reportRunFailed: vi.fn(),
+  };
   const showSaveDialog = vi.fn(async () => (overrides.save === undefined ? '/out/a.md' : overrides.save));
   const copyFile = vi.fn();
   const pickPaths = vi.fn(async () => overrides.picked ?? []);
@@ -25,21 +28,53 @@ function setup(overrides: { save?: string | null; picked?: readonly string[] } =
     handle: (channel, listener) => void handlers.set(channel, listener),
     service: () => service as unknown as TaskService,
     pickPaths, showSaveDialog, copyFile,
+    isMainWindowSender: () => overrides.mainSender ?? true,
+    listDesktopTasks: () => [],
   });
   const call = (channel: string, arg?: unknown): unknown => (handlers.get(channel) as Listener)(null, arg);
   return { handlers, service, call, showSaveDialog, copyFile, pickPaths };
 }
 
-const DRAFT = { goal: 'x', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/w'], documents: [], capabilities: [] };
+const DRAFT = { name: 'n', schedule: null, goal: 'x', language: 'es', provider: 'claude', accountDir: '/a', folders: ['/w'], documents: [], capabilities: [] };
 
 describe('registerTaskIpc', () => {
-  it('register_registraLosSieteCanales', () => {
+  it('register_registraLosTreceCanales', () => {
     const { handlers } = setup();
 
     expect([...handlers.keys()].sort()).toEqual([
       IpcChannel.TasksCreate, IpcChannel.TasksList, IpcChannel.TasksPickDocuments, IpcChannel.TasksPickFolders,
       IpcChannel.TasksRemove, IpcChannel.TasksSaveCopy, IpcChannel.TasksVerify,
+      IpcChannel.TasksEdit, IpcChannel.TasksSetEnabled, IpcChannel.TasksRunNow, IpcChannel.TasksTakeDue,
+      IpcChannel.TasksRunFailed, IpcChannel.TasksDesktopList,
     ].sort());
+  });
+
+  it('takeDue_desdeOtraVentana_vacio', () => {
+    const { call, service } = setup({ mainSender: false });
+
+    expect(call(IpcChannel.TasksTakeDue)).toEqual([]);
+    expect(service.takeDue).not.toHaveBeenCalled();
+  });
+
+  it('takeDue_desdeLaPrincipal_delegaEnElServicio', () => {
+    const { call, service } = setup();
+
+    expect(call(IpcChannel.TasksTakeDue)).toEqual([DONE]);
+    expect(service.takeDue).toHaveBeenCalledOnce();
+  });
+
+  it('edit_borradorSinNombre_rechazaEnLaFrontera', () => {
+    const { call, service } = setup();
+
+    expect(() => call(IpcChannel.TasksEdit, { taskId: 't1', draft: { ...DRAFT, name: 'x'.repeat(81) } })).toThrow(/Petición inválida/);
+    expect(service.edit).not.toHaveBeenCalled();
+  });
+
+  it('setEnabled_valorNoBooleano_rechaza', () => {
+    const { call, service } = setup();
+
+    expect(() => call(IpcChannel.TasksSetEnabled, { taskId: 't1', enabled: 'yes' })).toThrow(/Petición inválida/);
+    expect(service.setEnabled).not.toHaveBeenCalled();
   });
 
   it('create_payloadInvalido_lanzaConCanal', () => {

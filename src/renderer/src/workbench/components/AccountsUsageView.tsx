@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { UsageHistory } from '@shared/usageHistory';
+import type { DailyDetail, UsageHistory } from '@shared/usageHistory';
 import { formatMicroUsd } from '@shared/usage';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { lastDays, localDay, PERIODS, type PeriodDays } from '../accountsUsageView';
-import { combineDetail, computeAccountMetrics, type AccountMetrics } from '../accountMetrics';
+import { accountSharesOf, combineDetail, computeAccountMetrics, type AccountMetrics } from '../accountMetrics';
 import { describeError } from '../describeError';
+import { usageHistorySource } from '../usageHistorySource';
 import type { Account } from '../types';
 import { Icon } from './Icon';
 import { AccountDetailHeader } from './AccountUsageActions';
-import { ActivitySection, DailyChart, Kpi, ModelsTable, TopList, WindowPeaksSection } from './AccountUsageSections';
+import { ActivitySection, Kpi, TopList, WindowPeaksSection } from './AccountUsageSections';
+import { TrendSection } from './UsageDailyChart';
+import { RemainingSection, TokenSplitSection, TopSection } from './UsageBreakdowns';
+import { tokenSplitOf } from '../usageCharts';
 import { formatTokensShort } from '../contextView';
 import { apiBilledLabel } from '../accountView';
 import { useT } from '../../i18n/uiLanguage';
@@ -31,8 +35,8 @@ function useUsageHistory(): { readonly load: Load; readonly reload: () => void }
   useEffect(() => {
     let alive = true;
     setLoad((current) => (current.kind === 'ready' ? current : { kind: 'loading' }));
-    window.mage
-      .getUsageHistory()
+    usageHistorySource
+      .load()
       .then((history) => alive && setLoad({ kind: 'ready', history }))
       .catch((err: unknown) => alive && setLoad({ kind: 'error', message: describeError(err) }));
     return () => {
@@ -44,13 +48,19 @@ function useUsageHistory(): { readonly load: Load; readonly reload: () => void }
 
 const money = (microUsd: number): string => formatMicroUsd(microUsd, activeFormatLocale());
 
+// Detalle diario de una cuenta, o de todas juntas con `accountId` null.
+function detailOf(history: UsageHistory, accountId: string | null): readonly DailyDetail[] {
+  if (accountId === null) return combineDetail(history.accounts);
+  return history.accounts.find((entry) => entry.accountId === accountId)?.detail ?? [];
+}
+
 // Métricas de una cuenta (o de todas, con `accountId` null) en el periodo.
 function useMetrics(history: UsageHistory | null, accountId: string | null, period: readonly string[]): AccountMetrics | null {
   const plan = useWorkbenchStore((s) => (accountId === null ? undefined : s.settings.planPriceMicroUsdByAccount[accountId]));
   return useMemo(() => {
     if (history === null) return null;
     const account = accountId === null ? undefined : history.accounts.find((entry) => entry.accountId === accountId);
-    const detail = accountId === null ? combineDetail(history.accounts) : (account?.detail ?? []);
+    const detail = detailOf(history, accountId);
     return computeAccountMetrics({ detail, windows: account?.windows ?? [], period, planPriceMicroUsd: plan ?? null });
   }, [history, accountId, period, plan]);
 }
@@ -195,27 +205,49 @@ function AccountListRow({ account, history, period, selected, onSelect }: { read
 function Detail({ history, accountId, account, period }: { readonly history: UsageHistory; readonly accountId: string | null; readonly account: Account | null; readonly period: readonly string[] }): React.JSX.Element {
   const t = useT();
   const adminMode = useWorkbenchStore((s) => s.settings.adminMode);
+  const accounts = useWorkbenchStore((s) => s.accounts);
   const metrics = useMetrics(history, accountId, period);
+  const detail = useMemo(() => detailOf(history, accountId), [history, accountId]);
+  const split = useMemo(() => tokenSplitOf(detail, period), [detail, period]);
+  const shares = useMemo(() => (accountId === null ? accountSharesOf(history.accounts, period) : null), [history, accountId, period]);
   if (metrics === null) return <></>;
   const limitsByDay = new Map(history.accounts.find((entry) => entry.accountId === accountId)?.detail.map((day) => [day.day, day.limits.fiveHour + day.limits.weekly + day.limits.other]) ?? []);
+  const aliasOf = (id: string): string => accounts.find((entry) => entry.id === id)?.alias ?? id;
+  const accountLabelOf = (id: string): string => {
+    const found = accounts.find((entry) => entry.id === id);
+    return found === undefined ? id : `${found.provider} · ${found.alias}`;
+  };
   return (
     <>
       <Kpis metrics={metrics} account={account} />
       {metrics.unpriced && <p className="text-[10.5px] text-mg-warn-text">{t('accountsUsage.unpriced')}</p>}
-      <DailyChart metrics={metrics} period={period} />
-      <ModelsTable metrics={metrics} />
+      <Question id="remaining" title={t('accountsUsage.q.remaining')}>
+        <RemainingSection accounts={account === null ? accounts : [account]} history={history} period={period} showName={account === null} />
+      </Question>
+      <Question id="trend" title={t('accountsUsage.q.trend')}>
+        <TrendSection detail={detail} accounts={accountId === null ? history.accounts : null} period={period} labelOf={aliasOf} />
+      </Question>
+      <Question id="top" title={t('accountsUsage.q.top')}><TopSection metrics={metrics} accounts={shares === null ? null : { shares, labelOf: accountLabelOf }} /></Question>
+      <Question id="tokens" title={t('accountsUsage.q.tokens')}><TokenSplitSection split={split} /></Question>
+      <Question id="when" title={t('accountsUsage.q.when')}><ActivitySection metrics={metrics} /></Question>
       {adminMode && (
         <div data-accounts-usage-admin="true" className="flex flex-col gap-[16px] border-t border-mg-border-subtle pt-[14px]">
-          <ActivitySection metrics={metrics} />
-          <div className="grid grid-cols-2 gap-[18px]">
-            <TopList title={t('accountsUsage.admin.projects')} rows={metrics.projects} format={formatTokensShort} data="projects" />
-            <TopList title={t('accountsUsage.admin.tools')} rows={metrics.tools} format={formatInteger} data="tools" />
-          </div>
+          <TopList title={t('accountsUsage.admin.tools')} rows={metrics.tools} format={formatInteger} data="tools" />
           {accountId !== null && <WindowPeaksSection windows={metrics.windows} limitsByDay={limitsByDay} period={period} />}
         </div>
       )}
       <p className="text-[10.5px] leading-[1.45] text-mg-muted">{t('accountsUsage.sourceNote')}</p>
     </>
+  );
+}
+
+// Una pregunta de la pantalla: la pregunta es el título y el nombre accesible de la sección.
+function Question({ id, title, children }: { readonly id: string; readonly title: string; readonly children: React.ReactNode }): React.JSX.Element {
+  return (
+    <section data-usage-question={id} aria-label={title} className="flex flex-col gap-[8px] border-t border-mg-border-subtle pt-[12px]">
+      <h3 className="text-[12.5px] font-semibold text-mg-text">{title}</h3>
+      {children}
+    </section>
   );
 }
 

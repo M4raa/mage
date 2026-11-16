@@ -31,6 +31,8 @@ export interface ConversationEntry extends ConversationPrefs {
   readonly lastSeq?: number;
   readonly createdBy?: NonNullable<DelegationRecord['createdBy']>;
   readonly creatorChain?: readonly string[];
+  // Tarea de Mage que creó la conversación (la escribe solo main al lanzarla).
+  readonly createdByTaskId?: string;
 }
 
 // Cómo se lanzó una sesión del host: su cuenta (la dueña), su CLI y lo que la ventana necesita para reabrirla igual.
@@ -54,11 +56,12 @@ const LEGACY_INDEX_VERSION = 1;
 // (comprueba la version), asi que volver atras pierde las preferencias si no hay copia.
 const LEGACY_BACKUP_SUFFIX = '.v1.bak';
 
-const PREF_KEYS = ['model', 'effort', 'permissionMode', 'provider', 'accountId', 'alwaysAllowTools', 'hostOwnerAccountId'] as const;
+const PREF_KEYS = ['model', 'effort', 'ultracode', 'permissionMode', 'provider', 'accountId', 'alwaysAllowTools', 'hostOwnerAccountId'] as const;
 
 const PREFS_SCHEMA = z.object({
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
+  ultracode: z.boolean().optional().catch(undefined),
   permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']).optional().catch(undefined),
   provider: z.string().min(1).optional().catch(undefined),
   // Última cuenta con la que se usó la conversación (lateral de todas las cuentas).
@@ -76,6 +79,7 @@ const ENTRY_SCHEMA = PREFS_SCHEMA.extend({
   lastSeq: z.number().int().nonnegative().optional().catch(undefined),
   createdBy: z.object({ conversationId: z.string().min(1), requestId: z.string().min(1), at: z.string().datetime() }).optional().catch(undefined),
   creatorChain: z.array(z.string().min(1)).max(MAX_CREATOR_CHAIN).optional().catch(undefined),
+  createdByTaskId: z.string().min(1).optional().catch(undefined),
 });
 
 const ARTIFACT_SCHEMA = z.object({
@@ -162,6 +166,23 @@ export class ConversationIndexStore {
     };
     const merged: ConversationEntry = { ...mergePrefs(index.conversations[key], prefs), hostOwnerAccountId: record.accountId };
     this.write({ ...index, conversations: { ...index.conversations, [key]: merged } });
+  }
+
+  // Conversación creada por una tarea de Mage: el lateral le pone «programada» sea cual sea el proveedor. `id` es el
+  // ConversationId o el nativo. Solo escribe si cambia.
+  recordTaskRun(id: string, taskId: string): void {
+    if (id.length === 0 || taskId.length === 0) throw new Error(`id o tarea vacios al marcar la conversacion de una tarea: ${JSON.stringify({ id, taskId })}`);
+    const index = this.read();
+    const key = this.keyFor(index, id);
+    const entry = index.conversations[key];
+    if (entry?.createdByTaskId === taskId) return;
+    this.write({ ...index, conversations: { ...index.conversations, [key]: { ...entry, createdByTaskId: taskId } } });
+  }
+
+  // La tarea de Mage que creó la conversación, o undefined.
+  taskRunOf(id: string): string | undefined {
+    const index = this.read();
+    return index.conversations[this.keyFor(index, id)]?.createdByTaskId;
   }
 
   // Olvida una conversacion (la borra `ConversationsDelete`). No-op si no estaba.
@@ -312,6 +333,11 @@ function mergePrefs(current: ConversationEntry | undefined, incoming: Conversati
     if (value === undefined) continue;
     if (value.length === 0) delete merged[key];
     else merged[key] = value;
+  }
+  // Ultracode es un booleano: `true` lo guarda y `false` BORRA la clave (no deja un `false` de ruido).
+  if (incoming.ultracode !== undefined) {
+    if (incoming.ultracode) merged.ultracode = true;
+    else delete merged.ultracode;
   }
   // Las reglas de permiso son una LISTA, no una cadena: se reemplaza entera cuando viene (el renderer
   // manda siempre el estado completo de la conversacion) y se BORRA la clave si llega vacia, para no

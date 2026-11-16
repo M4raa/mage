@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { nodeDeliverableFs, nodeIsDirectory, nodeIsFile } from './taskNodeFs';
+import { nodeDeliverableFs, nodeDesktopTaskFs, nodeIsDirectory, nodeIsFile } from './taskNodeFs';
 
 const root = mkdtempSync(join(tmpdir(), 'mage-task-fs-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -28,5 +28,19 @@ describe('taskNodeFs', () => {
     expect(nodeDeliverableFs.canRead(empty)).toBe(true);
     expect(nodeDeliverableFs.stat(join(root, 'nada'))).toBeNull();
     expect(nodeDeliverableFs.canRead(join(root, 'nada'))).toBe(false);
+  });
+
+  it('nodeDesktopTaskFs_carpetaInexistente_listaVacia', () => {
+    expect(nodeDesktopTaskFs.listDirs(join(root, 'no-existe'))).toEqual([]);
+    expect(nodeDesktopTaskFs.readText(join(root, 'no-existe', 'SKILL.md'))).toBeNull();
+  });
+
+  it('nodeDesktopTaskFs_carpetaConSkill_listaYLee', () => {
+    mkdirSync(join(root, 'tareas', 'una'), { recursive: true });
+    writeFileSync(join(root, 'tareas', 'suelto.txt'), 'x');
+    writeFileSync(join(root, 'tareas', 'una', 'SKILL.md'), 'texto');
+
+    expect(nodeDesktopTaskFs.listDirs(join(root, 'tareas'))).toEqual(['una']);
+    expect(nodeDesktopTaskFs.readText(join(root, 'tareas', 'una', 'SKILL.md'))).toBe('texto');
   });
 });

@@ -20,7 +20,7 @@ function buildDeps(overrides: Partial<WorkspaceStoreDeps> = {}): WorkspaceStoreD
 const validState: PersistedWorkspace = {
   version: 1,
   activeTabId: 'tab1',
-  tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'main', cwd: '/p', model: 'opus', provider: 'claude', title: 'p', privacy: 'shared', sessionId: 's1' }],
+  tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'main', cwd: '/p', model: 'opus', provider: 'claude', title: 'p', sessionId: 's1' }],
 };
 
 describe('WorkspaceStore.load', () => {
@@ -46,6 +46,17 @@ describe('WorkspaceStore.load', () => {
     const store = new WorkspaceStore(buildDeps({ readFile: () => JSON.stringify(validState) }));
 
     expect(store.load()).toEqual(validState);
+  });
+
+  it('load_pestanaGuardadaComoPrivada_seLeeComoCualquierOtra', () => {
+    // T-B3c: las conversaciones privadas se retiraron; el campo de un estado antiguo se ignora y la pestaña sale.
+    const antigua = { ...validState, tabs: [{ ...validState.tabs[0]!, privacy: 'private' }] };
+    const store = new WorkspaceStore(buildDeps({ readFile: () => JSON.stringify(antigua) }));
+
+    const loaded = store.load();
+
+    expect(loaded?.tabs).toHaveLength(1);
+    expect(loaded?.tabs[0]).toEqual(validState.tabs[0]);
   });
 
   it('load_pestanaEnModoAuto_parsea', () => {

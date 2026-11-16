@@ -18,8 +18,27 @@ las carpetas que autorices. Además toca cosas sensibles por diseño:
   ese token.
 
 Mage **no envía telemetría** ni tiene servidor propio: no hay ningún sitio al que tu contenido viaje
-por parte del proyecto. Las conexiones de red son las de los proveedores que configures y la
-comprobación de actualizaciones.
+por parte del proyecto. Las peticiones que hace Mage por su cuenta están todas en la sección siguiente.
+
+## Conexiones que hace Mage por su cuenta
+
+Los CLI que lanza Mage hablan con su fabricante como lo harían en tu terminal. Aparte de eso, el proceso
+principal de Mage hace estas peticiones:
+
+| Para qué | A dónde | Qué envía | Cuándo |
+|---|---|---|---|
+| Panel de uso de las cuentas de Claude por suscripción | `GET https://api.anthropic.com/api/oauth/usage` | El token de acceso de esa cuenta, leído de su `.credentials.json`; `anthropic-beta: oauth-2025-04-20`; `User-Agent: claude-code/<versión>` | Al consultar el uso; como mucho una vez cada 3 minutos por cuenta |
+| Renovar la sesión de esa cuenta | `POST https://platform.claude.com/v1/oauth/token` | El *refresh token* de la cuenta y el identificador de cliente público de Claude Code | Solo si la consulta de uso responde 401. El token nuevo se escribe en el `.credentials.json` de esa cuenta |
+| Estado del servicio de Claude | `GET https://status.claude.com/api/v2/summary.json` | Nada tuyo | Cuando la interfaz enseña el estado |
+| Buscar e importar temas | `https://open-vsx.org` | El texto que buscas | Solo al buscar o importar un tema |
+| Actualizaciones | Releases de GitHub de `M4raa/mage` | Nada tuyo | Al arrancar y al pedirlo en Configuración |
+| Proveedores que das de alta tú (Ollama, LM Studio…) | La URL que pusiste | Tus mensajes y, si la diste, tu clave | Al probar el proveedor y en cada turno |
+
+**Por qué se presenta como Claude Code.** El endpoint de uso responde 429 a cualquier otro `User-Agent`, así
+que Mage manda el del CLI, con la versión del `claude` que tienes instalado: la lee ejecutando `claude --version`
+en tu máquina, sin red, y si no puede usa una fija. La renovación usa el cliente OAuth público de Claude Code
+porque es el que emitió ese token. Son tus credenciales y no salen de tu máquina hacia ningún otro sitio. No es
+una integración oficial: Anthropic puede cambiar esos endpoints, y entonces el panel de uso deja de funcionar.
 
 ## Cómo informar de una vulnerabilidad
 

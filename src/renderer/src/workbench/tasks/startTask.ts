@@ -1,8 +1,10 @@
 import type { ImageAttachment } from '@shared/ipc';
 import type { MentionResolution, MentionResolveParams } from '@shared/mentions';
+import { scheduledTaskMessage } from '@shared/systemWrappers';
 import type { TaskDraft, TaskRecord } from '@shared/tasks';
 import { t } from '../../i18n/uiLanguage';
 import { applyResolution, failedMentions } from '../mentionDraft';
+import { taskDisplayName } from './taskView';
 
 // Arranque de una tarea (R3): crea el registro, abre la conversación en la carpeta de trabajo, pasa a main el id
 // de la tarea con la sesión y manda el objetivo con los documentos autorizados como menciones.
@@ -13,6 +15,8 @@ export interface StartTaskDeps {
   readonly setActiveAccount: (accountId: string) => void;
   readonly createConversation: (folder: { readonly cwd: string }) => Promise<void>;
   readonly activeTabId: () => string;
+  readonly setActiveTab: (tabId: string) => void;
+  readonly hasTab: (tabId: string) => boolean;
   readonly attachTask: (tabId: string, taskId: string) => void;
   readonly ensureSession: (tabId: string) => Promise<string>;
   readonly tabMentionContext: (tabId: string) => { readonly accountDir: string; readonly provider: string };
@@ -54,20 +58,45 @@ async function resolveDocuments(documents: readonly string[], tabId: string, dep
 }
 
 export async function startTask(draft: TaskDraft, deps: StartTaskDeps): Promise<string> {
-  const cwd = draft.folders[0];
-  if (cwd === undefined) throw new Error(`La tarea necesita al menos una carpeta: ${JSON.stringify(draft.folders)}`);
+  if (draft.folders[0] === undefined) throw new Error(`La tarea necesita al menos una carpeta: ${JSON.stringify(draft.folders)}`);
   const task = await deps.createTask(draft);
-  if (deps.activeAccountId() !== draft.accountDir) deps.setActiveAccount(draft.accountDir);
+  return launchTask(task, deps);
+}
+
+// Lanza una tarea YA registrada (a mano o por el planificador): conversación nueva en su carpeta y primer mensaje.
+// Con programación, el mensaje va dentro de `<scheduled-task name="…">` (título e insignia «programada»).
+export async function launchTask(task: TaskRecord, deps: StartTaskDeps): Promise<string> {
+  const cwd = task.folders[0];
+  if (cwd === undefined) throw new Error(`La tarea necesita al menos una carpeta: ${JSON.stringify(task.folders)}`);
+  if (deps.activeAccountId() !== task.accountDir) deps.setActiveAccount(task.accountDir);
   await deps.createConversation({ cwd });
   const tabId = deps.activeTabId();
   deps.attachTask(tabId, task.id);
   await deps.ensureSession(tabId);
   await deps.reloadTasks();
-  const resolutions = await resolveDocuments(draft.documents, tabId, deps);
+  const resolutions = await resolveDocuments(task.documents, tabId, deps);
   const merged = resolutions.reduce(
     (acc, resolution) => applyResolution(acc.text, acc.attachments, resolution),
-    { text: draft.goal.trim(), attachments: [] as readonly ImageAttachment[] },
+    { text: task.goal.trim(), attachments: [] as readonly ImageAttachment[] },
   );
-  await deps.sendMessageToTab(tabId, merged.text, merged.attachments);
+  const text = task.schedule === null ? merged.text : scheduledTaskMessage({ name: taskDisplayName(task), text: merged.text });
+  await deps.sendMessageToTab(tabId, text, merged.attachments);
   return tabId;
+}
+
+// Ejecución del PLANIFICADOR (D-8): el camino de siempre activa la cuenta de la tarea y su pestaña nueva; al acabar
+// (bien o mal) se devuelven la cuenta y la pestaña que tenía el usuario. La de la tarea queda abierta, sin foco.
+// "Ejecutar ahora" y "Empezar tarea" usan `launchTask` y sí la enseñan.
+export async function launchTaskKeepingFocus(task: TaskRecord, deps: StartTaskDeps): Promise<string> {
+  const before = { accountId: deps.activeAccountId(), tabId: deps.activeTabId() };
+  try {
+    return await launchTask(task, deps);
+  } finally {
+    restoreFocus(before, deps);
+  }
+}
+
+function restoreFocus(before: { readonly accountId: string; readonly tabId: string }, deps: StartTaskDeps): void {
+  if (before.accountId.length > 0 && deps.activeAccountId() !== before.accountId) deps.setActiveAccount(before.accountId);
+  if (before.tabId.length > 0 && deps.activeTabId() !== before.tabId && deps.hasTab(before.tabId)) deps.setActiveTab(before.tabId);
 }

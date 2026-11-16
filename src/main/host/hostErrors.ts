@@ -38,3 +38,12 @@ export class BypassPermissionsBlockedError extends UserFacingError {
     this.name = 'BypassPermissionsBlockedError';
   }
 }
+
+// Revisión de seguridad, H1 (opción b): contestar permisos desde un cliente del host está apagado salvo que el usuario lo
+// encienda en Configuración. Un agente que lea el token del host no puede aprobarse sus propios permisos.
+export class PermissionAnswersDisabledError extends UserFacingError {
+  constructor() {
+    super(localized('errors.host.permissionAnswersDisabled'));
+    this.name = 'PermissionAnswersDisabledError';
+  }
+}

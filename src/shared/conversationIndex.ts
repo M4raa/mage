@@ -7,6 +7,8 @@
 export interface ConversationPrefs {
   readonly model?: string;
   readonly effort?: string;
+  // Ultracode (solo Claude): ajuste de arranque como el esfuerzo. `false` BORRA el campo del índice.
+  readonly ultracode?: boolean;
   readonly permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions';
   // Tools con "Permitir siempre aqui" (2.3b). Es una LISTA y no una cadena, asi que la fusion parcial
   // del indice la reemplaza entera: la lista que manda el renderer es siempre el estado completo de

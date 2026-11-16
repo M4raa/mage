@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EMPTY_DETAIL, type DailyDetail, type ModelUsage } from '@shared/usageHistory';
-import { combineDetail, computeAccountMetrics, planValueOf, utilizationOf } from './accountMetrics';
+import { accountSharesOf, combineDetail, computeAccountMetrics, planValueOf, utilizationOf } from './accountMetrics';
 
 const usage = (input: number, output: number, turns = 1): ModelUsage => ({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, turns });
 
@@ -130,5 +130,41 @@ describe('combineDetail', () => {
     expect(combined[0]?.byModel['x']?.inputTokens).toBe(3);
     expect(combined[0]?.sessions).toEqual(['s1', 's2']);
     expect(combined[0]?.projects).toEqual({ p: 3 });
+  });
+});
+
+describe('accountSharesOf', () => {
+  const account = (accountId: string, detail: DailyDetail[]) => ({ accountId, days: [], windows: [], detail });
+
+  it('accountSharesOf_tresProveedores_unaFilaPorCuentaConConsumo', () => {
+    const accounts = [
+      account('a', [day('2026-11-09', { 'claude-opus-5-5': usage(1_000, 2_000) })]),
+      account('x', [day('2026-11-09', { 'gpt-6.1-sol': usage(3_000, 1_000) })]),
+      account('g', [day('2026-11-09', { 'agy:1318': usage(1_500, 500) })]),
+    ];
+
+    const shares = accountSharesOf(accounts, PERIOD);
+
+    expect(shares.map((share) => [share.accountId, share.tokens])).toEqual([['a', 3_000], ['x', 4_000], ['g', 2_000]]);
+  });
+
+  it('accountSharesOf_cuentaSinConsumoEnElPeriodo_fuera', () => {
+    const accounts = [
+      account('a', [day('2026-11-09', { 'claude-opus-5-5': usage(1_000, 0) })]),
+      account('vieja', [day('2026-10-01', { 'claude-opus-5-5': usage(5_000, 0) })]),
+      account('vacia', []),
+    ];
+
+    const shares = accountSharesOf(accounts, PERIOD);
+
+    expect(shares.map((share) => share.accountId)).toEqual(['a']);
+  });
+
+  it('accountSharesOf_modeloSinPrecio_costeNull', () => {
+    const accounts = [account('g', [day('2026-11-09', { 'agy:1318': usage(1_500, 500) })])];
+
+    const shares = accountSharesOf(accounts, PERIOD);
+
+    expect(shares[0]?.costMicroUsd).toBeNull();
   });
 });

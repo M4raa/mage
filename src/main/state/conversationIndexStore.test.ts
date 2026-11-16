@@ -88,6 +88,16 @@ describe('ConversationIndexStore — preferencias (2.1)', () => {
     expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus' });
   });
 
+  it('savePrefs_ultracode_seGuardaYFalseLoBorra', () => {
+    const store = memoryStore();
+
+    store.savePrefs(SESSION, { model: 'opus', ultracode: true });
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus', ultracode: true });
+    store.savePrefs(SESSION, { ultracode: false });
+
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus' });
+  });
+
   it('savePrefs_withAccountId_persistsIt', () => {
     const store = memoryStore();
 
@@ -391,6 +401,35 @@ describe('ConversationIndexStore — sesiones del host', () => {
       accountId: OWNER,
       hostOwnerAccountId: OWNER,
     });
+  });
+
+  it('recordTaskRun_conversacionNueva_taskRunOfDevuelveLaTarea', () => {
+    const store = memoryStore();
+
+    store.recordTaskRun('conv-1', 'tarea-1');
+
+    expect(store.taskRunOf('conv-1')).toBe('tarea-1');
+  });
+
+  it('taskRunOf_sinMarca_undefined', () => {
+    const store = memoryStore();
+
+    expect(store.taskRunOf('conv-1')).toBeUndefined();
+  });
+
+  it('savePrefs_trasRecordTaskRun_conservaLaMarca', () => {
+    const store = memoryStore();
+    store.recordTaskRun('conv-1', 'tarea-1');
+
+    store.savePrefs('conv-1', { model: 'm2' });
+
+    expect(store.taskRunOf('conv-1')).toBe('tarea-1');
+  });
+
+  it('recordTaskRun_idVacio_lanza', () => {
+    const store = memoryStore();
+
+    expect(() => store.recordTaskRun('', 'tarea-1')).toThrow(/tarea-1/);
   });
 
   it('recordHostSession_codexProvider_savesProvider', () => {

@@ -1,7 +1,6 @@
 import type { LibraryView } from '@shared/ipc';
 import { parseDeliverables, parsePlan, type TaskPlanStep, type TaskRecord } from '@shared/tasks';
 import { conversationIdOfTab } from '../conversationId';
-import { sidebarRowId, type SidebarRow } from '../sidebarModel';
 import type { Block, ChatStatus, Tab } from '../types';
 
 // Modelo puro de las tareas en el renderer (R3): qué conversación es de una tarea, qué plan y qué entregables
@@ -9,21 +8,6 @@ import type { Block, ChatStatus, Tab } from '../types';
 
 const TITLE_MAX_CHARS = 80;
 const ELLIPSIS = '…';
-
-export interface TaskIndex {
-  readonly sessionIds: ReadonlySet<string>;
-  readonly conversationIds: ReadonlySet<string>;
-}
-
-export function buildTaskIndex(tasks: readonly TaskRecord[]): TaskIndex {
-  const sessionIds = new Set<string>();
-  const conversationIds = new Set<string>();
-  for (const task of tasks) {
-    if (task.sessionId !== null) sessionIds.add(task.sessionId);
-    if (task.conversationId !== null) conversationIds.add(task.conversationId);
-  }
-  return { sessionIds, conversationIds };
-}
 
 export function taskOfTab(
   tasks: readonly TaskRecord[],
@@ -34,14 +18,6 @@ export function taskOfTab(
   return tasks.find((task) =>
     (liveSessionId !== undefined && task.sessionId === liveSessionId)
     || (conversationId !== undefined && task.conversationId === conversationId));
-}
-
-export function isTaskRow(row: SidebarRow, index: TaskIndex, sessionIdByChat: Readonly<Record<string, string>>): boolean {
-  const id = sidebarRowId(row, sessionIdByChat);
-  if (id !== undefined && index.conversationIds.has(id)) return true;
-  if (row.kind !== 'tab') return false;
-  const live = sessionIdByChat[row.tab.id];
-  return live !== undefined && index.sessionIds.has(live);
 }
 
 // Texto de cada bloque del agente, en orden.
@@ -79,6 +55,12 @@ export function taskTitle(goal: string): string {
   return `${first.slice(0, TITLE_MAX_CHARS - 1)}${ELLIPSIS}`;
 }
 
+// Nombre que se pinta de una tarea: el suyo o, en los registros antiguos (name ''), la primera línea del objetivo.
+export function taskDisplayName(task: Pick<TaskRecord, 'name' | 'goal'>): string {
+  const name = task.name.trim();
+  return name.length > 0 ? name : taskTitle(task.goal);
+}
+
 const sameList = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((value, i) => value === b[i]);
 
 // Comprobar cuando el turno acaba y el manifiesto es distinto del ya comprobado.
@@ -93,13 +75,15 @@ export function shouldVerify(
 }
 
 export interface TaskForm {
+  readonly name: string;
   readonly goal: string;
   readonly accountDir: string;
   readonly folders: readonly string[];
+  readonly scheduleValid: boolean; // sin programar cuenta como válida; con programar, que el formulario describa una
 }
 
 export function canStartTask(form: TaskForm): boolean {
-  return form.goal.trim().length > 0 && form.accountDir.length > 0 && form.folders.length > 0;
+  return form.name.trim().length > 0 && form.goal.trim().length > 0 && form.accountDir.length > 0 && form.folders.length > 0 && form.scheduleValid;
 }
 
 export interface TaskCapability {

@@ -7,7 +7,7 @@ const project = (over: Partial<ChatProject>): ChatProject => ({
   id: 'p1', name: 'Python', instructions: 'Experto en Python', cwd: null, sessionIds: [], ...over,
 });
 const row = (cwd: string, sessionId: string): ConversationRow => ({
-  kind: 'history', item: { sessionId, cwd, title: 'Chat', configDir: '.claude', privacy: 'shared', updatedAtMs: 1, sizeBytes: 0, isScheduled: false },
+  kind: 'history', item: { sessionId, cwd, title: 'Chat', configDir: '.claude', updatedAtMs: 1, sizeBytes: 0, isScheduled: false },
 });
 
 describe('projectForRow', () => {
@@ -25,14 +25,14 @@ describe('projectForRow', () => {
   // Devolución 19: el proyecto se asigna por la conversación (el hilo), no por el UUID de la sesión de Mage.
   it('projectForRow_pestañaCodexConSesionViva_loBuscaPorElHilo', () => {
     const projects = [project({ sessionIds: ['thread-7'] })];
-    const open: ConversationRow = { kind: 'tab', tab: { id: 't1', accountId: '.codex-a', accountAlias: 'Codex', cwd: 'C:/x', model: 'gpt', provider: 'codex', title: 'Chat', privacy: 'shared', resumeSessionId: 'thread-7' } };
+    const open: ConversationRow = { kind: 'tab', tab: { id: 't1', accountId: '.codex-a', accountAlias: 'Codex', cwd: 'C:/x', model: 'gpt', provider: 'codex', title: 'Chat', resumeSessionId: 'thread-7' } };
 
     expect(projectForRow(open, projects, { t1: 'mage-uuid-1' })?.id).toBe('p1');
   });
 
   it('laPestanaNuevaPermaneceEnSuProyectoAntesDeTenerSesion', () => {
     const projects = [project({})];
-    const open: ConversationRow = { kind: 'tab', tab: { id: 't1', accountId: '.claude', accountAlias: 'Claude', cwd: 'C:/scratch/1', model: 'sonnet', provider: 'claude', title: '', privacy: 'shared', projectId: 'p1' } };
+    const open: ConversationRow = { kind: 'tab', tab: { id: 't1', accountId: '.claude', accountAlias: 'Claude', cwd: 'C:/scratch/1', model: 'sonnet', provider: 'claude', title: '', projectId: 'p1' } };
     expect(projectForRow(open, projects, {})?.id).toBe('p1');
   });
 });

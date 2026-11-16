@@ -5,6 +5,7 @@ import { history, historyKeymap, standardKeymap } from '@codemirror/commands';
 import { promptExtensions } from '../promptExtensions';
 import type { TextState } from '../promptEditing';
 import { withoutImageTokens } from '@shared/imageRefs';
+import { droppedLink, isLinkDrag } from '../linkDrop';
 
 // Envoltorio de CodeMirror 6 para el prompt (2.7). TODO lo especifico de CM6 vive aqui y en
 // `promptExtensions.ts`: el resto de la app sigue hablando de `TextState` (value + seleccion), que es
@@ -46,6 +47,26 @@ export interface PromptEditorProps {
 // sitio): se excluye.
 function isUserDelete(update: ViewUpdate): boolean {
   return update.transactions.some((tr) => tr.isUserEvent('delete') && !tr.isUserEvent('delete.cut'));
+}
+
+// D9: el editor acepta un enlace arrastrado (si no, la guarda del documento lo deja en `dropEffect = 'none'`). No con el editor desactivado.
+function acceptLinkDrag(event: DragEvent, view: EditorView): boolean {
+  if (event.dataTransfer === null || view.contentDOM.getAttribute('contenteditable') === 'false') return false;
+  if (!isLinkDrag([...event.dataTransfer.types])) return false;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'copy';
+  return true;
+}
+
+// D9: la URL soltada entra como texto donde se suelta (o en el cursor, si el punto no cae en el texto).
+function insertDroppedLink(event: DragEvent, view: EditorView): boolean {
+  if (!acceptLinkDrag(event, view)) return false;
+  const url = droppedLink((format) => event.dataTransfer?.getData(format) ?? '');
+  if (url === null) return false;
+  const at = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.selection.main.head;
+  view.dispatch({ changes: { from: at, insert: url }, selection: { anchor: at + url.length }, userEvent: 'input.drop' });
+  view.focus();
+  return true;
 }
 
 export function PromptEditor({
@@ -95,6 +116,8 @@ export function PromptEditor({
                 handlersRef.current.onPasteImages(files);
                 return true;
               },
+              dragover: (event, view) => acceptLinkDrag(event, view),
+              drop: (event, view) => insertDroppedLink(event, view),
             }),
           ),
           EditorView.updateListener.of((update) => {
@@ -167,17 +190,9 @@ export function PromptEditor({
     [],
   );
 
-  // `flex: 1 1 160px` y no `flex-1` (que es basis 0): con basis 0 el editor era el UNICO item elastico de
-  // una fila donde los controles van `shrink-0`, asi que en una ventana estrecha se quedaba en 0 px de
-  // ancho y el placeholder envolvia letra a letra — 562 px de contenido recortados al `max-height` del
-  // editor, o sea una caja de 222 px vacia con los chips flotando en medio (reporte del usuario: "en
-  // modo ventana mira como se ve el input"). Con 160 px de base, la fila —que ahora es `flex-wrap`—
-  // baja los controles a la linea siguiente antes de estrujar el editor. `min-w-0` se queda: si ni eso
-  // cabe, que encoja en vez de desbordar la barra.
-  //
-  // Apilado (P-026 3.1): la base es casi toda la fila (menos el `›` y el hueco), asi que los selectores
-  // no caben detras y bajan a la siguiente. Sigue siendo HIJO DIRECTO de la fila: la comprobacion de
-  // ventana pequena de `verify:gui` mide `host.parentElement`.
+  // `flex-1`: el editor es el item elastico de la fila de la caja (los controles van `shrink-0`) y
+  // `min-w-0` deja que encoja en vez de desbordar la barra en una ventana estrecha. Sigue siendo HIJO
+  // DIRECTO de la fila: la comprobacion de ventana pequena de `verify:gui` mide `host.parentElement`.
   return (
     <div
       ref={hostRef}

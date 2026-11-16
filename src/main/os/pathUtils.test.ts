@@ -47,8 +47,8 @@ describe('pathEquals', () => {
   });
 
   it('pathEquals_prefijoQueNoEsSegmentoCompleto_devuelveFalse', () => {
-    // Guarda contra el fallo clasico de comparar por prefijo: mage-private NO es mage-private-old.
-    expect(pathEquals('/home/u/.claude/mage-private', '/home/u/.claude/mage-private-old')).toBe(false);
+    // Guarda contra el fallo clasico de comparar por prefijo: perfil NO es perfil-old.
+    expect(pathEquals('/home/u/.claude/perfil', '/home/u/.claude/perfil-old')).toBe(false);
   });
 
   it('pathEquals_rutaVaciaContraRutaReal_devuelveFalse', () => {

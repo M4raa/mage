@@ -153,6 +153,36 @@ describe('RuntimeSession turno', () => {
     expect(result).toEqual({ kind: 'result', result: { isError: false, subtype: 'interrupted', numTurns: 0 } });
   });
 
+  // Un MCP cuyo `ready` no resuelve nunca: el turno se queda esperando a que conecte.
+  const slowMcp = () => ({ ready: new Promise<void>(() => undefined), statuses: () => [], close: async () => undefined });
+
+  it('interrupt_mientrasConectanLosMcp_resultInterruptedSinPedirAlModelo', async () => {
+    const { session, events, client } = setup([textReply('no')], { mcp: slowMcp() });
+    session.start();
+    session.sendUserMessage('hola');
+    await settle();
+
+    session.interrupt();
+    await settle();
+
+    expect(events.find((e) => e.kind === 'result')).toEqual({ kind: 'result', result: { isError: false, subtype: 'interrupted', numTurns: 0 } });
+    expect(client.requests).toHaveLength(0);
+  });
+
+  it('stop_mientrasConectanLosMcp_terminaEnReposo', async () => {
+    const { session, events, client } = setup([textReply('no')], { mcp: slowMcp() });
+    session.start();
+    session.sendUserMessage('hola');
+    await settle();
+
+    session.stop();
+    await settle();
+
+    expect(events.at(-1)).toEqual({ kind: 'session_state', state: 'idle' });
+    expect(events.some((e) => e.kind === 'error')).toBe(false);
+    expect(client.requests).toHaveLength(0);
+  });
+
   it('sendUserMessage_clientThrows_errorAndSessionStaysAlive', async () => {
     const failing = () => ({
       [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error('conexion rechazada: ECONNREFUSED')) }),

@@ -1,4 +1,4 @@
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { z } from 'zod';
 import type { AccountAuthKind, AccountCreateParams, AccountInfo, AccountProviderId, LoginStatus } from '@shared/accounts';
 import { localized, UserFacingError, wrapError } from '@shared/i18n/localizedText';
@@ -63,8 +63,6 @@ const AGY_ACCOUNTS_DIR = 'agy-accounts';
 const AGY_NAME_PREFIX = 'agy-';
 // Lo que deja el login de ChatGPT de codex en su CODEX_HOME (medido en 0.160.0).
 const CODEX_AUTH_FILE = 'auth.json';
-// Nombre del perfil privado de una cuenta de Claude (AccountService): factura como su cuenta.
-const PRIVATE_PROFILE_DIR = 'mage-private';
 
 // Que celdas de la matriz se dan de alta aqui. La suscripcion de Claude va por AccountService (login del CLI).
 const CREATABLE: readonly string[] = ['claude:api-key', 'codex:subscription', 'codex:api-key', 'agy:subscription', 'agy:api-key'];
@@ -120,13 +118,11 @@ export class ProviderAccountService {
     return true;
   }
 
-  // La cuenta registrada de ESE proveedor cuyo estado vive en `dir` (o en su perfil privado, que factura
-  // como su cuenta). null = no es una cuenta de este registro para ese proveedor.
+  // La cuenta registrada de ESE proveedor cuyo estado vive en `dir`. null = no es una cuenta de este registro para ese proveedor.
   find(providerId: AccountProviderId, dir: string): ProviderAccountEntry | null {
     const trimmed = dir.trim();
     if (trimmed.length === 0) return null;
-    const owner = basename(trimmed) === PRIVATE_PROFILE_DIR ? dirname(trimmed) : trimmed;
-    return this.read().find((entry) => entry.providerId === providerId && pathEquals(entry.home, owner)) ?? null;
+    return this.read().find((entry) => entry.providerId === providerId && pathEquals(entry.home, trimmed)) ?? null;
   }
 
   // La clave de la cuenta de API de ese proveedor en `dir`, o null si no es una cuenta de API. Una cuenta

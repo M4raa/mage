@@ -31,11 +31,6 @@ export type PersistedWorkspace = Readonly<Omit<z.infer<typeof Schema.WORKSPACE_S
 // esquema Zod que de verdad valida lo que se lee/escribe en disco.
 export type SplitLayout = Schema.SplitLayoutShape;
 
-// Privacidad de una conversación (M2.6): 'shared' (por defecto, historial en el pozo común de la
-// cuenta) o 'private' (historial en el perfil privado `mage-private` de la cuenta, mismo login).
-// Derivado del esquema por el mismo motivo: un solo sitio donde se declaran los dos valores.
-export type ConversationPrivacy = PersistedTab['privacy'];
-
 // Versión del esquema persistido. Subir al cambiar la forma de PersistedWorkspace de forma
 // incompatible (permite migraciones o descartar estado viejo sin romper el arranque).
 export const WORKSPACE_STATE_VERSION = 1;

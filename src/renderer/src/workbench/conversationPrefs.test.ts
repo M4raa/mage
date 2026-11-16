@@ -71,15 +71,26 @@ describe('toConversationPrefs', () => {
     expect(toConversationPrefs({ model: 'opus', effort: 'high', permissionMode: 'plan', accountId: 'acc-1' })).toEqual({
       model: 'opus',
       effort: 'high',
+      ultracode: false,
       permissionMode: 'plan',
       accountId: 'acc-1',
     });
   });
 
+  it('toConversationPrefs_conUltracode_loGuarda', () => {
+    expect(toConversationPrefs({ model: 'opus', ultracode: true, accountId: 'acc-1' }).ultracode).toBe(true);
+  });
+
+  it('resolveReopenedTabPrefs_indiceConUltracode_loDevuelve', () => {
+    const prefs = resolveReopenedTabPrefs({ ...BASE, indexPrefs: { model: 'opus', ultracode: true } });
+
+    expect(prefs).toEqual({ model: 'opus', ultracode: true });
+  });
+
   it('toConversationPrefs_sinEffort_loMandaVacioParaQueSeBorre', () => {
     // Con `undefined` el indice conservaria el esfuerzo viejo y la conversacion seguiria reabriendose
     // con un esfuerzo que el usuario acaba de quitar.
-    expect(toConversationPrefs({ model: 'opus', accountId: 'acc-1' })).toEqual({ model: 'opus', effort: '', accountId: 'acc-1' });
+    expect(toConversationPrefs({ model: 'opus', accountId: 'acc-1' })).toEqual({ model: 'opus', effort: '', ultracode: false, accountId: 'acc-1' });
   });
 
   it('toConversationPrefs_withAccount_keepsAccountId', () => {

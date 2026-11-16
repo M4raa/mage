@@ -75,6 +75,19 @@ export interface SessionMcp {
   close(): Promise<void>;
 }
 
+// La espera a los MCP se corta con Escape o «Parar». Un `ready` que falla sigue fallando.
+function untilReadyOrAborted(ready: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = (): void => resolve();
+    signal.addEventListener('abort', onAbort, { once: true });
+    ready.then(
+      () => { signal.removeEventListener('abort', onAbort); resolve(); },
+      (err: unknown) => { signal.removeEventListener('abort', onAbort); reject(err); },
+    );
+  });
+}
+
 // Presupuesto de contexto de la sesion (lo implementa `contextBudget.ts`).
 export interface ModelBudget {
   readonly window: number;
@@ -254,7 +267,12 @@ export class RuntimeSession implements ManagedSession {
     // empieza en o antes de este mensaje) conserva los mismos objetos.
     const userMessage: ChatMessage = { role: 'user', content: text };
     try {
-      await this.prepare();
+      await this.prepare(controller.signal);
+      if (controller.signal.aborted) {
+        // Cortado mientras conectaban los MCP: el turno no llegó a empezar.
+        this.deps.emit({ kind: 'result', result: { isError: false, subtype: 'interrupted', numTurns: 0 } });
+        return;
+      }
       this.history.push(userMessage);
       this.deps.recorder?.user(text);
       this.lastSystem = this.deps.systemPrompt(this.toolsEnabled);
@@ -280,8 +298,9 @@ export class RuntimeSession implements ManagedSession {
   }
 
   // Una vez por modelo: ventana y herramientas del catalogo, con sus avisos.
-  private async prepare(): Promise<void> {
-    if (this.deps.mcp !== undefined) await this.deps.mcp.ready;
+  private async prepare(signal: AbortSignal): Promise<void> {
+    if (this.deps.mcp !== undefined) await untilReadyOrAborted(this.deps.mcp.ready, signal);
+    if (signal.aborted) return;
     if (this.deps.prepareModel === undefined || this.preparedFor === this.model) return;
     const prepared = await this.deps.prepareModel(this.model);
     this.preparedFor = this.model;
@@ -350,7 +369,8 @@ export class RuntimeSession implements ManagedSession {
     this.turn = controller;
     this.deps.emit({ kind: 'session_state', state: 'running' });
     try {
-      await this.prepare();
+      await this.prepare(controller.signal);
+      if (controller.signal.aborted) return;
       if (!(await this.compact('manual', controller.signal))) this.deps.emit({ kind: 'notice', localized: localized('events.runtime.nothingToCompact') });
       this.emitContextUsage();
     } catch (err) {

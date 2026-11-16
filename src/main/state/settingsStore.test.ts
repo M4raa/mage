@@ -8,12 +8,14 @@ const VALID: AppSettings = {
   notificationRules: [{ id: 'r1', label: 'Deploy', pattern: 'deploy (ok|listo)', enabled: true }],
   chatProjects: [],
   pinnedConversations: [],
+  projectOrder: [],
   archivedConversations: [],
   theme: 'light',
   accountAvatarsPlacement: 'top',
   separatorContrast: 'normal',
   dockDefaultsVersion: 0,
   widgetEnabled: true,
+  scheduledTasksKeepAwake: false,
   mageMcpEnabled: true,
   backgroundOpacity: 80,
   importedThemes: [{ id: 'ovsx:acme.dark', label: 'Acme Dark', type: 'dark', tokens: { '--color-mg-window': '#101010' } }],
@@ -41,6 +43,7 @@ const VALID: AppSettings = {
   hiddenAccounts: ['C:/cuentas/.claude-x'],
   claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
   artifactEnabled: true,
+  hostPermissionAnswers: false,
   ghNoticeDismissed: true,
   autoArchiveOnPrClose: true,
   agyCommandRules: { allow: ['git status'], deny: ['rm -rf build'] },
@@ -48,6 +51,7 @@ const VALID: AppSettings = {
   runtimeShell: 'powershell',
   runtimeToolAccess: { 'custom:lm': [{ model: '*', allow: null, deny: ['Bash'] }] },
   keepAlive: { subscriptionEnabled: false, apiKeyEnabled: true, minContextTokens: 50_000, maxPauseHours: 4 },
+  idleCloseMinutes: 45,
   delegation: DEFAULT_DELEGATION,
 };
 
@@ -118,6 +122,18 @@ describe('SettingsStore.load', () => {
     expect(new SettingsStore(deps({ readFile: () => JSON.stringify(previo) })).load().accentByAccount).toEqual({});
   });
 
+  it('load_idleCloseMinutesBasura_treinta', () => {
+    const basura = { ...VALID, idleCloseMinutes: 'nunca' };
+
+    expect(new SettingsStore(deps({ readFile: () => JSON.stringify(basura) })).load().idleCloseMinutes).toBe(30);
+  });
+
+  it('load_idleCloseMinutesAusente_treinta', () => {
+    const { idleCloseMinutes: _omitted, ...legacy } = VALID;
+
+    expect(new SettingsStore(deps({ readFile: () => JSON.stringify(legacy) })).load().idleCloseMinutes).toBe(30);
+  });
+
   it('settingsStore_legacyFileWithoutKeepAlive_loadsDefaults', () => {
     const { keepAlive: _omitted, ...legacy } = VALID;
 
@@ -179,6 +195,14 @@ describe('SettingsStore.load', () => {
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, pinnedConversations: 'x', archivedConversations: ['ok', ''] }) }));
     expect(store.load().pinnedConversations).toEqual([]);
     expect(store.load().archivedConversations).toEqual([]);
+  });
+
+  it('load_projectOrderValidoEInvalido_conservaOCaeAVacio', () => {
+    const valido = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, projectOrder: ['p:1', 'd:c:/x'] }) }));
+    const invalido = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, projectOrder: ['p:1', ''] }) }));
+
+    expect(valido.load().projectOrder).toEqual(['p:1', 'd:c:/x']);
+    expect(invalido.load().projectOrder).toEqual([]);
   });
 
   it('load_jsonCorrupto_devuelveDefaults', () => {
@@ -284,6 +308,12 @@ describe('SettingsStore.load', () => {
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ version: 1, notificationRules: [], theme: 'dark' }) }));
 
     expect(store.load().widgetEnabled).toBe(false);
+  });
+
+  it('load_sinScheduledTasksKeepAwake_false', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ version: 1, notificationRules: [], theme: 'dark' }) }));
+
+    expect(store.load().scheduledTasksKeepAwake).toBe(false);
   });
 
   it('load_sinMageMcpEnabled_caeAFalse', () => {
@@ -489,5 +519,26 @@ describe('SettingsStore — Artifact (D5)', () => {
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify(VALID) }));
 
     expect(store.load().artifactEnabled).toBe(true);
+  });
+});
+
+describe('SettingsStore — permisos desde la terminal (D3)', () => {
+  it('load_sinCampoHostPermissionAnswers_apagado', () => {
+    const { hostPermissionAnswers: _omitted, ...withoutField } = VALID;
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify(withoutField) }));
+
+    expect(store.load().hostPermissionAnswers).toBe(false);
+  });
+
+  it('load_hostPermissionAnswersBasura_apagado', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, hostPermissionAnswers: 'sí' }) }));
+
+    expect(store.load().hostPermissionAnswers).toBe(false);
+  });
+
+  it('load_hostPermissionAnswersEncendido_seConserva', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, hostPermissionAnswers: true }) }));
+
+    expect(store.load().hostPermissionAnswers).toBe(true);
   });
 });

@@ -39,7 +39,7 @@ export class BrowserControlError extends Error {
 }
 
 export interface BrowserRegistryDeps {
-  readonly createBrowser: (instanceId: string) => BrowserHandle;
+  readonly createBrowser: (instanceId: string, sessionId: string) => BrowserHandle; // P-040: la sesión fija su carpeta
   readonly newId: () => string;
   readonly isLive: (sessionId: string) => boolean;
   readonly onChange: (states: readonly BrowserEntryState[]) => void;
@@ -67,7 +67,7 @@ export class BrowserRegistry {
     }
     const existing = this.entries.get(sessionId);
     if (existing !== undefined) return existing.handle;
-    const handle = this.deps.createBrowser(this.deps.newId());
+    const handle = this.deps.createBrowser(this.deps.newId(), sessionId);
     const unsubscribe = handle.onStateChange(() => this.emit());
     this.entries.set(sessionId, { handle, control: 'idle', lastAction: null, unsubscribe });
     this.deps.onOpened(sessionId, handle);

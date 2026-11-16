@@ -28,6 +28,8 @@ export interface LaunchParams {
   readonly cwd: string;
   readonly resume?: boolean;
   readonly effort?: string; // nivel --effort (M2.4); ya validado en la frontera. undefined -> sin flag
+  // Ultracode (solo Claude; Codex y agy lo ignoran): ajuste de sesion `ultracode` por `--settings`. De ARRANQUE.
+  readonly ultracode?: boolean;
   readonly maxBudgetUsdCents?: number; // tope --max-budget-usd en centavos enteros (M2.4); undefined -> sin tope
   readonly permissionMode?: string; // modo de permiso inicial (--permission-mode, M2.6); undefined/'default' -> sin flag
   readonly projectInstructions?: string;

@@ -1,13 +1,12 @@
 import { useLocalPopover } from '../../localPopovers';
 import { memo, useEffect, useRef, useState } from 'react';
 import { Icon } from '../Icon';
+import { RotatingChevron } from '../AnimatedIcon';
 import { selectIsActiveTab, useConversation } from '../../conversationSelectors';
 import { useWorkbenchStore } from '../../workbenchStore';
 import type { Account, ChatStatus } from '../../types';
-import { relativeTime, rowRecency } from '../../conversationList';
 import { backgroundLabel, backgroundMoveBlockedReason, type BackgroundSession } from '../../backgroundWork';
-import { providerMonogram, providerOfRow, type RowIndicator, type SidebarRow } from '../../sidebarModel';
-import { apiBilledLabel, aliasFromConfigDir } from '../../accountView';
+import { type RowIndicator, type SidebarRow } from '../../sidebarModel';
 import { displayTitle } from '../../conversationTitle';
 import { useT } from '../../../i18n/uiLanguage';
 
@@ -37,8 +36,32 @@ function statusLabel(status: ChatStatus | undefined): StatusLabelKey {
   return 'sidebar.tab.status.idle';
 }
 
+// Plegado de las subsesiones de una fila: solo lo llevan las que las tienen.
+export interface RowFold {
+  readonly open: boolean;
+  readonly onToggle: () => void;
+}
+
+function FoldToggle({ fold }: { readonly fold: RowFold }): React.JSX.Element {
+  const t = useT();
+  return (
+    <button
+      type="button"
+      data-row-fold={fold.open ? 'open' : 'closed'}
+      aria-expanded={fold.open}
+      aria-label={t(fold.open ? 'sidebar.row.collapseChildren' : 'sidebar.row.expandChildren')}
+      onClick={fold.onToggle}
+      className="ml-[4px] grid h-[18px] w-[14px] flex-none place-items-center rounded-[4px] text-mg-icon hover:bg-mg-hover"
+    >
+      <RotatingChevron open={fold.open} size={10} />
+    </button>
+  );
+}
+
 export interface SidebarRowItemProps {
   readonly row: SidebarRow;
+  // Presente = la fila tiene subsesiones y lleva su chevron delante del título.
+  readonly fold?: RowFold;
   readonly account: Account | undefined;
   // Cuenta dueña borrada (config dir): la fila lo dice en vez de nombrar otra cuenta.
   readonly missingOwner: string | undefined;
@@ -53,8 +76,8 @@ export interface SidebarRowItemProps {
   readonly onMenu: (row: SidebarRow, x: number, y: number) => void;
 }
 
-// Una fila del lateral (pestaña abierta o conversación del historial): título arriba; abajo, monograma del
-// proveedor, punto y alias de la cuenta y tiempo. A la derecha UN indicador y, al pasar el ratón, «⋯».
+// Una fila del lateral (pestaña abierta o conversación del historial): solo el título, en una línea. A la
+// derecha UN indicador y, al pasar el ratón, «⋯».
 export const SidebarRowItem = memo(function SidebarRowItem(props: SidebarRowItemProps): React.JSX.Element {
   const { row } = props;
   return row.kind === 'tab' ? <TabRow {...props} row={row} /> : <HistoryRow {...props} row={row} />;
@@ -63,7 +86,7 @@ export const SidebarRowItem = memo(function SidebarRowItem(props: SidebarRowItem
 const ROW_CLASS = 'group relative flex items-center rounded-[6px] transition-colors duration-90 ease-out';
 
 function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow, { kind: 'tab' }> }): React.JSX.Element {
-  const { row, account, missingOwner, status, indicator, onSelectTab, onRename, onMenu } = props;
+  const { row, account, status, indicator, fold, onSelectTab, onRename, onMenu } = props;
   const t = useT();
   const { tab } = row;
   const selected = useConversation(tab.id, selectIsActiveTab);
@@ -93,6 +116,7 @@ function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow,
   }
   return (
     <div data-sidebar-row="true" className={`${ROW_CLASS} ${selected ? 'bg-mg-sel text-mg-sel-ink before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'hover:bg-mg-hover'}`}>
+      {fold !== undefined && <FoldToggle fold={fold} />}
       <button
         onClick={() => onSelectTab(tab.id)}
         onDoubleClick={() => setEditing(true)}
@@ -103,10 +127,9 @@ function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow,
         aria-current={selected}
         aria-label={`${title}, ${tab.provider} ${tab.model}, ${t(statusLabel(status))}`}
         data-tip={t('sidebar.tab.tip', { provider: tab.provider, model: tab.model })}
-        className="flex min-w-0 flex-1 flex-col gap-[2px] p-[5px_8px] text-left"
+        className="flex min-w-0 flex-1 items-center p-[5px_8px] text-left"
       >
         <span className={`block truncate ${selected ? 'font-semibold text-mg-sel-ink' : 'text-mg-body2'}`}>{title}</span>
-        <RowMeta row={row} account={account} missingOwner={missingOwner} timeText={relativeTime(rowRecency(row) === 0 ? Date.now() : rowRecency(row))} />
       </button>
       <RowTail row={row} indicator={indicator} background={undefined} account={account} onMenu={onMenu} />
     </div>
@@ -114,16 +137,16 @@ function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow,
 }
 
 function HistoryRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow, { kind: 'history' }> }): React.JSX.Element {
-  const { row, account, missingOwner, indicator, background, onOpenHistory, onDragOutside, onMenu } = props;
+  const { row, account, indicator, background, fold, onOpenHistory, onDragOutside, onMenu } = props;
   const t = useT();
   const { item } = row;
   const highlighted = useHighlight(item.sessionId);
   // Arrastrarla fuera de Mage la abre en otra ventana (P-028, 36); trabajando en segundo plano, no.
   const draggableOut = backgroundMoveBlockedReason(background) === null;
   const title = displayTitle(item.title, t);
-  const timeText = background === undefined ? relativeTime(item.updatedAtMs) : backgroundLabel(background.state);
   return (
     <div data-sidebar-row="true" className={`${ROW_CLASS} hover:bg-mg-hover ${highlighted.on ? 'bg-mg-sel text-mg-sel-ink before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark ring-1 ring-mg-border-emph' : ''}`}>
+      {fold !== undefined && <FoldToggle fold={fold} />}
       <button
         ref={highlighted.ref}
         onClick={() => onOpenHistory(row)}
@@ -142,9 +165,9 @@ function HistoryRow(props: SidebarRowItemProps & { readonly row: Extract<Sidebar
           if (e.dataTransfer.dropEffect === 'none') onDragOutside(row);
         }}
         data-history-highlighted={highlighted.on ? 'true' : undefined}
-        data-tip={background === undefined ? title : t('sidebar.history.backgroundTip', { title, state: backgroundLabel(background.state) })}
+        data-tip={background === undefined ? title : t(background.hostSession === undefined ? 'sidebar.history.backgroundTip' : 'sidebar.history.delegatedTip', { title, state: backgroundLabel(background.state) })}
         aria-label={background === undefined ? title : `${title}, ${backgroundLabel(background.state)}`}
-        className="flex min-w-0 flex-1 flex-col gap-[2px] p-[5px_8px] text-left"
+        className="flex min-w-0 flex-1 items-center p-[5px_8px] text-left"
       >
         <span className="flex min-w-0 items-center gap-[5px]">
           <span className="truncate text-mg-sec">{title}</span>
@@ -155,42 +178,9 @@ function HistoryRow(props: SidebarRowItemProps & { readonly row: Extract<Sidebar
             </span>
           )}
         </span>
-        <RowMeta row={row} account={account} missingOwner={missingOwner} timeText={timeText} />
       </button>
       <RowTail row={row} indicator={indicator} background={background} account={account} onMenu={onMenu} />
     </div>
-  );
-}
-
-// Segunda línea: monograma del proveedor, punto con el acento de la cuenta, su alias («Factura API» detrás si
-// factura la API) y el tiempo. Sin peso en disco: va a la barra de estado.
-function RowMeta({ row, account, missingOwner, timeText }: { readonly row: SidebarRow; readonly account: Account | undefined; readonly missingOwner: string | undefined; readonly timeText: string }): React.JSX.Element {
-  const t = useT();
-  const providerId = providerOfRow(row);
-  return (
-    <span data-row-meta="true" className="flex min-w-0 items-center gap-[5px] text-[10.5px] text-mg-muted">
-      <span
-        data-provider-monogram={providerId}
-        aria-hidden="true"
-        className="inline-grid h-[14px] w-[14px] flex-none place-items-center rounded-[4px] border border-mg-border-ctrl font-mono text-[9px] font-semibold leading-none text-mg-sec"
-      >
-        {providerMonogram(providerId)}
-      </span>
-      {account !== undefined && (
-        <>
-          <span aria-hidden="true" className="h-[7px] w-[7px] flex-none rounded-full" style={{ background: account.accent.base }} />
-          <span className="truncate" title={account.apiBilled ? `${account.alias} · ${apiBilledLabel()}` : account.alias}>{account.apiBilled ? `${account.alias} · ${apiBilledLabel()}` : account.alias}</span>
-          <span aria-hidden="true">·</span>
-        </>
-      )}
-      {account === undefined && missingOwner !== undefined && (
-        <>
-          <span data-row-owner-missing="true" className="truncate" title={t('sidebar.row.ownerMissing', { account: aliasFromConfigDir(missingOwner) })}>{t('sidebar.row.ownerMissing', { account: aliasFromConfigDir(missingOwner) })}</span>
-          <span aria-hidden="true">·</span>
-        </>
-      )}
-      <span className="flex-none">{timeText}</span>
-    </span>
   );
 }
 

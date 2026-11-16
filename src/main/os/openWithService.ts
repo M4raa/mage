@@ -1,5 +1,6 @@
 import { basename } from 'node:path';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
+import { parseLoopbackHttpUrl } from './agentEnv';
 import {
   buildOpenEditorCommand,
   buildOpenTerminalCommand,
@@ -67,6 +68,13 @@ export class OpenWithService {
   // es esta comprobacion.
   async openExternal(url: string): Promise<void> {
     if (!isHttpsUrl(url)) throw new UserFacingError(localized('errors.os.httpsOnly', { url: JSON.stringify(url) }));
+    await this.deps.openExternal(url);
+  }
+
+  // H7 (revisión de seguridad): la página de autorización OAuth de un servidor MCP. https, o http solo a esta máquina (un
+  // servidor MCP local). Cualquier otro esquema o máquina: no se abre.
+  async openAuthorizationUrl(url: string): Promise<void> {
+    if (!isHttpsUrl(url) && parseLoopbackHttpUrl(url) === null) throw new UserFacingError(localized('errors.os.httpsOnly', { url: JSON.stringify(url) }));
     await this.deps.openExternal(url);
   }
 

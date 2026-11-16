@@ -61,6 +61,7 @@ export function resolveLaunchParams(
     shared: deps.resolveShared(params.provider, accountDir, sessionId),
     ...(params.projectInstructions === undefined ? {} : { projectInstructions: params.projectInstructions }),
     ...(effort === undefined ? {} : { effort }),
+    ...(resolveUltracode(params.ultracode) ? { ultracode: true } : {}),
     ...(maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents }),
     ...(permissionMode === undefined ? {} : { permissionMode }),
   };
@@ -103,6 +104,13 @@ function resolveEffort(effort: string | undefined): string | undefined {
     throw new Error(`Nivel de effort invalido: ${JSON.stringify(effort)} (validos: ${EFFORT_LEVELS.join(', ')})`);
   }
   return effort;
+}
+
+// Valida `ultracode` en la frontera: undefined -> apagado; si viene, DEBE ser booleano (lanza con el valor recibido).
+function resolveUltracode(ultracode: boolean | undefined): boolean {
+  if (ultracode === undefined) return false;
+  if (typeof ultracode !== 'boolean') throw new Error(`ultracode debe ser booleano: ${JSON.stringify(ultracode)}`);
+  return ultracode;
 }
 
 // Cuenta por defecto: ~/.claude si tiene login; si no, la primera cuenta con login descubierta.

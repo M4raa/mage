@@ -10,7 +10,7 @@ beforeEach(() => useNotificationStore.setState(EMPTY_NOTIFICATIONS, true));
 
 describe('notifyCostAdvice', () => {
   it('notifyCostAdvice_pestañaSinTitulo_cuerpoEsElTituloDeReserva', () => {
-    const tab = { id: 'tab-sin-titulo', accountId: 'c', accountAlias: 'a', cwd: '/p', model: 'sonnet', provider: 'claude', title: '', privacy: 'shared' } as const;
+    const tab = { id: 'tab-sin-titulo', accountId: 'c', accountAlias: 'a', cwd: '/p', model: 'sonnet', provider: 'claude', title: '' } as const;
     useWorkbenchStore.setState({ tabs: [tab] });
     const advice = { severity: 'warn', message: 'Coste mayor' } as unknown as CostAdvice;
 

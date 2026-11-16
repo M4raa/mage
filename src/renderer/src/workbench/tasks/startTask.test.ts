@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { MentionResolution, MentionResolveParams } from '@shared/mentions';
+import { classifySystemWrapper } from '@shared/systemWrappers';
+import type { TaskSchedule } from '@shared/taskSchedule';
 import type { TaskDraft, TaskRecord } from '@shared/tasks';
-import { startTask, type StartTaskDeps } from './startTask';
+import { launchTask, launchTaskKeepingFocus, startTask, type StartTaskDeps } from './startTask';
 
 const draft = (over: Partial<TaskDraft> = {}): TaskDraft => ({
-  goal: '  Haz el informe  ', language: 'es', provider: 'claude', accountDir: '/acc', folders: ['/work'], documents: [], capabilities: [], ...over,
+  name: 'Informe', schedule: null, goal: '  Haz el informe  ', language: 'es', provider: 'claude', accountDir: '/acc', folders: ['/work'], documents: [], capabilities: [], ...over,
 });
 
-const okResolution = (text: string): MentionResolution => ({ text, attachments: [], outcomes: [] });
+// Registro completo hecho a partir del borrador (id 'task-9', resto con los valores por defecto).
+const recordOf = (d: TaskDraft): TaskRecord => ({
+  ...d, id: 'task-9', createdAtMs: 1, sessionId: null, conversationId: null, deliverables: [], verifiedAtMs: null, verdict: 'pending',
+  enabled: true, nextRunAtMs: null, lastRun: null,
+});
+
+const okResolution =(text: string): MentionResolution => ({ text, attachments: [], outcomes: [] });
 
 function fakeDeps(over: Partial<StartTaskDeps> = {}): { deps: StartTaskDeps; calls: string[]; sent: { text: string }[]; resolved: MentionResolveParams[]; attached: { tabId: string; taskId: string }[] } {
   const calls: string[] = [];
@@ -15,12 +23,14 @@ function fakeDeps(over: Partial<StartTaskDeps> = {}): { deps: StartTaskDeps; cal
   const resolved: MentionResolveParams[] = [];
   const attached: { tabId: string; taskId: string }[] = [];
   const deps: StartTaskDeps = {
-    createTask: async () => { calls.push('createTask'); return { id: 'task-9' } as TaskRecord; },
+    createTask: async (d) => { calls.push('createTask'); return recordOf(d); },
     reloadTasks: async () => { calls.push('reloadTasks'); },
     activeAccountId: () => '/other',
     setActiveAccount: () => { calls.push('setActiveAccount'); },
     createConversation: async () => { calls.push('createConversation'); },
     activeTabId: () => 'tab1',
+    setActiveTab: () => { calls.push('setActiveTab'); },
+    hasTab: () => true,
     attachTask: (tabId, taskId) => { calls.push('attachTask'); attached.push({ tabId, taskId }); },
     ensureSession: async () => { calls.push('ensureSession'); return 's1'; },
     tabMentionContext: () => ({ accountDir: '/acc', provider: 'claude' }),
@@ -71,5 +81,85 @@ describe('startTask', () => {
     await startTask(draft(), deps);
     expect(resolved).toHaveLength(0);
     expect(sent[0]?.text).toBe('Haz el informe');
+  });
+});
+
+describe('launchTask', () => {
+  const scheduled: TaskSchedule = { kind: 'daily', time: { hour: 9, minute: 0 }, timeZone: 'Europe/Madrid' };
+
+  it('launchTask_programada_envuelveConElNombre', async () => {
+    const { deps, sent } = fakeDeps();
+
+    await launchTask(recordOf(draft({ schedule: scheduled })), deps);
+
+    expect(classifySystemWrapper(sent[0]?.text ?? '')).toEqual({ kind: 'scheduled-task', name: 'Informe', body: 'Haz el informe' });
+  });
+
+  it('launchTask_sinProgramar_enviaElObjetivoTalCual', async () => {
+    const { deps, sent } = fakeDeps();
+
+    await launchTask(recordOf(draft()), deps);
+
+    expect(sent[0]?.text).toBe('Haz el informe');
+  });
+
+  it('launchTask_noCreaRegistro', async () => {
+    const { deps, calls } = fakeDeps();
+
+    await launchTask(recordOf(draft()), deps);
+
+    expect(calls).not.toContain('createTask');
+  });
+});
+
+// El usuario estaba en la pestaña 'tab0' de la cuenta '/other'; lanzar la tarea (cuenta '/acc') crea 'tab1'.
+function focusDeps(over: Partial<StartTaskDeps> = {}) {
+  const focus = { accountId: '/other', tabId: 'tab0' };
+  const restored: string[] = [];
+  const { deps } = fakeDeps({
+    activeAccountId: () => focus.accountId,
+    setActiveAccount: (id) => { focus.accountId = id; restored.push(`account:${id}`); },
+    activeTabId: () => focus.tabId,
+    createConversation: async () => { focus.tabId = 'tab1'; },
+    setActiveTab: (id) => { focus.tabId = id; restored.push(`tab:${id}`); },
+    ...over,
+  });
+  return { deps, focus, restored };
+}
+
+describe('launchTaskKeepingFocus', () => {
+  it('launchTaskKeepingFocus_otraCuentaYPestana_devuelveAmbas', async () => {
+    const { deps, focus, restored } = focusDeps();
+
+    const tabId = await launchTaskKeepingFocus(recordOf(draft()), deps);
+
+    expect(tabId).toBe('tab1');
+    expect(focus).toEqual({ accountId: '/other', tabId: 'tab0' });
+    expect(restored).toEqual(['account:/acc', 'account:/other', 'tab:tab0']);
+  });
+
+  it('launchTaskKeepingFocus_envioFalla_tambienDevuelve', async () => {
+    const { deps, focus } = focusDeps({ sendMessageToTab: async () => { throw new Error('sin red'); } });
+
+    await expect(launchTaskKeepingFocus(recordOf(draft()), deps)).rejects.toThrow('sin red');
+
+    expect(focus).toEqual({ accountId: '/other', tabId: 'tab0' });
+  });
+
+  it('launchTaskKeepingFocus_pestanaPreviaCerrada_noLaActiva', async () => {
+    const { deps, focus } = focusDeps({ hasTab: () => false });
+
+    await launchTaskKeepingFocus(recordOf(draft()), deps);
+
+    expect(focus.tabId).toBe('tab1');
+  });
+
+  it('launchTaskKeepingFocus_sinPestanaPrevia_dejaLaNueva', async () => {
+    const { deps, focus } = focusDeps();
+    focus.tabId = '';
+
+    await launchTaskKeepingFocus(recordOf(draft()), deps);
+
+    expect(focus.tabId).toBe('tab1');
   });
 });

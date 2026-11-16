@@ -16,3 +16,10 @@ export function forgetDeletedConversation(deps: DeletedConversationDeps, session
   deps.thinking.forget(sessionId);
   deps.rewindState.forgetThread(sessionId);
 }
+
+// CIERRE-I: tras migrar, el origen ya no existe y se olvida lo que Mage guardaba de él. Salvo que la conversación
+// conserve el id (una copia de Codex entre cuentas): entonces lo guardado sigue siendo suyo.
+export function forgetMigratedSource(deps: DeletedConversationDeps, sourceSessionId: string, writtenSessionId: string): void {
+  if (writtenSessionId === sourceSessionId) return;
+  forgetDeletedConversation(deps, sourceSessionId);
+}

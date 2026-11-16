@@ -104,6 +104,16 @@ describe('Mage MCP server', () => {
     const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
     expect(createInputSchema.safeParse({ ...base, effort: 'turbo' }).success).toBe(false);
   });
+  it('createInputSchema_title_opcional', () => {
+    const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
+    expect(createInputSchema.safeParse(base).success).toBe(true);
+    expect(createInputSchema.safeParse({ ...base, title: '  Hola 1 ' })).toMatchObject({ success: true, data: { title: 'Hola 1' } });
+  });
+  it('createInputSchema_titleLargo_falla', () => {
+    const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
+    expect(createInputSchema.safeParse({ ...base, title: 'x'.repeat(81) }).success).toBe(false);
+    expect(createInputSchema.safeParse({ ...base, title: '   ' }).success).toBe(false);
+  });
   it('createInputSchema_esfuerzoValido_acepta', () => {
     const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
     expect(createInputSchema.safeParse({ ...base, effort: 'high' }).success).toBe(true);

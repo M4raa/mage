@@ -40,7 +40,7 @@ export interface SessionIpcDeps {
   readonly handle: IpcRegister;
   readonly sessions: SessionCommands;
   readonly coordinator: Pick<SessionCoordinator,
-    'send' | 'interrupt' | 'removeQueued' | 'updateQueued' | 'takeQueue' | 'answerPermission' | 'answerElicitation' | 'stop' | 'snapshot'>;
+    'send' | 'interrupt' | 'removeQueued' | 'updateQueued' | 'takeQueue' | 'answerPermission' | 'answerElicitation' | 'stop' | 'snapshot' | 'idleState'>;
   // Rewind, Reintentar y Divergir (F4.4/F4.5): planifica y aplica el orquestador de main.
   readonly rewind: Pick<RewindCoordinator, 'plan' | 'apply' | 'diverge'>;
   readonly createSession: (event: IpcMainInvokeEvent, params: CreateSessionParams) => CreateSessionResult;
@@ -98,6 +98,7 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
   handle(IpcChannel.SessionsAdoptable, () => deps.listAdoptable());
   handle(IpcChannel.SessionAttach, (event, sessionId) => deps.attachWindow(event, authorizeId(event, IpcChannel.SessionAttach, sessionId)));
   handle(IpcChannel.SessionSnapshot, (event, sessionId) => coordinator.snapshot(authorizeId(event, IpcChannel.SessionSnapshot, sessionId)));
+  handle(IpcChannel.SessionIdleState, (event, sessionId) => coordinator.idleState(authorizeId(event, IpcChannel.SessionIdleState, sessionId)));
   handle(IpcChannel.SessionGetScratchDir, () => deps.newScratchDir());
 }
 

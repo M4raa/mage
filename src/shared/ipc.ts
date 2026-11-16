@@ -11,7 +11,7 @@ import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
 import type { PrCatalogEntry, PrCatalogLinkParams, PrCatalogUnlinkParams, PrDetail, PrListParams, PrListResult, PrMigrateParams, PrReadParams, PrWriteParams, PrWriteResult } from './pr';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
-import type { TaskDraft, TaskRecord } from './tasks';
+import type { DesktopScheduledTaskFile, TaskDraft, TaskRecord } from './tasks';
 import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
@@ -23,8 +23,9 @@ import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
 import type { TranscriptBatch, TranscriptTailPosition } from './transcripts';
 import type { MemoryFile } from './memory';
+import type { CapabilitiesOverview, PluginActionParams, PluginCatalogView, SkillFileParams, SkillFileView } from './capabilities';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from './conversations';
-import type { ConversationPrivacy, PersistedWorkspace } from './state';
+import type { PersistedWorkspace } from './state';
 import type { AppSettings } from './settings';
 import type { ElicitationAnswer } from './elicitation';
 import type { UpdateState } from './update';
@@ -119,6 +120,8 @@ export const IpcChannel = {
   SessionClose: 'session:close',
   // F2.1: instantanea de solo lectura de una sesion viva (identidad, estado y ultima secuencia).
   SessionSnapshot: 'session:snapshot',
+  // Punto 23 (D2): si el keep-alive está en marcha y cuántos clientes más siguen la sesión.
+  SessionIdleState: 'session:idleState',
   // U17: sesiones del host (terminal/MCP) sin ventana, y adoptar una como pestaña.
   SessionsAdoptable: 'sessions:adoptable',
   SessionAttach: 'session:attach',
@@ -346,6 +349,11 @@ export const IpcChannel = {
   LibraryView: 'library:view',
   LibraryPreview: 'library:preview',
   LibraryApply: 'library:apply',
+  // Capacidades: skills, plugins y políticas de una cuenta de Claude, solo lectura.
+  CapabilitiesOverview: 'capabilities:overview',
+  CapabilitiesPluginCatalog: 'capabilities:pluginCatalog',
+  CapabilitiesPluginAction: 'capabilities:pluginAction',
+  CapabilitiesSkillFile: 'capabilities:skillFile',
   // Modo de tareas (F8).
   TasksList: 'tasks:list',
   TasksCreate: 'tasks:create',
@@ -354,6 +362,12 @@ export const IpcChannel = {
   TasksPickFolders: 'tasks:pickFolders',
   TasksPickDocuments: 'tasks:pickDocuments',
   TasksSaveCopy: 'tasks:saveCopy',
+  TasksEdit: 'tasks:edit',
+  TasksSetEnabled: 'tasks:setEnabled',
+  TasksRunNow: 'tasks:runNow',
+  TasksTakeDue: 'tasks:takeDue',
+  TasksRunFailed: 'tasks:runFailed',
+  TasksDesktopList: 'tasks:desktopList',
   // Registro del servidor MCP de Mage en las cuentas de Claude y Codex (H4).
   McpRegistrationStatus: 'mcp:registrationStatus',
   McpRegister: 'mcp:register',
@@ -417,10 +431,9 @@ export interface CreateSessionParams {
   readonly cwd: string;
   readonly resumeSessionId?: string;
   readonly effort?: string;
+  // Ultracode (solo Claude): ajuste de arranque de la sesion; ausente/false -> apagado.
+  readonly ultracode?: boolean;
   readonly maxBudgetUsdCents?: number;
-  // M2.6: 'private' lanza bajo el perfil privado (mage-private) de la cuenta; ausente/'shared' usa
-  // la cuenta tal cual (historial en el pozo comun). Factura SIEMPRE la cuenta (mismo login).
-  readonly privacy?: ConversationPrivacy;
   // M2.6: modo de permiso inicial (--permission-mode). Ausente -> 'default'. Solo Claude.
   readonly permissionMode?: PermissionMode;
   readonly projectId?: string;
@@ -486,6 +499,8 @@ export interface RewindPlan {
   readonly pendingCount: number;
   readonly canSaveCopy: boolean;                           // Codex, no en 'diverge' (U3)
 }
+export interface SessionIdleState { readonly keepAliveActive: boolean; readonly otherClients: number }
+
 export interface RewindApplyParams {
   readonly sessionId: string; readonly point: RewindPointRef; readonly action: 'rewind' | 'retry';
   readonly restoreFiles: boolean; readonly saveCopy: boolean; readonly attachments?: readonly ImageAttachment[];
@@ -599,7 +614,7 @@ export interface SaveConversationPrefsParams {
 }
 
 // Registro de un artifact publicado (2.4). `record.accountDir` es el config dir EFECTIVO de la sesion
-// que lo publico (para una conversacion privada, su perfil `mage-private`).
+// que lo publico.
 export interface RecordArtifactParams {
   readonly url: string;
   readonly record: ArtifactRecord;
@@ -723,6 +738,8 @@ export interface AdoptableSession {
   readonly model: string;
   readonly effort?: string;
   readonly permissionMode?: PermissionMode;
+  // El nombre que le dio la sesión creadora (`title` de mage_create_session); las de terminal no lo llevan.
+  readonly title?: string;
   readonly origin: 'terminal' | 'mcp';
   readonly createdBy: { readonly conversationId: string; readonly sessionId: string } | null;  // la M05 lo rellena para el MCP; `sessionId` es el VIVO de la creadora
 }
@@ -759,6 +776,9 @@ export const WIDGET_ENABLED_CHANGED_CHANNEL = 'widget:enabledChanged';
 // 10). Main resuelve la conversacion en disco antes de mandarla, asi que el renderer recibe el mismo
 // `ConversationSummary` que ya consume desde el historial — no tiene que fiarse de un argv.
 export const JUMP_LIST_OPEN_CHANNEL = 'jumpList:open';
+
+// main -> ventana principal: hay tareas programadas pendientes; el renderer las pide con takeDueTaskRuns.
+export const TASKS_DUE_CHANNEL = 'tasks:due';
 
 // Datos de la pantalla «Acerca de». `notices` es el texto COMPLETO de `THIRD-PARTY-NOTICES.txt` (lo
 // que conserva los avisos de copyright que el bundle borra) y `chromiumLicensesPath` es la ruta al
@@ -1023,6 +1043,7 @@ export interface MageApi {
   closeSession(sessionId: string): Promise<CloseReceipt>;
   // Instantanea de una sesion viva (F2.1). Rechaza si la sesion no existe.
   getSessionSnapshot(sessionId: string): Promise<ConversationSnapshot>;
+  getSessionIdleState(sessionId: string): Promise<SessionIdleState>;
   // Carpeta scratch temporal (cross-platform) para el cwd de la sesion de prueba (Fase B).
   getScratchDir(): Promise<string>;
   // Raiz de los directorios de borrador. NO crea nada: `getScratchDir` acuña una carpeta nueva en cada
@@ -1177,8 +1198,7 @@ export interface MageApi {
   // Lee los ficheros .md de la memoria de un proyecto (crudos; el parseo va en el renderer). Array
   // vacio si el proyecto no tiene memoria. Ficheros pequenos (KB) -> lectura sincrona de una vez.
   readMemory(params: ReadMemoryParams): Promise<readonly MemoryFile[]>;
-  // Lista las conversaciones EN DISCO de una cuenta (M2.6, sidebar = historial): compartidas (pozo
-  // comun) + privadas (perfil mage-private), mas recientes primero. Solo metadatos (sin contenido).
+  // Lista las conversaciones EN DISCO de una cuenta (M2.6, sidebar = historial), mas recientes primero. Solo metadatos (sin contenido).
   listConversations(accountDir: string): Promise<readonly ConversationSummary[]>;
   // Menciones @ (Q05): candidatos de la carpeta, resolucion por motor justo al enviar y vista previa.
   searchMentions(params: MentionSearchParams): Promise<MentionSearchResult>;
@@ -1380,6 +1400,10 @@ export interface MageApi {
   libraryView(): Promise<LibraryView>;
   libraryPreview(target: LibraryTarget): Promise<LibraryPreviewView>;
   libraryApply(params: LibraryApplyParams): Promise<LibraryActionResult>;
+  capabilitiesOverview(accountDir: string): Promise<CapabilitiesOverview>;
+  capabilitiesPluginCatalog(accountDir: string): Promise<PluginCatalogView>;
+  capabilitiesPluginAction(params: PluginActionParams): Promise<void>;
+  capabilitiesSkillFile(params: SkillFileParams): Promise<SkillFileView>;
   // --- Navegador de Mage (F11b.3) ---
   browserList(): Promise<readonly BrowserEntryState[]>;
   browserOpen(sessionId: string): Promise<readonly BrowserEntryState[]>;
@@ -1407,6 +1431,13 @@ export interface MageApi {
   pickTaskFolders(): Promise<readonly string[]>;
   pickTaskDocuments(): Promise<readonly string[]>;
   saveTaskDeliverableCopy(params: { taskId: string; path: string }): Promise<boolean>;
+  editTask(params: { taskId: string; draft: TaskDraft }): Promise<TaskRecord>;
+  setTaskEnabled(params: { taskId: string; enabled: boolean }): Promise<TaskRecord>;
+  runTaskNow(taskId: string): Promise<TaskRecord>;
+  takeDueTaskRuns(): Promise<readonly TaskRecord[]>;
+  reportTaskRunFailed(params: { taskId: string; error: string }): Promise<void>;
+  listDesktopScheduledTasks(): Promise<readonly DesktopScheduledTaskFile[]>;
+  onTasksDue(listener: () => void): () => void;
 }
 
 // --- Biblioteca de capacidades (F6) ----------------------------------------------------------------

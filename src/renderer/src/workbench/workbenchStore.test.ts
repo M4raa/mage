@@ -28,7 +28,6 @@ function tab(id: string, over: Partial<Tab> = {}): Tab {
     model: 'sonnet',
     provider: 'claude',
     title: `Conversacion ${id}`,
-    privacy: 'shared',
     ...over,
   };
 }
@@ -384,6 +383,33 @@ describe('sesiones en segundo plano', () => {
     expect(setModel).toHaveBeenCalledWith({ sessionId: 's-a', model: 'gpt-6' });
   });
 
+  it('setActiveUltracode_claude_loGuarda', () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    store.getState().setActiveUltracode(true);
+
+    expect(store.getState().tabs[0]?.ultracode).toBe(true);
+  });
+
+  it('setActiveUltracode_codex_noHaceNada', () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [tab('a', { provider: 'codex', model: 'gpt-6-luna' })], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    store.getState().setActiveUltracode(true);
+
+    expect(store.getState().tabs[0]).not.toHaveProperty('ultracode');
+  });
+
+  it('setActiveUltracode_false_quitaElCampo', () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [tab('a', { ultracode: true })], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    store.getState().setActiveUltracode(false);
+
+    expect(store.getState().tabs[0]).not.toHaveProperty('ultracode');
+  });
+
   it('setActiveModel_codexSinHilo_noGuardaPreferenciasBajoElUuidDeMage', () => {
     const saveConversationPrefs = vi.fn().mockResolvedValue(undefined);
     const store = createWorkbenchStore(fakeMage({ saveConversationPrefs, setModel: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
@@ -446,7 +472,7 @@ describe('sesiones en segundo plano', () => {
     );
     store.setState({ tabs: [{ ...tab('a'), provider: 'codex', resumeSessionId: 'thread-1' }], activeTabId: 'a', activeAccountId: tab('a').accountId, splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
 
-    await store.getState().deleteConversation('thread-1', 'C:\\proyecto', 'shared');
+    await store.getState().deleteConversation('thread-1', 'C:\\proyecto');
 
     expect(store.getState().tabs.some((t) => t.id === 'a')).toBe(false);
   });
@@ -497,7 +523,7 @@ describe('sesiones en segundo plano', () => {
     await store.getState().closeTab('a');
     return store;
   };
-  const historyItem = (sessionId: string): ConversationSummary => ({ sessionId, cwd: 'C:\\proyecto', title: 'fondo', updatedAtMs: 0, privacy: 'shared' } as ConversationSummary);
+  const historyItem = (sessionId: string): ConversationSummary => ({ sessionId, cwd: 'C:\\proyecto', title: 'fondo', updatedAtMs: 0 } as ConversationSummary);
 
   it('openConversationInNewWindow_codexTrabajandoEnSegundoPlano_seBloqueaSinAbrirVentana', async () => {
     const openWindowWithTab = vi.fn();
@@ -513,7 +539,7 @@ describe('sesiones en segundo plano', () => {
     const stop = vi.fn().mockResolvedValue(undefined);
     const store = await backgroundStore('codex', { stop });
 
-    await store.getState().deleteConversation('thread-1', 'C:\\proyecto', 'shared');
+    await store.getState().deleteConversation('thread-1', 'C:\\proyecto');
 
     expect(stop).toHaveBeenCalledWith('s-a');
     expect(store.getState().backgroundSessions).toEqual({});
@@ -523,7 +549,7 @@ describe('sesiones en segundo plano', () => {
     const stop = vi.fn().mockResolvedValue(undefined);
     const store = await backgroundStore('claude', { stop });
 
-    await store.getState().deleteConversation('s-a', 'C:\\proyecto', 'shared');
+    await store.getState().deleteConversation('s-a', 'C:\\proyecto');
 
     expect(stop).toHaveBeenCalledWith('s-a');
     expect(store.getState().backgroundSessions).toEqual({});
@@ -535,7 +561,7 @@ describe('sesiones en segundo plano', () => {
     expect(store.getState().backgroundSessions['s-a']?.conversationId).toBeUndefined();
 
     store.getState().handleEvent('s-a', { kind: 'session_init', sessionId: 'cascade-1', model: 'm', tools: [], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] });
-    await store.getState().deleteConversation('cascade-1', 'C:\\proyecto', 'shared');
+    await store.getState().deleteConversation('cascade-1', 'C:\\proyecto');
 
     expect(stop).toHaveBeenCalledWith('s-a');
   });
@@ -798,7 +824,7 @@ describe('hydrateBlocks', () => {
 // `src/main/engine/proxy/streamTranslator.test.ts`, que no toca el renderer ni de lejos.
 describe('persistencia con debounce', () => {
   const tabDePrueba = (id: string): Tab =>
-    ({ id, accountId: '.claude', title: id, cwd: 'C:/tmp', model: 'sonnet', provider: 'claude', privacy: 'shared' }) as Tab;
+    ({ id, accountId: '.claude', title: id, cwd: 'C:/tmp', model: 'sonnet', provider: 'claude' }) as Tab;
 
   // AVISO sobre esta seccion, para quien venga detras: el temporizador de persistencia es de MODULO y
   // `vitest.config.ts` corre con `isolate: false`, asi que el estado de este debounce se comparte entre
@@ -958,7 +984,7 @@ describe('pestaña nueva sin formulario', () => {
     const ollama = { id: 'custom:ollama', label: 'Ollama', baseUrl: 'http://127.0.0.1:11434/v1', hasApiKey: false, models: [{ id: 'qwen3', label: 'qwen3' }] };
     store.setState((s) => ({ accounts: [], activeAccountId: '', settings: { ...s.settings, customProviders: [ollama] } }));
 
-    await store.getState().createConversation('shared');
+    await store.getState().createConversation();
 
     expect(store.getState().tabs.at(-1)).toMatchObject({ accountId: '', accountAlias: 'Ollama', provider: 'custom:ollama', model: 'qwen3', cwd: 'C:\\tmp\\scratch' });
   });
@@ -967,7 +993,7 @@ describe('pestaña nueva sin formulario', () => {
     const store = createWorkbenchStore(fakeMage({ getScratchDir: vi.fn().mockResolvedValue('C:\\tmp\\scratch') }));
     store.setState({ accounts: [], activeAccountId: '' });
 
-    await store.getState().createConversation('shared');
+    await store.getState().createConversation();
 
     expect(store.getState().tabs).toHaveLength(0);
   });
@@ -980,7 +1006,7 @@ describe('pestaña nueva sin formulario', () => {
 
   // P-028 16: «Nuevo chat» con el ajuste 'lastProject' nace en la carpeta del proyecto mas reciente.
   function historyItem(cwd: string, updatedAtMs: number): ConversationSummary {
-    return { sessionId: `s-${updatedAtMs}`, configDir: 'C:\\Users\\u\\.claude', cwd, title: 't', privacy: 'shared', updatedAtMs, sizeBytes: 1, isScheduled: false };
+    return { sessionId: `s-${updatedAtMs}`, configDir: 'C:\\Users\\u\\.claude', cwd, title: 't', updatedAtMs, sizeBytes: 1, isScheduled: false };
   }
 
   async function createWithLastProject(existsDirs: MageApi['existsDirs'], folder?: ConversationFolderChoice): Promise<string | undefined> {
@@ -993,7 +1019,7 @@ describe('pestaña nueva sin formulario', () => {
       settings: { ...s.settings, newConversationFolder: 'lastProject' },
       conversationHistory: [historyItem('C:\\src\\viejo', 1), historyItem('C:\\src\\borrado', 3), historyItem('C:\\src\\nuevo', 2)],
     }));
-    await store.getState().createConversation('shared', folder);
+    await store.getState().createConversation(folder);
     return store.getState().tabs.at(-1)?.cwd;
   }
 
@@ -1742,7 +1768,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
       moveConversation: vi.fn().mockRejectedValue(new Error('No existe la transcripción a mover')),
       closeSession: vi.fn().mockResolvedValue({ background: false }),
       releaseConversationLock: vi.fn().mockResolvedValue(undefined),
-      listConversations: vi.fn().mockResolvedValue([{ sessionId: 's-old', configDir: accounts[0]!.id, cwd: '/p', title: 't', privacy: 'shared', updatedAtMs: 1, sizeBytes: 1, isScheduled: false }]),
+      listConversations: vi.fn().mockResolvedValue([{ sessionId: 's-old', configDir: accounts[0]!.id, cwd: '/p', title: 't', updatedAtMs: 1, sizeBytes: 1, isScheduled: false }]),
       loadConversationPrefs: vi.fn().mockResolvedValue(null),
     });
 
@@ -1756,7 +1782,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
     const moveConversation = vi.fn();
     const migrateConversation = vi.fn().mockResolvedValue({ sessionId: 'hilo-nuevo', configDir: 'C:/Users/u/.codex-x', provider: 'codex' });
     const listConversations = vi.fn().mockResolvedValue([
-      { sessionId: 'hilo-nuevo', configDir: 'C:/Users/u/.codex-x', cwd: '/p', title: 't', privacy: 'shared', updatedAtMs: 1, sizeBytes: 1, isScheduled: false, providerId: 'codex' },
+      { sessionId: 'hilo-nuevo', configDir: 'C:/Users/u/.codex-x', cwd: '/p', title: 't', updatedAtMs: 1, sizeBytes: 1, isScheduled: false, providerId: 'codex' },
     ]);
     const store = mounted({ moveConversation, migrateConversation, listConversations });
 
@@ -1792,7 +1818,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
     // Arrange: la pestaña 'a' (con sesión viva) está entre otras dos y tiene borrador.
     const moveConversation = vi.fn().mockResolvedValue({ sessionId: 's-old' });
     const closeSession = vi.fn().mockResolvedValue({ background: false });
-    const listConversations = vi.fn().mockResolvedValue([{ sessionId: 's-old', configDir: B, cwd: '/p', title: 't', privacy: 'shared', updatedAtMs: 1, sizeBytes: 1, isScheduled: false }]);
+    const listConversations = vi.fn().mockResolvedValue([{ sessionId: 's-old', configDir: B, cwd: '/p', title: 't', updatedAtMs: 1, sizeBytes: 1, isScheduled: false }]);
     const store = mounted({ moveConversation, closeSession, listConversations, loadConversationPrefs: vi.fn().mockResolvedValue(null), releaseConversationLock: vi.fn().mockResolvedValue(undefined) });
     store.setState({
       tabs: [tab('x'), tab('a', { title: 'Mi título' }), tab('y')],
@@ -1830,7 +1856,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
   it('continueInAccount_haciaOtroProveedor_laNuevaOcupaElSitioConTituloYBorrador', async () => {
     const migrateConversation = vi.fn().mockResolvedValue({ sessionId: 'hilo-nuevo', configDir: 'C:/Users/u/.codex-x', provider: 'codex' });
     const listConversations = vi.fn().mockResolvedValue([
-      { sessionId: 'hilo-nuevo', configDir: 'C:/Users/u/.codex-x', cwd: '/p', title: 'primer mensaje', privacy: 'shared', updatedAtMs: 1, sizeBytes: 1, isScheduled: false, providerId: 'codex' },
+      { sessionId: 'hilo-nuevo', configDir: 'C:/Users/u/.codex-x', cwd: '/p', title: 'primer mensaje', updatedAtMs: 1, sizeBytes: 1, isScheduled: false, providerId: 'codex' },
     ]);
     const store = mounted({ migrateConversation, listConversations, loadConversationPrefs: vi.fn().mockResolvedValue(null) });
     store.setState({
@@ -1909,7 +1935,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
     // Arrange: chat nuevo (sin resume, sin sesion, sin bloques) de la principal, con cwd y borrador.
     const store = mounted();
     store.setState({
-      tabs: [tab('a', { model: 'opus', resolvedConfigDir: 'C:/viejo/mage-private' })],
+      tabs: [tab('a', { model: 'opus', resolvedConfigDir: 'C:/viejo' })],
       modelCatalogByAccount: { [B]: [{ id: 'opus', label: 'Opus' }] },
     });
 
@@ -2032,7 +2058,7 @@ describe('createConversation y el modo de permiso por defecto', () => {
   it('createConversation_conModoPorDefecto_pasaPermissionModeALaTab', async () => {
     const store = fresh('plan');
 
-    await store.getState().createConversation('shared');
+    await store.getState().createConversation();
 
     expect(store.getState().tabs[0]?.permissionMode).toBe('plan');
   });
@@ -2040,7 +2066,7 @@ describe('createConversation y el modo de permiso por defecto', () => {
   it('createConversation_conOmitirPermisosPorDefecto_loPasaALaTab', async () => {
     const store = fresh('bypassPermissions');
 
-    await store.getState().createConversation('shared');
+    await store.getState().createConversation();
 
     expect(store.getState().tabs[0]?.permissionMode).toBe('bypassPermissions');
   });
@@ -2048,7 +2074,7 @@ describe('createConversation y el modo de permiso por defecto', () => {
   it('createConversation_sinModoPorDefecto_dejaQueLoAdopteDelCli', async () => {
     const store = fresh('');
 
-    await store.getState().createConversation('shared');
+    await store.getState().createConversation();
 
     expect(store.getState().tabs[0]?.permissionMode).toBeUndefined();
   });
@@ -3157,7 +3183,7 @@ describe('adoptLiveSession (U17)', () => {
     await store.getState().adoptLiveSession(hostSession());
 
     const adopted = store.getState().tabs.find((t) => t.id !== 'tab1');
-    expect(adopted).toMatchObject({ title: 'app', resumeSessionId: 'n1', privacy: 'shared', resolvedConfigDir: hostAccount.id });
+    expect(adopted).toMatchObject({ title: 'app', resumeSessionId: 'n1', resolvedConfigDir: hostAccount.id });
     expect(store.getState().activeTabId).toBe('tab1');
     expect(store.getState().sessionIdByChat[adopted?.id ?? '']).toBe('s-host');
     expect(store.getState().statusByChat[adopted?.id ?? '']).toBe('streaming');
@@ -3257,6 +3283,108 @@ describe('adoptLiveSession (U17)', () => {
     warn.mockRestore();
   });
 
+  // Decisión 13-11: una subsesión creada por el MCP no abre pestaña hasta que se pulsa.
+  describe('subsesiones del MCP sin pestaña', () => {
+    const mcpSession = (over: Partial<AdoptableSession> = {}): AdoptableSession =>
+      hostSession({ origin: 'mcp', nativeId: null, createdBy: { conversationId: 'c-madre', sessionId: 's-madre' }, ...over });
+
+    it('adoptLiveSession_mcpNueva_sinPestanaYEnSegundoPlano', async () => {
+      const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf({ state: 'running' })));
+
+      await store.getState().adoptLiveSession(mcpSession());
+
+      expect(store.getState().tabs).toHaveLength(1);
+      expect(store.getState().activeTabId).toBe('tab1');
+      expect(store.getState().backgroundSessions['s-host']).toMatchObject({ sessionId: 's-host', conversationId: 's-host', state: 'working', accountId: hostAccount.id });
+      expect(store.getState().backgroundSessions['s-host']?.hostSession?.origin).toBe('mcp');
+    });
+
+    it('adoptLiveSession_mcpConPestanaRestaurada_laReutiliza', async () => {
+      const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf({ state: 'running' })));
+      store.setState({ tabs: [tab('tab1'), tab('tab2', { resumeSessionId: 'n1' })] });
+
+      await store.getState().adoptLiveSession(mcpSession({ nativeId: 'n1' }));
+
+      expect(store.getState().sessionIdByChat.tab2).toBe('s-host');
+      expect(store.getState().backgroundSessions).toEqual({});
+    });
+
+    it('adoptLiveSession_mcpAttachFalla_sinEntrada', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const store = mountedHost(vi.fn().mockRejectedValue(new Error('sesión desaparecida')));
+
+      await store.getState().adoptLiveSession(mcpSession());
+
+      expect(store.getState().backgroundSessions).toEqual({});
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('openDelegatedSession_mcpSinPestana_pestanaActivaConElPermisoYSinOtraSesion', async () => {
+      const attachSession = vi
+        .fn()
+        .mockResolvedValueOnce(snapshotOf({ state: 'running' }))
+        .mockResolvedValueOnce(snapshotOf({ state: 'requires_action', pending: [{ kind: 'permission', request: permission }] }));
+      const createSession = vi.fn();
+      const store = mountedHost(attachSession, { notify: vi.fn().mockResolvedValue(undefined), createSession });
+      await store.getState().adoptLiveSession(mcpSession());
+
+      await store.getState().openDelegatedSession('s-host');
+
+      const opened = store.getState().tabs.find((t) => t.id !== 'tab1');
+      expect(store.getState().activeTabId).toBe(opened?.id);
+      expect(store.getState().pendingByChat[opened?.id ?? '']?.map((p) => p.requestId)).toEqual(['p1']);
+      expect(createSession).not.toHaveBeenCalled();
+      expect(attachSession).toHaveBeenCalledTimes(2);
+      expect(store.getState().backgroundSessions).toEqual({});
+    });
+
+    it('openDelegatedSession_yaNoViveEnMain_lanzaYQuitaLaEntrada', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const attachSession = vi.fn().mockResolvedValueOnce(snapshotOf({ state: 'running' })).mockRejectedValueOnce(new Error('sesión desaparecida'));
+      const store = mountedHost(attachSession);
+      await store.getState().adoptLiveSession(mcpSession());
+      store.setState({ loadConversationHistory: vi.fn().mockResolvedValue(undefined) });
+
+      await expect(store.getState().openDelegatedSession('s-host')).rejects.toThrow('s-host');
+
+      expect(store.getState().backgroundSessions).toEqual({});
+      expect(store.getState().tabs).toHaveLength(1);
+      warn.mockRestore();
+    });
+
+    it('openConversation_filaDeSubsesionSinPestana_laAbreSinCortarla', async () => {
+      const stop = vi.fn();
+      const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf({ state: 'running' })), { stop });
+      await store.getState().adoptLiveSession(mcpSession());
+
+      await store.getState().openConversation({ sessionId: 's-host', configDir: hostAccount.id, cwd: '/proj/app', title: '', updatedAtMs: 1, sizeBytes: 0, isScheduled: false });
+
+      const opened = store.getState().tabs.find((t) => t.id !== 'tab1');
+      expect(stop).not.toHaveBeenCalled();
+      expect(store.getState().tabs).toHaveLength(2);
+      expect(store.getState().activeTabId).toBe(opened?.id);
+    });
+
+    it('handleEvent_subsesionSinPestana_permiso_laMarcaPendienteDeAccion', async () => {
+      const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf({ state: 'running' })), { notify: vi.fn().mockResolvedValue(undefined) });
+      await store.getState().adoptLiveSession(mcpSession());
+
+      store.getState().handleEvent('s-host', { kind: 'permission_request', request: permission });
+
+      expect(store.getState().backgroundSessions['s-host']?.state).toBe('needs_action');
+    });
+
+    it('handleEvent_subsesionSinPestana_esperaACreadora_laApunta', async () => {
+      const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf({ state: 'running' })), { notify: vi.fn().mockResolvedValue(undefined) });
+      await store.getState().adoptLiveSession(mcpSession());
+
+      store.getState().handleEvent('s-host', { kind: 'delegation_waiting', creatorId: 'c-madre', waiting: true });
+
+      expect(store.getState().backgroundSessions['s-host']?.awaitingCreator).toBe(true);
+    });
+  });
+
   describe('conversation_rewound', () => {
     const userBlock = (id: string, text: string, nativeId: string | null) => ({ kind: 'user', id, text, time: '', attachments: [], nativeId }) as const;
     const rewound = { kind: 'conversation_rewound', targetNativeId: 'n0', action: 'rewind' } as const;
@@ -3291,6 +3419,15 @@ describe('adoptLiveSession (U17)', () => {
       await store.getState().rewindTo('rw', 'b1', { restoreFiles: false, saveCopy: false, action: 'rewind' });
 
       expect(refresh).not.toHaveBeenCalled();
+    });
+
+    it('rewindTo_aplicado_guardaLaRamaDescartada', async () => {
+      const rewindApply = vi.fn().mockResolvedValue({ draft: 'uno', returnedQueue: [], filesRestored: false, copyThreadId: null, projection: { entries: [], errors: [], isFinal: true, totalLinesSoFar: 0, bytesReadSoFar: 0, rawLineNumber: 0 }, retried: null });
+      const { store } = mountedRewind(rewindApply);
+
+      await store.getState().rewindTo('rw', 'b1', { restoreFiles: false, saveCopy: false, action: 'rewind' });
+
+      expect(store.getState().discardedBranchByChat.rw?.map((b) => b.id)).toEqual(['discarded:b1']);
     });
   });
 
@@ -3334,7 +3471,7 @@ describe('adoptLiveSession (U17)', () => {
 // Una conversación creada fuera de la ventana (terminal o MCP) se abre con la cuenta y el modelo de su sesión (facturación).
 describe('openConversation — dueña del host', () => {
   const claudeAccount = (id: string) => ({ id, alias: id, providerId: 'claude', loginStatus: 'logged_in' }) as unknown as Account;
-  const item = (): ConversationSummary => ({ sessionId: 'n-1', configDir: 'acc-active', cwd: 'C:\proyecto', title: 't', updatedAtMs: 0, privacy: 'shared' } as ConversationSummary);
+  const item = (): ConversationSummary => ({ sessionId: 'n-1', configDir: 'acc-active', cwd: 'C:\proyecto', title: 't', updatedAtMs: 0 } as ConversationSummary);
 
   function hostStore(prefs: unknown, over: Partial<MageApi> = {}) {
     const createSession = vi.fn().mockResolvedValue({ sessionId: 's-new' });

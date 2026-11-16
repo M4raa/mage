@@ -4,6 +4,55 @@ Lo que cambia de una versión a otra, contado para quien usa la app. La más rec
 enseña estas mismas notas en su pestaña de novedades al actualizarse, y en Configuración › Notas de
 versión.
 
+## 0.1.6 — 2026-11-16
+
+### Añadido
+- **Tareas programadas.** Mage ejecuta tareas a una hora o con repetición, solo mientras la app está abierta. Si una ejecución se perdió con Mage cerrado, se hace una sola vez al arrancar y queda marcada «con retraso». Tienen una pantalla completa con «Tuyas» y «De Claude Desktop», y «Tareas» del lateral se une a ellas. Cada ejecución abre su propia conversación con la insignia de programada, sea cual sea el proveedor, y no te quita la pestaña ni la cuenta que tenías.
+- **Subsesiones.** Una sesión creada por el agente lleva nombre propio y cuelga en el lateral de la conversación que la creó. En el chat aparece como una tarjeta que la abre, y sus respuestas se pliegan en «Recibió N mensajes». Las creadas por el MCP de Mage no abren pestaña hasta que las pulsas, y sus avisos suben a la conversación creadora, plegada, y a su carpeta.
+- **Ultracode en Claude.** Un interruptor en el submenú de esfuerzo; Mage lo recuerda por conversación, como el esfuerzo.
+- **Capacidades en Configuración.** Skills enseña el origen de cada una (tuya, de proyecto, de la organización o de un plugin) y, al pulsarla, su ficha con un resumen y el contenido de su SKILL.md, «Probar en chat» y abrir su carpeta. Organización muestra las políticas que se aplican a cada cuenta; editarlas es un enlace a la consola de Anthropic, solo para administradores. Plugins lista los instalados y «Descubrir» los de los marketplaces que la cuenta conoce, y permite instalar, quitar, activar y desactivar con el CLI de la cuenta; avisa de que la carpeta de plugins es común a todas tus cuentas de Claude (instalar o quitar afecta a todas; activar o desactivar, solo a la cuenta). MCP y conectores tiene «Descubrir» y los conectores en tabla.
+- **Adjuntar cualquier archivo.** «Adjuntar archivo» del «+» y soltar en el chat aceptan cualquier fichero. Las imágenes van como imagen y el resto como mención con @: un PDF se adjunta en Claude, el texto va dentro del mensaje y lo demás como ruta. Un fichero de fuera de la carpeta entra como su ruta y el agente lo lee con tu permiso.
+- **Las pestañas inactivas sueltan su proceso.** Tras unos minutos sin uso y fuera de la vista se cierra el proceso del agente (no la pestaña) y se reanuda al escribir. Nunca ocurre con «Mantener viva la caché» ni con trabajo en segundo plano, y los minutos se cambian, o se apaga, en Configuración.
+- Con el prompt vacío, ↑ y ↓ recorren los mensajes que has enviado en esa conversación, como en el CLI.
+- Un enlace soltado sobre el prompt inserta su URL.
+- Tras rebobinar, la Actividad enseña la rama descartada atenuada y con su etiqueta.
+- El navegador de Mage abre los `.html` de la carpeta de la conversación con sus recursos.
+- Guía de uso mínima en `docs/`: instalación, cuentas, facturación, comando `mage` y datos locales.
+
+### Cambiado
+- **Caja del prompt.** El texto de una línea queda centrado con «+» y enviar. «Pedir commit al agente» pasa al «+». Debajo del input van los permisos y el modelo; el esfuerzo, «Más modelos» y Ultracode, dentro del menú del modelo, igual en todos los proveedores. Retroceso tras el número de una lista lo borra entero.
+- **Sin conversaciones privadas ni «Compartido».** Al arrancar, las privadas pasan al historial normal de su cuenta.
+- **Lateral.** Las conversaciones sin proyecto van arriba, debajo de las fijadas y antes de los proyectos. Cada chat sale solo con su nombre, ordenado por la última interacción, tuya o del agente. Los proyectos salen desplegados, y las carpetas solo cambian de orden si las arrastras; la nueva entra arriba.
+- **Cuentas y consumo** responde ahora cuánto te queda, cómo vas (consumo diario apilado), qué consume más, en qué se van los tokens (con los aciertos de caché) y cuándo trabajas más (mapa de horas), con colores aptos para daltonismo. En «Todas las cuentas», «Por cuenta» lista todas las que consumieron, de Claude, Codex y agy.
+- La barra de estado ya no tiene el indicador de proveedor y cuenta.
+- Con un menú abierto dentro de un diálogo, Escape solo cierra el menú.
+- La lista de respaldo de modelos de Gemini (agy) ya no trae los 3.6.
+
+### Corregido
+- El coste de «Mantener viva la caché» en cuentas por clave de API ya no suma el acumulado de la conversación. La 0.1.4 lo daba por corregido y no lo estaba; ahora sí.
+- Los pensamientos de una conversación de Claude rebobinada o divergida vuelven a su respuesta al reabrirla.
+- `mage chat --account` con una ruta encuentra la cuenta escrita en forma corta o larga de Windows.
+- Con un proveedor propio (Ollama, LM Studio…), Escape y «Parar» cortan también la espera a que conecten los MCP.
+- Al migrar una conversación, la original ya no deja atrás sus datos guardados (pensamientos, PR y estado de rebobinado).
+- El enmascarado de secretos ya no estropea los ids de sesión que devuelve el MCP de Mage.
+
+### Seguridad
+- El paquete ignora `NODE_OPTIONS` y `--inspect`, y solo carga su propio `app.asar`, con comprobación de integridad.
+- Contestar permisos desde la terminal viene apagado; se enciende en Configuración.
+- El OAuth de los MCP y el inicio de sesión de agy solo abren `https` (y `localhost` para la vuelta del OAuth).
+- El navegador de Mage no abre ficheros de fuera de la carpeta de la conversación.
+- `SECURITY.md` explica las peticiones que hace Mage por su cuenta y por qué se presenta como Claude Code al consultar el uso.
+
+### Limitaciones conocidas
+- Las tareas programadas solo se ejecutan con Mage abierto; las de Claude Desktop se ven sin su horario.
+- «Descubrir» de Plugins solo enseña los marketplaces que la cuenta ya conoce; no se añaden desde Mage.
+- Todas las cuentas de Claude comparten plugins, skills, comandos, agentes y conversaciones; hoy no se puede separar por cuenta.
+- Una pestaña que sigue un cliente de terminal o del MCP no suelta su proceso por inactividad.
+- Con agy no hay diálogo de permisos.
+- El instalador de Windows no está firmado.
+- Linux solo se ha probado en WSL sin escritorio.
+- Una conversación rebobinada antes de esta versión puede seguir mostrando algún pensamiento descuadrado.
+
 ## 0.1.5 — 2026-11-10
 
 ### Añadido

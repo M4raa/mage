@@ -22,6 +22,13 @@ describe('resolveLaunchParams', () => {
     const result = resolveLaunchParams('s1', { ...params, accountDir: '/home/u/.claude', projectInstructions: 'Eres experto en Python' }, deps({}));
     expect(result.projectInstructions).toBe('Eres experto en Python');
   });
+  it('resolveLaunchParams_ultracode_loPasaYNoLoInventa', () => {
+    const base = { ...params, accountDir: '/home/u/.claude' };
+
+    expect(resolveLaunchParams('s1', { ...base, ultracode: true }, deps({})).ultracode).toBe(true);
+    expect(resolveLaunchParams('s1', { ...base, ultracode: false }, deps({}))).not.toHaveProperty('ultracode');
+    expect(() => resolveLaunchParams('s1', { ...base, ultracode: 'si' as unknown as boolean }, deps({}))).toThrow(/"si"/);
+  });
   it('resolve_emptyModel_throws', () => {
     expect(() => resolveLaunchParams('s1', { ...params, model: '  ' }, deps({}))).toThrow(/modelo/i);
   });

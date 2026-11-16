@@ -4,6 +4,9 @@
 import type { MageEvent } from '@shared/events';
 import type { ConversationSnapshot, CoordinatedState } from '@shared/coordination';
 import type { AdoptableSession } from '@shared/ipc';
+import { writesClaudeTranscript } from '@shared/providers';
+import type { BackgroundSession, BackgroundState } from './backgroundWork';
+import { conversationIdOfTab } from './conversationId';
 import type { ChatStatus, Tab } from './types';
 import type { WorkbenchState } from './workbenchStore';
 
@@ -30,7 +33,7 @@ export interface AdoptedTabIds {
   readonly nowMs: number;
 }
 
-// El host nunca crea conversaciones privadas, y no usa worktree de Mage.
+// El host no usa worktree de Mage.
 export function adoptedTab(session: AdoptableSession, ids: AdoptedTabIds): Tab {
   return {
     id: ids.tabId,
@@ -40,7 +43,6 @@ export function adoptedTab(session: AdoptableSession, ids: AdoptedTabIds): Tab {
     model: session.model,
     provider: session.provider,
     title: ids.title,
-    privacy: 'shared',
     accountPinned: true,
     resolvedConfigDir: session.configDir,
     ...(session.createdBy === null ? {} : { createdBy: session.createdBy }),
@@ -90,4 +92,41 @@ export function creatorTabOf(
 // envía con otra cuenta, que cobraría a quien no es).
 export function pinnedAccountMissing(tab: Pick<Tab, 'accountPinned' | 'accountId'>, accounts: readonly { readonly id: string }[]): boolean {
   return tab.accountPinned === true && !accounts.some((account) => account.id === tab.accountId);
+}
+
+// Decisión 13-11: una subsesión creada por otra conversación con `mage_create_session` no abre pestaña mientras su
+// adopción fuera una pestaña NUEVA; las de la terminal, enlazadas o con pestaña restaurada, como siempre.
+export function adoptsWithoutTab(state: Pick<WorkbenchState, 'tabs' | 'sessionIdByChat'>, session: AdoptableSession): boolean {
+  return session.origin === 'mcp' && adoptionTarget(state, session).kind === 'new';
+}
+
+// Estado de segundo plano según la instantánea de main (D-3). `lastSeq === 0` = recién lanzada, con su primer
+// mensaje en camino.
+export function backgroundStateOf(snapshot: Pick<ConversationSnapshot, 'state' | 'lastSeq'>): BackgroundState {
+  if (snapshot.state === 'requires_action') return 'needs_action';
+  if (chatStatusOf(snapshot.state) === 'streaming') return 'working';
+  return snapshot.state === 'idle' && snapshot.lastSeq === 0 ? 'working' : 'done';
+}
+
+// Entrada de segundo plano de una subsesión sin pestaña. Su conversación, con la misma regla que una pestaña
+// (`conversationIdOfTab`).
+export function delegatedBackgroundEntry(session: AdoptableSession, state: BackgroundState, nowMs: number): BackgroundSession {
+  const tabLike = session.nativeId === null ? { provider: session.provider } : { provider: session.provider, resumeSessionId: session.nativeId };
+  return {
+    sessionId: session.sessionId,
+    conversationId: conversationIdOfTab(tabLike, session.sessionId),
+    title: session.title ?? '',
+    accountId: session.accountId,
+    state,
+    sinceMs: nowMs,
+    hostSession: session,
+  };
+}
+
+// Sesión del host con la que se abre la pestaña de una subsesión que estaba sin ella: en Codex y agy, con el hilo
+// que se supo sin pestaña (si no, la pestaña nunca lo apuntaría).
+export function delegatedSessionToOpen(entry: BackgroundSession): AdoptableSession {
+  if (entry.hostSession === undefined) throw new Error(`La entrada ${JSON.stringify(entry.sessionId)} no es una subsesión del MCP`);
+  if (entry.conversationId === undefined || writesClaudeTranscript(entry.hostSession.provider)) return entry.hostSession;
+  return { ...entry.hostSession, nativeId: entry.conversationId };
 }

@@ -37,7 +37,7 @@ describe('buildVersionEnv', () => {
   });
 
   it('buildVersionEnv_inheritedConfigDir_replacesWithMainAccount', () => {
-    const env = buildVersionEnv({ CLAUDE_CONFIG_DIR: '/home/u/.claude-9/mage-private' }, '/home/u');
+    const env = buildVersionEnv({ CLAUDE_CONFIG_DIR: '/home/u/.claude-9' }, '/home/u');
 
     expect(env.CLAUDE_CONFIG_DIR).toBe(join('/home/u', '.claude'));
   });

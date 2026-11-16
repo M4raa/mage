@@ -75,13 +75,13 @@ describe('SessionCoordinator — secuencia e identidades (F2.1)', () => {
     expect(h.received[1]!.at).toBeGreaterThan(h.received[0]!.at);
   });
 
-  it('create_claudeNueva_ligaLaConversacionConSuIdYLaCuentaEfectiva', () => {
+  it('create_claudeNueva_ligaLaConversacionConSuIdYLaCuenta', () => {
     const h = harness();
 
-    const id = h.create({ accountDir: `${ACCOUNT}/mage-private` });
+    const id = h.create({ accountDir: ACCOUNT });
 
-    expect(h.index.resolveConversation).toHaveBeenCalledWith({ provider: 'claude', accountDir: `${ACCOUNT}/mage-private`, nativeId: id });
-    expect(h.coordinator.snapshot(id)).toEqual({ sessionId: id, provider: 'claude', conversationId: `conv-${id}`, nativeRef: { provider: 'claude', accountDir: `${ACCOUNT}/mage-private`, nativeId: id }, lastSeq: 0, state: 'starting', queue: [], pending: [], background: false });
+    expect(h.index.resolveConversation).toHaveBeenCalledWith({ provider: 'claude', accountDir: ACCOUNT, nativeId: id });
+    expect(h.coordinator.snapshot(id)).toEqual({ sessionId: id, provider: 'claude', conversationId: `conv-${id}`, nativeRef: { provider: 'claude', accountDir: ACCOUNT, nativeId: id }, lastSeq: 0, state: 'starting', queue: [], pending: [], background: false });
   });
 
   it('create_codexNueva_sinConversacionHastaSuSessionInit', () => {

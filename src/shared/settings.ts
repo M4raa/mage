@@ -102,12 +102,18 @@ export type NewConversationFolder = (typeof NEW_CONVERSATION_FOLDERS)[number];
 // contexto del modelo). `max` es también el tope que main aplica a lo que le llega por IPC.
 export const IMPORTED_CONTEXT_LIMITS = { default: 24_000, min: 4_000, max: 120_000 } as const;
 
+// Punto 23 (D2): minutos sin turno tras los que se suelta el proceso de una pestaña fuera de la vista; 0 = nunca.
+export const IDLE_CLOSE_LIMITS = { default: 30, min: 0, max: 1440 } as const;
+
 export interface AppSettings {
   readonly version: number;
   readonly notificationRules: readonly NotificationRule[];
   readonly chatProjects: readonly ChatProject[];
   // Ids de conversación fijadas en el lateral (grupo «Fijadas»). Una pestaña fijada y su conversación van a la par.
   readonly pinnedConversations: readonly string[];
+  // Orden de las carpetas de proyecto del lateral, por clave de grupo (`p:<projectId>` o `d:<carpeta>`). Solo lo
+  // cambia el usuario al arrastrar una carpeta; una carpeta nueva entra arriba del todo. Solo lo lee el renderer.
+  readonly projectOrder: readonly string[];
   // Ids de conversación archivadas: salen del lateral salvo con el chip «Archivadas».
   readonly archivedConversations: readonly string[];
   // Preferencia de tema base (claro/oscuro/sistema). Default 'dark' para preservar el aspecto actual.
@@ -121,6 +127,8 @@ export interface AppSettings {
   readonly dockDefaultsVersion: number;
   // Widget flotante always-on-top (M3): si esta activo, se abre al arrancar. Default false (opt-in).
   readonly widgetEnabled: boolean;
+  // Tareas programadas: impide la suspensión del equipo mientras haya alguna activa. Default false.
+  readonly scheduledTasksKeepAwake: boolean;
   // MCP de Mage (P-038 V7): activado, TODA conversación de Claude o Codex nueva o reabierta lo recibe al lanzarse
   // (también las privadas). Default false (opt-in).
   readonly mageMcpEnabled: boolean;
@@ -234,8 +242,12 @@ export interface AppSettings {
   // Keep-alive de la caché de Claude (F4.6, D-K4): un mensaje oculto que la mantiene caliente mientras la pestaña
   // sigue abierta. Default: activado en suscripción, apagado en cuentas por clave de API.
   readonly keepAlive: KeepAliveSettings;
+  // Punto 23 (D2): minutos de inactividad para soltar el proceso de una pestaña fuera de la vista; 0 = nunca.
+  readonly idleCloseMinutes: number;
   // Delegacion entre conversaciones (U10): profundidad maxima de la cadena de creadoras.
   readonly delegation: DelegationSettings;
+  // Revisión de seguridad, H1 (b): `mage chat` puede contestar permisos. Default false.
+  readonly hostPermissionAnswers: boolean;
 }
 
 export interface DelegationSettings {
@@ -300,12 +312,14 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   notificationRules: [],
   chatProjects: [],
   pinnedConversations: [],
+  projectOrder: [],
   archivedConversations: [],
   theme: 'dark',
   accountAvatarsPlacement: 'top',
   separatorContrast: 'normal',
   dockDefaultsVersion: 0,
   widgetEnabled: false,
+  scheduledTasksKeepAwake: false,
   mageMcpEnabled: false,
   backgroundOpacity: 100,
   importedThemes: [],
@@ -338,5 +352,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   runtimeShell: 'auto',
   runtimeToolAccess: {},
   keepAlive: DEFAULT_KEEP_ALIVE,
+  idleCloseMinutes: IDLE_CLOSE_LIMITS.default,
   delegation: DEFAULT_DELEGATION,
+  hostPermissionAnswers: false,
 };

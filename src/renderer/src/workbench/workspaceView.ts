@@ -32,10 +32,10 @@ export function toPersistedWorkspace(
       provider: tab.provider,
       title: tab.title,
       ...(tab.projectId === undefined ? {} : { projectId: tab.projectId }),
-      privacy: tab.privacy,
       ...(tab.resolvedConfigDir === undefined ? {} : { resolvedConfigDir: tab.resolvedConfigDir }),
       ...(sessionId === undefined ? {} : { sessionId }),
       ...(tab.effort === undefined ? {} : { effort: tab.effort }),
+      ...(tab.ultracode === true ? { ultracode: true } : {}),
       ...(tab.maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents: tab.maxBudgetUsdCents }),
       ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
       // Vacia NO se guarda: en el workspace, "sin reglas" y "sin campo" son lo mismo (el estado
@@ -92,10 +92,10 @@ export function restoreTabs(
       provider: RETIRED_PROVIDER_IDS.includes(t.provider) ? 'claude' : t.provider,
       title: isPlaceholderTitle(t.title) ? '' : t.title,
       ...(t.projectId === undefined ? {} : { projectId: t.projectId }),
-      privacy: t.privacy,
       ...(t.resolvedConfigDir === undefined ? {} : { resolvedConfigDir: t.resolvedConfigDir }),
       ...(t.sessionId === undefined ? {} : { resumeSessionId: t.sessionId }),
       ...(t.effort === undefined ? {} : { effort: t.effort }),
+      ...(t.ultracode === true ? { ultracode: true } : {}),
       ...(t.maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents: t.maxBudgetUsdCents }),
       ...(t.permissionMode === undefined ? {} : { permissionMode: t.permissionMode }),
       // Saneado al ENTRAR: el fichero pudo escribirlo otra version de Mage o una mano humana.

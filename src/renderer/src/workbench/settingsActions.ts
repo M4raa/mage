@@ -4,6 +4,7 @@ import {
   DELEGATION_DEPTH_MAX,
   DELEGATION_DEPTH_MIN,
   DEFAULT_PERMISSION_MODES,
+  IDLE_CLOSE_LIMITS,
   IMPORTED_CONTEXT_LIMITS,
   KEEP_ALIVE_MAX_PAUSE_MAX,
   KEEP_ALIVE_MAX_PAUSE_MIN,
@@ -37,6 +38,7 @@ export type SettingsActionName =
   | 'setAccountAccent'
   | 'setClaudeAiConnectorsEnabled'
   | 'setMageMcpEnabled'
+  | 'setScheduledTasksKeepAwake'
   | 'renameAccount'
   | 'setPlanPrice'
   | 'setAdminMode'
@@ -45,7 +47,9 @@ export type SettingsActionName =
   | 'setAgyLinkedPaths'
   | 'setDefaultProvider'
   | 'setArtifactEnabled'
+  | 'setHostPermissionAnswers'
   | 'setKeepAlive'
+  | 'setIdleCloseMinutes'
   | 'setDelegationDepth'
   | 'setDefaultPermissionMode'
   | 'setRuntimeToolAccess'
@@ -175,6 +179,12 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
       deps.persistSettingsNow();
     },
 
+    // Se guarda YA: main lo lee en cada vuelta del planificador y al guardar los ajustes.
+    setScheduledTasksKeepAwake: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, scheduledTasksKeepAwake: enabled } }));
+      deps.persistSettingsNow();
+    },
+
     renameAccount: (accountId, alias) => {
       const name = alias?.trim() ?? '';
       if (name.length > ACCOUNT_ALIAS_MAX) throw new Error(`Alias demasiado largo (${name.length} > ${ACCOUNT_ALIAS_MAX}): ${JSON.stringify(name)}`);
@@ -233,9 +243,22 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
       deps.persistSettings();
     },
 
+    setHostPermissionAnswers: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, hostPermissionAnswers: enabled } }));
+      deps.persistSettings();
+    },
+
     setKeepAlive: (patch) => {
       assertKeepAlivePatch(patch);
       set((s) => ({ settings: { ...s.settings, keepAlive: { ...s.settings.keepAlive, ...patch } } }));
+      deps.persistSettings();
+    },
+
+    setIdleCloseMinutes: (minutes) => {
+      if (!Number.isInteger(minutes) || minutes < IDLE_CLOSE_LIMITS.min || minutes > IDLE_CLOSE_LIMITS.max) {
+        throw new Error(`Minutos de inactividad inválidos: ${JSON.stringify(minutes)}`);
+      }
+      set((s) => ({ settings: { ...s.settings, idleCloseMinutes: minutes } }));
       deps.persistSettings();
     },
 

@@ -68,6 +68,7 @@ export function toClaudeArgs(
   servers: readonly ResolvedMcpServer[],
   settingsFragment: Readonly<Record<string, unknown>> | null,
   writeMcpConfig: (text: string) => string,
+  extraSettings: Readonly<Record<string, unknown>> = {},
 ): { readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> } {
   const args: string[] = [];
   let env: Readonly<Record<string, string>> = {};
@@ -76,7 +77,9 @@ export function toClaudeArgs(
     env = translated.env;
     args.push('--mcp-config', writeMcpConfig(`${JSON.stringify(translated.config, null, 2)}\n`));
   }
-  if (settingsFragment !== null) args.push('--settings', JSON.stringify(settingsFragment));
+  // UN solo `--settings`: el fragmento comun fusionado con los ajustes de arranque de la sesion (p. ej. ultracode).
+  const settings = { ...(settingsFragment ?? {}), ...extraSettings };
+  if (settingsFragment !== null || Object.keys(extraSettings).length > 0) args.push('--settings', JSON.stringify(settings));
   return { args, env };
 }
 
@@ -89,9 +92,12 @@ export function claudeSharedLaunch(
   shared: { readonly mcpServers: readonly ResolvedMcpServer[]; readonly settingsFragment: Readonly<Record<string, unknown>> | null; readonly claudeAiConnectors: boolean } | undefined,
   accountDir: string,
   writer: ClaudeMcpConfigWriter,
+  extraSettings: Readonly<Record<string, unknown>> = {},
 ): { readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> } {
-  if (shared === undefined) return { args: [], env: {} };
-  const { args, env } = toClaudeArgs(shared.mcpServers, shared.settingsFragment, (text) => writer(accountDir, text));
+  if (shared === undefined) {
+    return Object.keys(extraSettings).length === 0 ? { args: [], env: {} } : { args: ['--settings', JSON.stringify(extraSettings)], env: {} };
+  }
+  const { args, env } = toClaudeArgs(shared.mcpServers, shared.settingsFragment, (text) => writer(accountDir, text), extraSettings);
   return { args, env: shared.claudeAiConnectors ? env : { ...env, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } };
 }
 

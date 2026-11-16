@@ -1,11 +1,10 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationSummary } from '@shared/conversations';
-import { ConversationsService, withHostOwner, withLastAccount, type ConversationsDeps } from './conversationsService';
+import { ConversationsService, withCreator, withHostOwner, withLastAccount, withScheduledTaskRun, type ConversationsDeps } from './conversationsService';
 
 const ACC = join('/home/u', '.claude-p');
 const SHARED = join(ACC, 'projects');
-const PRIVATE = join(ACC, 'mage-private', 'projects');
 
 const userLine = (text: string, cwd: string): string =>
   JSON.stringify({ type: 'user', cwd, message: { role: 'user', content: text } });
@@ -30,21 +29,18 @@ describe('ConversationsService.listConversations', () => {
     expect(() => service.listConversations('  ')).toThrow(/vacio/i);
   });
 
-  it('listaCompartidasYPrivadas_conPrivacyYConfigDirCorrectos', () => {
-    const folderShared = join(SHARED, 'C--proj');
-    const folderPriv = join(PRIVATE, 'C--proj');
+  it('listaVariasConversaciones_masRecientePrimeroYConfigDirDeLaCuenta', () => {
+    const folder = join(SHARED, 'C--proj');
     const service = new ConversationsService(
       deps({
-        exists: (p) => p === SHARED || p === PRIVATE,
+        exists: (p) => p === SHARED,
         listDir: (p) => {
           if (p === SHARED) return ['C--proj'];
-          if (p === PRIVATE) return ['C--proj'];
-          if (p === folderShared) return ['s1.jsonl'];
-          if (p === folderPriv) return ['s2.jsonl'];
+          if (p === folder) return ['s1.jsonl', 's2.jsonl'];
           return [];
         },
         statFile: (p: string) => ({ mtimeMs: p.includes('s2') ? 2000 : 1000, sizeBytes: p.includes('s2') ? 4096 : 1024 }),
-        readPrefix: (p) => (p.includes('s2') ? userLine('privada', 'C:\\proj') : userLine('compartida', 'C:\\proj')),
+        readPrefix: (p) => (p.includes('s2') ? userLine('segunda', 'C:\\proj') : userLine('primera', 'C:\\proj')),
       }),
     );
 
@@ -52,8 +48,8 @@ describe('ConversationsService.listConversations', () => {
 
     expect(list).toHaveLength(2);
     // mas reciente primero (s2, mtime 2000).
-    expect(list[0]).toMatchObject({ sessionId: 's2', privacy: 'private', configDir: join(ACC, 'mage-private'), title: 'privada' });
-    expect(list[1]).toMatchObject({ sessionId: 's1', privacy: 'shared', configDir: ACC, title: 'compartida' });
+    expect(list[0]).toMatchObject({ sessionId: 's2', configDir: ACC, title: 'segunda' });
+    expect(list[1]).toMatchObject({ sessionId: 's1', configDir: ACC, title: 'primera' });
   });
 
   it('ignoraSubcarpetasDeSubagentes_soloJsonlDeNivelSuperior', () => {
@@ -229,13 +225,13 @@ describe('ConversationsService con el runtime propio (P-032 R4)', () => {
 
     const list = service.listConversations(ACC);
 
-    expect(list).toEqual([expect.objectContaining({ sessionId: 'r1', configDir: ACC, privacy: 'shared', title: 'hola runtime' })]);
+    expect(list).toEqual([expect.objectContaining({ sessionId: 'r1', configDir: ACC, title: 'hola runtime' })]);
   });
 });
 
 describe('withLastAccount', () => {
   const summary = (sessionId: string): ConversationSummary => ({
-    sessionId, configDir: ACC, cwd: '', title: sessionId, privacy: 'shared', updatedAtMs: 0, sizeBytes: 0, isScheduled: false,
+    sessionId, configDir: ACC, cwd: '', title: sessionId, updatedAtMs: 0, sizeBytes: 0, isScheduled: false,
   });
 
   it('withLastAccount_known_addsField', () => {
@@ -259,7 +255,7 @@ describe('withLastAccount', () => {
 
 describe('withHostOwner', () => {
   const summary = (sessionId: string): ConversationSummary => ({
-    sessionId, configDir: ACC, cwd: '', title: sessionId, privacy: 'shared', updatedAtMs: 0, sizeBytes: 0, isScheduled: false,
+    sessionId, configDir: ACC, cwd: '', title: sessionId, updatedAtMs: 0, sizeBytes: 0, isScheduled: false,
   });
 
   it('withHostOwner_known_addsField', () => {
@@ -272,6 +268,54 @@ describe('withHostOwner', () => {
     const item = summary('a');
 
     const result = withHostOwner([item], () => undefined);
+
+    expect(result[0]).toBe(item);
+  });
+});
+
+describe('withCreator', () => {
+  const summary = (sessionId: string): ConversationSummary => ({
+    sessionId, configDir: ACC, cwd: '', title: sessionId, updatedAtMs: 0, sizeBytes: 0, isScheduled: false,
+  });
+
+  it('withCreator_conDato_loAnade', () => {
+    const result = withCreator([summary('a')], () => 'creadora-1');
+
+    expect(result).toEqual([{ ...summary('a'), createdByConversationId: 'creadora-1' }]);
+  });
+
+  it('withCreator_sinDato_igual', () => {
+    const item = summary('a');
+
+    const result = withCreator([item], () => undefined);
+
+    expect(result[0]).toBe(item);
+  });
+});
+
+describe('withScheduledTaskRun', () => {
+  const summary = (sessionId: string, isScheduled = false): ConversationSummary => ({
+    sessionId, configDir: ACC, cwd: '', title: sessionId, updatedAtMs: 0, sizeBytes: 0, isScheduled,
+  });
+
+  it('withScheduledTaskRun_creadaPorTarea_programada', () => {
+    const result = withScheduledTaskRun([summary('a'), summary('b')], (id) => id === 'a');
+
+    expect(result.map((item) => item.isScheduled)).toEqual([true, false]);
+  });
+
+  it('withScheduledTaskRun_programadaPorTranscripcion_sigueProgramada', () => {
+    const item = summary('a', true);
+
+    const result = withScheduledTaskRun([item], () => false);
+
+    expect(result[0]?.isScheduled).toBe(true);
+  });
+
+  it('withScheduledTaskRun_sinMarca_mismoObjeto', () => {
+    const item = summary('a');
+
+    const result = withScheduledTaskRun([item], () => false);
 
     expect(result[0]).toBe(item);
   });

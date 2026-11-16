@@ -1,5 +1,7 @@
 // El único fichero del módulo que carga Electron; no tiene test unitario (lo cubre el spike).
-import { BaseWindow, nativeImage, screen, session, WebContentsView } from 'electron';
+import { realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { BaseWindow, nativeImage, net, screen, session, WebContentsView } from 'electron';
 import type { ImageDeps } from './annotatedCapture';
 import { ISOLATED_WEB_PREFERENCES } from './isolationConfig';
 import type { BrowserDeps } from './isolatedBrowser';
@@ -10,6 +12,9 @@ export const electronBrowserDeps: BrowserDeps = {
   createView: (browserSession) =>
     new WebContentsView({ webPreferences: { ...ISOLATED_WEB_PREFERENCES, session: browserSession } }),
   now: () => new Date(),
+  realpath: (target) => realpathSync.native(target),
+  // Sin `bypassCustomProtocolHandlers` volvería al manejador `file` de la partición (bucle).
+  serveFile: (realPath) => net.fetch(pathToFileURL(realPath).href, { bypassCustomProtocolHandlers: true }),
 };
 
 export const electronImageDeps: ImageDeps = {

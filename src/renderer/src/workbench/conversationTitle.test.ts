@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { deriveTitleFromPrompt, displayTitle, isSlashCommandText, latestCustomTitle, renamedTitleFrom, typedRenameTitle } from './conversationTitle';
 import { createTranslator } from '@shared/i18n/translator';
+import { scheduledTaskMessage } from '@shared/systemWrappers';
 import { makeEntry } from '@testing/transcriptEntry';
+
+describe('deriveTitleFromPrompt tarea programada', () => {
+  it('deriveTitleFromPrompt_tareaProgramada_suNombre', () => {
+    expect(deriveTitleFromPrompt(scheduledTaskMessage({ name: 'Informe diario', text: 'Haz el informe' }))).toBe('Informe diario');
+  });
+});
 
 describe('deriveTitleFromPrompt', () => {
   it('promptCorto_devuelveElTextoTalCual', () => {

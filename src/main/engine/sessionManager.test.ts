@@ -20,7 +20,6 @@ function params(overrides: Partial<CreateSessionParams> = {}): CreateSessionPara
     model: 'sonnet',
     provider: 'claude',
     cwd: '/proj',
-    privacy: 'shared',
     ...overrides,
   } as CreateSessionParams;
 }
@@ -312,21 +311,19 @@ describe('SessionManager delegacion y ciclo de vida', () => {
     expect(h.created[0]?.session.stop).not.toHaveBeenCalled();
   });
 
-  it('stopByConfigDir_paraLaCuentaYSuPerfilPrivado_yNoLasDeOtras', () => {
-    // Arrange: dos de la cuenta p (compartida y privada) y una de la principal.
+  it('stopByConfigDir_paraLaCuenta_yNoLasDeOtras', () => {
+    // Arrange: una de la cuenta p y una de la principal.
     const h = harness();
     const account = `${HOME}/.claude-p`;
-    const shared = h.manager.create(params({ accountDir: account }), h.sink);
-    const priv = h.manager.create(params({ accountDir: `${account}/mage-private` }), h.sink);
+    const mine = h.manager.create(params({ accountDir: account }), h.sink);
     const other = h.manager.create(params(), h.sink);
 
     // Act
     const stopped = h.manager.stopByConfigDir(account);
 
     // Assert
-    expect([...stopped].sort()).toEqual([shared, priv].sort());
-    expect(() => h.manager.sendMessage(shared, 'x')).toThrow(/inexistente/i);
-    expect(() => h.manager.sendMessage(priv, 'x')).toThrow(/inexistente/i);
+    expect([...stopped]).toEqual([mine]);
+    expect(() => h.manager.sendMessage(mine, 'x')).toThrow(/inexistente/i);
     expect(() => h.manager.sendMessage(other, 'x')).not.toThrow();
   });
 

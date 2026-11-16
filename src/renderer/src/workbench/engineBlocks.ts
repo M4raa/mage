@@ -6,6 +6,7 @@ import type { DiffLine } from './diffLines';
 import { parseStructuredPatch } from './diffLines';
 import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
+import { completeDelegation, parseDelegationDraft } from '@shared/delegationCards';
 import { formatToolMeta, planTextField, SKILL_TOOL_NAME, summarizeToolInput } from './toolSummary';
 import { codexChangeView } from './codexChanges';
 import { fileTouchesField } from './fileTouches';
@@ -196,6 +197,8 @@ export function appendToolUse(blocks: readonly Block[], tool: ToolUse, id: strin
     // Del input de la tool solo se guarda lo que la tarjeta necesita (titulo, descripcion, favicon,
     // ruta): el resto del input no entra en el estado.
     artifactDraft: parseArtifactDraft(tool.toolName, tool.input),
+    delegation: null,
+    delegationDraft: parseDelegationDraft(tool.toolName, tool.input),
     parentToolUseId: tool.parentToolUseId ?? null,
     ...planTextField(tool.toolName, tool.input),
     ...fileTouchesField(tool.toolName, tool.input),
@@ -356,6 +359,7 @@ export function applyToolResult(blocks: readonly Block[], result: ToolResult): r
           writtenContent: file?.content?.split('\n') ?? b.writtenContent,
           // La URL del artifact llega en el TEXTO del resultado (denominador comun de las dos rutas).
           artifact: b.artifactDraft === null ? b.artifact : completeArtifactPublication(b.artifactDraft, result.output),
+          delegation: b.delegationDraft == null ? (b.delegation ?? null) : completeDelegation(b.delegationDraft, result.output),
         }
       : b,
   );

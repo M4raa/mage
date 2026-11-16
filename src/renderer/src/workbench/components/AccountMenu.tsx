@@ -90,9 +90,7 @@ export function AccountMenu({
 const MENU_WIDTH_PX = 220;
 const MENU_MARGIN_PX = 10;
 
-// Confirmacion del borrado (punto 30). Dice QUE se borra —login, carpeta y cuantas conversaciones
-// privadas— y que las compartidas no se tocan. El recuento se pide al abrir: listar el historial de
-// una cuenta es una lectura de prefijos, barata.
+// Confirmacion del borrado (punto 30). Dice QUE se borra —login y carpeta— y que lo compartido no se toca.
 export function DeleteAccountDialog({
   account,
   onClose,
@@ -101,7 +99,6 @@ export function DeleteAccountDialog({
   readonly onClose: () => void;
 }): React.JSX.Element {
   const deleteAccount = useWorkbenchStore((s) => s.deleteAccount);
-  const privateCount = usePrivateConversationCount(account.id, account.providerId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useDialogA11y({ onClose });
@@ -142,7 +139,6 @@ export function DeleteAccountDialog({
           {t('accounts.delete.folder')}{' '}<code className="break-all text-mg-body">{account.id}</code>:
           <ul className="mt-[4px] list-disc pl-[18px]">
             <li>{t('accounts.delete.loginAndSettings')}</li>
-            <li>{privateLine(t, privateCount)}</li>
           </ul>
           <p className="mt-[6px]">{t('accounts.delete.sharedUntouched')}</p>
         </div>
@@ -171,27 +167,4 @@ export function DeleteAccountDialog({
     </motion.div>,
     document.body,
   );
-}
-
-// null mientras se cuenta; si el historial no se puede leer, el error se ve en el texto (no se traga).
-function usePrivateConversationCount(configDir: string, providerId: string): number | string | null {
-  const [count, setCount] = useState<number | string | null>(null);
-  useEffect(() => {
-    if (providerId !== 'claude') { setCount(0); return; }
-    let alive = true;
-    window.mage
-      .listConversations(configDir)
-      .then((list) => alive && setCount(list.filter((c) => c.privacy === 'private').length))
-      .catch((err: unknown) => alive && setCount(err instanceof Error ? describeError(err) : String(err)));
-    return () => {
-      alive = false;
-    };
-  }, [configDir, providerId]);
-  return count;
-}
-
-function privateLine(t: Translate, count: number | string | null): string {
-  if (count === null) return t('accounts.delete.privateCounting');
-  if (typeof count === 'string') return t('accounts.delete.privateCountFailed', { error: count });
-  return t('accounts.delete.privateCount', { count });
 }

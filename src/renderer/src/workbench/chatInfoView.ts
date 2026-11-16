@@ -51,12 +51,6 @@ export function folderChip(cwd: string, scratchDir: string | readonly string[] |
   };
 }
 
-export function privacyChip(privacy: 'shared' | 'private'): ChatChip {
-  return privacy === 'private'
-    ? { icon: 'lock', label: t('chat.info.private'), title: t('chat.info.privateTitle') }
-    : { icon: 'diamond', label: t('chat.info.shared'), title: t('chat.info.sharedTitle') };
-}
-
 // Etiqueta de la rama (P-026 3.5). Sin repo, sin git o sin confianza, no hay etiqueta. Con la HEAD
 // suelta se enseña el commit, que es lo unico que la identifica.
 export function gitChip(snapshot: GitSnapshot | undefined): ChatChip | null {

@@ -12,9 +12,9 @@ import type { MageEvent } from '@shared/events';
 // `conversation-index.json` esta pensado para lo que se escribe poco y se lee al abrir. Es la misma
 // razon por la que el catalogo de comandos tampoco vive alli.
 //
-// El orden ES la identidad: el N-esimo texto guardado corresponde al N-esimo bloque `thinking` vacio de
-// la transcripcion. Las dos secuencias son de solo-añadir y se producen a la vez, asi que casan sin
-// necesidad de inventar un id que el CLI no da.
+// El orden ES la identidad, contado POR LA COLA: el ultimo texto guardado es el del ultimo bloque `thinking` de la rama
+// activa (`@shared/thinkingBlocks`). Al rebobinar se quitan del final los de la rama descartada (`dropLast`), asi que la
+// cola sigue casando sin inventar un id que el CLI no da.
 
 export interface ThinkingStoreDeps {
   readonly dir: string;
@@ -100,6 +100,16 @@ export class ThinkingStore {
       }
     }
     return texts;
+  }
+
+  // Quita los `count` pensamientos MAS RECIENTES (los de la rama que descarta un rebobinado). Reescritura atomica.
+  dropLast(sessionId: string, count: number): void {
+    if (!Number.isInteger(count) || count < 0) throw new Error(`Numero de pensamientos a quitar invalido: ${JSON.stringify(count)}`);
+    const path = this.pathFor(sessionId);
+    if (count === 0 || !this.deps.exists(path)) return;
+    const kept = this.readAll(path).slice(0, -count);
+    this.deps.writeFile(path, kept.map((entry) => `${JSON.stringify(entry)}\n`).join(''));
+    this.counts.set(sessionId, kept.length);
   }
 
   // Se llama al borrar una conversacion: si no, quedaria un fichero huerfano por cada una borrada.

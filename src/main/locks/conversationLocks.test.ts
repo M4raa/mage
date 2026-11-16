@@ -221,12 +221,6 @@ describe('resolveConversationLocksDir (H3 de la devolución 17)', () => {
 });
 
 describe('lockFileName', () => {
-  it('lockFileName_perfilPrivado_mismoQueSuCuenta', () => {
-    const canonicalize = (p: string) => p;
-
-    expect(lockFileName({ ...REF, accountDir: path.join('/home/u/.claude', 'mage-private') }, canonicalize)).toBe(lockFileName({ ...REF, accountDir: path.join('/home/u/.claude') }, canonicalize));
-  });
-
   it('lockFileName_canonizaLaCuenta', () => {
     expect(lockFileName({ ...REF, accountDir: 'C:/USERS/U/.claude' }, (p) => p.toLowerCase())).toBe(lockFileName({ ...REF, accountDir: 'c:/users/u/.claude' }, (p) => p.toLowerCase()));
   });

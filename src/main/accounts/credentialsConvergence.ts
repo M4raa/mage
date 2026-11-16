@@ -33,62 +33,6 @@ export interface CredentialsSide {
   readonly hasTokens: boolean; // accessToken Y refreshToken presentes y no vacios
 }
 
-// Veredicto de la convergencia. `reason` va al log (sin datos sensibles) para que la decision nunca
-// sea silenciosa: el fallo original costo lo que costo justamente por ser invisible.
-export type ConvergenceDecision =
-  | { readonly action: 'none'; readonly reason: string }
-  | { readonly action: 'copy'; readonly from: string; readonly to: string; readonly reason: string };
-
-// Un lado sirve para dar login si existe, tiene los dos tokens y un expiresAt valido. Un fichero
-// vaciado por el CLI (tokens vacios, expiresAt 0) NO sirve, por reciente que sea.
-function isUsable(side: CredentialsSide): boolean {
-  return side.exists && side.hasTokens && side.expiresAt !== null;
-}
-
-// Decide que lado gana. PURA: ni FS, ni reloj, ni logs.
-export function decideCredentialsConvergence(
-  account: CredentialsSide,
-  profile: CredentialsSide,
-): ConvergenceDecision {
-  if (account.path === profile.path) {
-    throw new Error(`Los dos lados de la convergencia son la misma ruta: ${account.path}`);
-  }
-
-  const accountUsable = isUsable(account);
-  const profileUsable = isUsable(profile);
-
-  if (!accountUsable && !profileUsable) {
-    return { action: 'none', reason: 'ningun lado tiene credenciales utilizables (sin login todavia)' };
-  }
-  if (accountUsable && !profileUsable) {
-    return { action: 'copy', from: account.path, to: profile.path, reason: describeOnlyUsable(profile) };
-  }
-  if (!accountUsable && profileUsable) {
-    return { action: 'copy', from: profile.path, to: account.path, reason: describeOnlyUsable(account) };
-  }
-
-  // Ambos utilizables: gana el token vigente mas lejano (el refresh rota hacia expiraciones mayores).
-  const accountExpiry = account.expiresAt ?? 0;
-  const profileExpiry = profile.expiresAt ?? 0;
-  if (accountExpiry === profileExpiry) {
-    return { action: 'none', reason: 'ambos lados tienen el mismo token vigente' };
-  }
-  const accountWins = accountExpiry > profileExpiry;
-  return {
-    action: 'copy',
-    from: accountWins ? account.path : profile.path,
-    to: accountWins ? profile.path : account.path,
-    reason: `el token de ${accountWins ? 'la cuenta' : 'el perfil privado'} caduca mas tarde`,
-  };
-}
-
-// Motivo cuando el lado perdedor no sirve: distingue "no existe" de "existe pero esta inservible"
-// (el vaciado del CLI), que es informacion util en el log.
-function describeOnlyUsable(loser: CredentialsSide): string {
-  if (!loser.exists) return `"${loser.path}" no existe`;
-  return `"${loser.path}" existe pero no tiene un token utilizable (vaciado o incompleto)`;
-}
-
 // --- Frontera de parseo ---------------------------------------------------------------------------
 
 // Metadata del fichero que la capa de FS aporta al parseo (DI: nada de FS aqui dentro).

@@ -11,7 +11,7 @@ import type { SessionLogFn } from '../engine/agentSession';
 import type { RewindCoordinator } from '../coordination/rewindCoordinator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { MAX_LINE_BYTES, NdjsonFramer } from './ndjsonFramer';
-import { BypassPermissionsBlockedError, TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
+import { BypassPermissionsBlockedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
 import type { HostControl } from './hostControl';
 import type { HostMode } from './hostServer';
 import { decideStop, type HostStopResult } from './hostStop';
@@ -274,6 +274,7 @@ export class HostConnection {
       case 'session.send': return sessions.send(params as SendMessageParams);
       case 'session.interrupt': return { queued: sessions.interrupt((params as { sessionId: string }).sessionId) };
       case 'session.answerPermission': {
+        this.deps.control.guardPermissionAnswer();
         const answer = params as { sessionId: string; requestId: string; decision: PermissionDecision };
         return sessions.answerPermission(answer.sessionId, answer.requestId, answer.decision);
       }
@@ -450,6 +451,7 @@ const OWN_ERROR_CODES: readonly (readonly [abstract new (...args: never[]) => Er
   [UnknownConversationError, HostErrorCode.UnknownConversation],
   [UnsupportedMethodError, HostErrorCode.Unsupported],
   [BypassPermissionsBlockedError, HostErrorCode.PermissionModeBlocked],
+  [PermissionAnswersDisabledError, HostErrorCode.PermissionAnswersDisabled],
 ];
 
 // Un UserFacingError lleva marca y JSON tras el castellano: al cliente solo le llega el texto limpio, en el idioma que pidió (1.6) o en castellano.

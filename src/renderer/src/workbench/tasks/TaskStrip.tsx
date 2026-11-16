@@ -8,7 +8,7 @@ import { reportActionError } from '../notificationStore';
 import { usePaneTabId } from '../paneContext';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useTaskStore } from './taskStore';
-import { planOf, taskOfTab, taskPhase, taskTitle } from './taskView';
+import { planOf, taskDisplayName, taskOfTab, taskPhase } from './taskView';
 import type { Block } from '../types';
 
 const NO_BLOCKS: readonly Block[] = [];
@@ -42,7 +42,7 @@ function StripBody({ task, tabId }: { readonly task: TaskRecord; readonly tabId:
     <div data-task-strip="true" className="flex flex-col gap-[6px] border-b border-mg-border p-[6px_14px] text-[11px] text-mg-body">
       <div className="flex min-w-0 items-center gap-[8px]">
         <button onClick={() => setOpen(!open)} aria-expanded={open} aria-label={open ? t('tasks.strip.collapse') : t('tasks.strip.expand')} className="text-mg-icon hover:text-mg-body">{open ? '▾' : '▸'}</button>
-        <span className="min-w-0 flex-1 truncate font-semibold" title={taskTitle(task.goal)}>{taskTitle(task.goal)}</span>
+        <span className="min-w-0 flex-1 truncate font-semibold" title={taskDisplayName(task)}>{taskDisplayName(task)}</span>
         <span data-task-phase={phase} title={phase === 'verified' ? t('tasks.deliverable.okHint') : undefined} className="text-[10.5px] text-mg-muted">{t(`tasks.phase.${phase}`)}</span>
         {plan !== null && <span className="text-[10.5px] text-mg-muted">{done}/{plan.length}</span>}
       </div>

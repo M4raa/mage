@@ -1,4 +1,6 @@
 import { artifactCardFrom } from './artifactView';
+import { delegationCardFrom } from './delegationView';
+import { groupSessionResults } from './sessionResultGroups';
 import { isSubagentRunning, SUBAGENT_STATUS, subagentStatusLabel } from './engineBlocks';
 import { formatElapsed } from './thinkingStatus';
 import type { IconName } from './components/Icon';
@@ -26,16 +28,21 @@ export function isChatBlock(block: Block): boolean {
     case 'permission':
       return block.state === 'pending';
     case 'tool':
-      return artifactCardFrom(block) !== null;
+      return hasChatCard(block);
     default:
       return false;
   }
 }
 
+// Una herramienta con tarjeta propia en el hilo: un artifact publicado o una subsesión creada.
+function hasChatCard(block: Block): boolean {
+  return artifactCardFrom(block) !== null || delegationCardFrom(block) !== null;
+}
+
 // Una herramienta del agente PRINCIPAL que fallo deja una linea en el chat (D22); las de un subagente
 // no, su fallo lo cuenta el resumen de sus subagentes.
 export function isFailedMainTool(block: Block): block is ToolBlock {
-  return block.kind === 'tool' && block.isError && block.parentToolUseId === null && artifactCardFrom(block) === null;
+  return block.kind === 'tool' && block.isError && block.parentToolUseId === null && !hasChatCard(block);
 }
 
 export type ChatRow =
@@ -43,7 +50,9 @@ export type ChatRow =
   | { readonly kind: 'block'; readonly block: Block; readonly repeat?: number }
   | { readonly kind: 'tool-failed'; readonly block: ToolBlock }
   // Los subagentes que lanzo el orquestador en un turno, en UNA linea (D21), donde salio el primero.
-  | { readonly kind: 'subagents'; readonly id: string; readonly blocks: readonly SubagentBlock[] };
+  | { readonly kind: 'subagents'; readonly id: string; readonly blocks: readonly SubagentBlock[] }
+  // Las respuestas de subsesión recibidas SEGUIDAS, en una línea plegada «Recibió N mensajes».
+  | { readonly kind: 'session-results'; readonly id: string; readonly blocks: readonly Extract<Block, { kind: 'user' }>[] };
 
 export function chatRows(blocks: readonly Block[]): readonly ChatRow[] {
   const rows: ChatRow[] = [];
@@ -62,7 +71,7 @@ export function chatRows(blocks: readonly Block[]): readonly ChatRow[] {
       if (!mergeRepeatedError(rows, block)) rows.push({ kind: 'block', block });
     }
   }
-  return rows;
+  return groupSessionResults(rows);
 }
 
 // Un error igual (mismo mensaje y mismo comando denegado) que la ULTIMA fila visible se funde con ella
@@ -78,7 +87,7 @@ function mergeRepeatedError(rows: ChatRow[], block: Block): boolean {
 // Lo que va al panel: todo lo que no es del chat, menos un permiso que aun espera (ese esta en el chat) y
 // una pregunta pendiente (esa esta en el dock).
 export function isActivityStep(block: Block): boolean {
-  if (block.kind === 'tool') return artifactCardFrom(block) === null;
+  if (block.kind === 'tool') return !hasChatCard(block);
   if (block.kind === 'permission' || block.kind === 'question') return block.state !== 'pending';
   return block.kind === 'thinking' || block.kind === 'subagent';
 }

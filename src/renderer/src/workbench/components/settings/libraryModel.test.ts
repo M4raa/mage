@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LibraryAccountView, LibraryBlock, LibraryEntryView, LibraryInstallView, LibraryKind, LibraryView } from '@shared/ipc';
-import { blockKey, canInstallKeyed, cardActions, filterEntries, indexInstalls, installKey, keyedFieldsFor, kindFilters, resultKey, selectedAccount, shortCommit } from './libraryModel';
+import { blockKey, canInstallKeyed, cardActions, embeddedAccount, entriesOfKinds, filterEntries, indexInstalls, installKey, keyedFieldsFor, kindFilters, resultKey, selectedAccount, shortCommit } from './libraryModel';
 
 const entry = (id: string, kind: LibraryKind): LibraryEntryView =>
   ({ id, kind, title: id, summary: '', publisher: '', version: '1', engines: [], platforms: [], scopes: ['user'] }) as unknown as LibraryEntryView;
@@ -126,5 +126,39 @@ describe('canInstallKeyed', () => {
 
   it('canInstallKeyed_sinCampos_true', () => {
     expect(canInstallKeyed([], {})).toBe(true);
+  });
+});
+
+describe('entriesOfKinds', () => {
+  it('entriesOfKinds_sinTipos_mismaLista', () => {
+    const entries = [entry('a', 'skill')];
+
+    expect(entriesOfKinds(entries, undefined)).toBe(entries);
+  });
+
+  it('entriesOfKinds_soloSkill_lasSkills', () => {
+    const entries = [entry('a', 'skill'), entry('b', 'mcp')];
+
+    expect(entriesOfKinds(entries, ['skill']).map((e) => e.id)).toEqual(['a']);
+  });
+});
+
+describe('embeddedAccount', () => {
+  it('embeddedAccount_sinFija_laElegida', () => {
+    const view = viewOf([account('/a'), account('/b')]);
+
+    expect(embeddedAccount(view, undefined, '/b')?.accountDir).toBe('/b');
+  });
+
+  it('embeddedAccount_fijaQueExiste_esa', () => {
+    const view = viewOf([account('/a'), account('/b')]);
+
+    expect(embeddedAccount(view, '/b', '/a')?.accountDir).toBe('/b');
+  });
+
+  it('embeddedAccount_fijaQueNoExiste_null', () => {
+    const view = viewOf([account('/a')]);
+
+    expect(embeddedAccount(view, '/z', '/a')).toBeNull();
   });
 });

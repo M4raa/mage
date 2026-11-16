@@ -2,12 +2,12 @@ import { useMemo } from 'react';
 import { codexAppsErrorText, useCodexAppsStore } from '../../codexAppsStore';
 import { useMcpStore } from '../../mcpStore';
 import type { CodexAccountMetadata, McpStatusByAccount } from '@shared/mcp';
-import { buildClaudeConnectorGroups, CLAUDE_AI_CONNECTORS_URL, describeCheckedAt, type McpConnectorGroup, type McpConnectorRow } from '../../mcpView';
+import { buildClaudeConnectorGroups, CLAUDE_AI_CONNECTORS_URL, connectorColumns, describeCheckedAt, type McpConnectorGroup, type McpConnectorRow } from '../../mcpView';
 import { useWorkbenchStore } from '../../workbenchStore';
 import { Icon } from '../Icon';
 import { McpAuthActions } from './McpSection';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS } from './mcpStyles';
-import { McpRow, MetaChip } from './McpRow';
+import { McpRow, MetaChip, TONE_DOT } from './McpRow';
 import { useT } from '../../../i18n/uiLanguage';
 import type { Translate } from '@shared/i18n/translator';
 
@@ -118,11 +118,7 @@ function ClaudeAccountGroup({ group }: { readonly group: McpConnectorGroup }): R
           {t('mcp.connectors.claudeAiToggle')}
         </label>
       </div>
-      <div role="list" className="flex flex-col border-t border-mg-border-subtle">
-        {group.rows.map((row) => (
-          <ConnectorRowView key={row.key} row={row} accountId={group.accountId} />
-        ))}
-      </div>
+      <ConnectorTable rows={group.rows} accountId={group.accountId} />
       <span className="text-[10px] text-mg-muted" data-mcp-checked-at="true">
         {describeCheckedAt(group.checkedAt, new Date())}
       </span>
@@ -130,18 +126,66 @@ function ClaudeAccountGroup({ group }: { readonly group: McpConnectorGroup }): R
   );
 }
 
-// P-038 V12: la misma fila que en Servidores y Extensiones.
-function ConnectorRowView({ row, accountId }: { readonly row: McpConnectorRow; readonly accountId: string }): React.JSX.Element {
+// TABLA como la de Claude Desktop. Conserva los atributos que mide verify:gui.
+const CHIP_LABELS = { custom: 'capabilities.connectors.chip.custom', included: 'capabilities.connectors.chip.included' } as const;
+const HEAD_CELL = 'py-[5px] pr-[10px] font-semibold';
+
+function ConnectorTable({ rows, accountId }: { readonly rows: readonly McpConnectorRow[]; readonly accountId: string }): React.JSX.Element {
   const t = useT();
-  const status = (
-    <>
-      <span data-mcp-status="true">{row.statusLabel}</span>
-      {row.cliName !== null && <McpAuthActions serverName={row.cliName} accountDirs={row.needsAuth ? [accountId] : []} label={t('mcp.connectors.connect')} />}
-    </>
-  );
   return (
-    <div role="listitem">
-      <McpRow name={row.name} meta={<MetaChip>{row.typeLabel}</MetaChip>} status={status} tone={row.tone} dataAttrs={{ 'data-mcp-connector': row.name, 'data-mcp-connector-kind': row.kind }} />
+    <table className="w-full border-collapse text-[11px]">
+      <thead>
+        <tr className="border-b border-mg-border-subtle text-left text-[10px] uppercase tracking-[.06em] text-mg-ter">
+          <th scope="col" className={HEAD_CELL}>{t('capabilities.connectors.col.connector')}</th>
+          <th scope="col" className={HEAD_CELL}>{t('capabilities.connectors.col.type')}</th>
+          <th scope="col" className={HEAD_CELL}>{t('capabilities.connectors.col.auth')}</th>
+          <th scope="col" className={`${HEAD_CELL} text-right`}>{t('capabilities.connectors.col.status')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <ConnectorTableRow key={row.key} row={row} accountId={accountId} />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ConnectorTableRow({ row, accountId }: { readonly row: McpConnectorRow; readonly accountId: string }): React.JSX.Element {
+  const t = useT();
+  const { chip, individualAuth } = connectorColumns(row.kind);
+  return (
+    <tr data-mcp-connector={row.name} data-mcp-connector-kind={row.kind} className="border-b border-mg-border-subtle align-top">
+      <td className="py-[7px] pr-[10px]">
+        <span className="flex items-center gap-[8px]">
+          <span aria-hidden="true" data-mcp-tone={row.tone} className={`h-[8px] w-[8px] flex-none rounded-full ${TONE_DOT[row.tone]}`} />
+          <span className="font-semibold text-mg-body">{row.name}</span>
+        </span>
+      </td>
+      <td className="py-[7px] pr-[10px] text-mg-sec">
+        <span className="flex flex-wrap items-center gap-[4px]">
+          {row.typeLabel}
+          {chip !== null && <MetaChip>{t(CHIP_LABELS[chip])}</MetaChip>}
+        </span>
+      </td>
+      <td className="py-[7px] pr-[10px] text-mg-sec">{individualAuth ? t('capabilities.connectors.auth.individual') : '—'}</td>
+      <td className="py-[7px] text-right">
+        <ConnectorStatus row={row} accountId={accountId} />
+      </td>
+    </tr>
+  );
+}
+
+function ConnectorStatus({ row, accountId }: { readonly row: McpConnectorRow; readonly accountId: string }): React.JSX.Element {
+  const t = useT();
+  const ok = row.tone === 'ok';
+  return (
+    <div className="flex flex-col items-end gap-[3px] text-[10.5px] text-mg-sec">
+      <span className="flex items-center gap-[4px]">
+        {ok && <span aria-hidden="true" className="text-mg-diff-add">✓</span>}
+        <span data-mcp-status="true" className={ok ? 'sr-only' : ''}>{row.statusLabel}</span>
+      </span>
+      {row.cliName !== null && <McpAuthActions serverName={row.cliName} accountDirs={row.needsAuth ? [accountId] : []} label={t('mcp.connectors.connect')} />}
     </div>
   );
 }

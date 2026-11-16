@@ -5,13 +5,13 @@
 import type { AskQuestion } from '@shared/askUserQuestion';
 import type { PermissionScope, SessionPlugin } from '@shared/events';
 import type { ArtifactDraft, ArtifactPublication } from '@shared/artifacts';
+import type { DelegationCard, DelegationDraft } from '@shared/delegationCards';
 import type { MentionCandidate } from '@shared/mentions';
 import type { DiffLine } from './diffLines';
 import type { ToolClass } from './toolClassify';
 import type { SubagentStatus } from './engineBlocks';
 import type { FileTouch } from './fileTouches';
 import type { LoginStatus } from '@shared/accounts';
-import type { ConversationPrivacy } from '@shared/state';
 
 // Paleta acentual de una cuenta. El acento tine avatar, border de pestana, chips, punto del agente
 // y fill de sus barras de uso — nada mas (regla del handoff).
@@ -70,10 +70,7 @@ export interface Tab {
   readonly projectId?: string;
   // Historial de otra conversación (de otro proveedor) con el que arranca esta; se entrega UNA vez, al crear la sesión.
   readonly importedContext?: string;
-  // Privacidad de la conversacion (M2.6). 'shared' (por defecto) usa el pozo comun; 'private' usa el
-  // perfil privado (mage-private) de la cuenta con su mismo login. Factura SIEMPRE la cuenta activa.
-  readonly privacy: ConversationPrivacy;
-  // Config dir EFECTIVO con el que se lanzo/reanuda la sesion (cuenta o perfil privado). Lo fija
+  // Config dir con el que se lanzo/reanuda la sesion (el de la cuenta). Lo fija
   // ensureSession al crear la sesion; se usa como accountDir al abrir transcripciones/memoria.
   readonly resolvedConfigDir?: string;
   // sessionId de una conversacion previa a reanudar (M2.5), fijado al restaurar el workspace. Se usa
@@ -81,6 +78,8 @@ export interface Tab {
   readonly resumeSessionId?: string;
   // Nivel de esfuerzo (--effort, M2.4). undefined -> default del CLI. Fijado al crear la pestana.
   readonly effort?: string;
+  // Ultracode (solo Claude): ajuste de ARRANQUE, como el esfuerzo. undefined -> apagado.
+  readonly ultracode?: boolean;
   // Tope de gasto (--max-budget-usd, M2.4) en CENTAVOS ENTEROS. undefined -> sin tope.
   readonly maxBudgetUsdCents?: number;
   // Modo de permiso (M2.6). undefined -> 'default'. Cambia con el ciclo shift+tab / chip del PromptBar.
@@ -197,6 +196,11 @@ export type Block =
       // publicado, y entonces se pinta la caja de tool normal en vez de una tarjeta a medias.
       readonly artifact: ArtifactPublication | null;
       readonly artifactDraft: ArtifactDraft | null;
+      // Subsesión creada con `mage_create_session`, cuando esta tool lo es: igual que el artifact, YA VALIDADA (nunca
+      // el input crudo) y sin `conversationId` mientras no hay resultado; entonces se pinta la caja de tool normal.
+      // Opcionales: un bloque anterior a esto (o sembrado por el harness) no la lleva.
+      readonly delegation?: DelegationCard | null;
+      readonly delegationDraft?: DelegationDraft | null;
       // Subagente que la lanzo (`tool_use_id` de su Task/Agent); null en el agente principal (P-026 3.4).
       readonly parentToolUseId: string | null;
       // Texto del plan de un ExitPlanMode (input.plan). Ausente en cualquier otra herramienta.

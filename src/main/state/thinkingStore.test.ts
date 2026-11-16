@@ -181,6 +181,59 @@ describe('ThinkingStore', () => {
     expect(() => new ThinkingStore({ ...fake, removeFile: remove }).forget('no-existe')).not.toThrow();
     expect(remove).not.toHaveBeenCalled();
   });
+
+  // Rebobinar (punto 47): los textos de la rama descartada salen del FINAL del fichero.
+  const FIVE = ['p0', 'p1', 'p2', 'p3', 'p4'].map((t) => `${JSON.stringify(t)}\n`).join('');
+
+  it('dropLast_dosDeCinco_quitaLosUltimos', () => {
+    const { fake } = deps({ '/data/thinking/s.jsonl': FIVE });
+    const s = new ThinkingStore(fake);
+
+    s.dropLast('s', 2);
+
+    expect(s.read('s')).toEqual(['p0', 'p1', 'p2']);
+  });
+
+  it('dropLast_masQueLosGuardados_dejaVacio', () => {
+    const { fake } = deps({ '/data/thinking/s.jsonl': FIVE });
+    const s = new ThinkingStore(fake);
+
+    s.dropLast('s', 9);
+
+    expect(s.read('s')).toEqual([]);
+  });
+
+  it('dropLast_cero_noReescribe', () => {
+    const { fake } = deps({ '/data/thinking/s.jsonl': FIVE });
+    const s = new ThinkingStore({ ...fake, writeFile: () => { throw new Error('no deberia reescribir'); } });
+
+    expect(() => s.dropLast('s', 0)).not.toThrow();
+    expect(s.read('s')).toHaveLength(5);
+  });
+
+  it('dropLast_sinFichero_noHaceNada', () => {
+    const { fake } = deps();
+    const s = new ThinkingStore({ ...fake, writeFile: () => { throw new Error('no deberia reescribir'); } });
+
+    expect(() => s.dropLast('no-existe', 2)).not.toThrow();
+  });
+
+  it('dropLast_negativo_lanza', () => {
+    const { fake } = deps({ '/data/thinking/s.jsonl': FIVE });
+
+    expect(() => new ThinkingStore(fake).dropLast('s', -1)).toThrow('-1');
+  });
+
+  it('dropLast_despuesAppend_sigueDetras', () => {
+    const { fake } = deps();
+    const s = new ThinkingStore(fake);
+    ['t0', 't1', 't2'].forEach((t) => s.append('s', t));
+
+    s.dropLast('s', 1);
+    s.append('s', 'x');
+
+    expect(s.read('s')).toEqual(['t0', 't1', 'x']);
+  });
 });
 
 const delta = (text: string): MageEvent => ({ kind: 'thinking_delta', text });

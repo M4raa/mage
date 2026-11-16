@@ -9,6 +9,7 @@ import {
   DELEGATION_DEPTH_MAX,
   DELEGATION_DEPTH_MIN,
   DEFAULT_PERMISSION_MODES,
+  IDLE_CLOSE_LIMITS,
   IMPORTED_CONTEXT_LIMITS,
   KEEP_ALIVE_MAX_PAUSE_MAX,
   KEEP_ALIVE_MAX_PAUSE_MIN,
@@ -121,6 +122,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   chatProjects: z.array(CHAT_PROJECT_SCHEMA).catch([]),
   // Ids de conversación fijadas/archivadas: un valor que no sea array de cadenas no vacías cae a [].
   pinnedConversations: z.array(z.string().min(1)).catch([]),
+  // Orden manual de las carpetas del lateral (claves de grupo): mismo trato tolerante.
+  projectOrder: z.array(z.string().min(1)).catch([]),
   archivedConversations: z.array(z.string().min(1)).catch([]),
   // theme opcional en disco: ficheros antiguos (sin la clave) y valores invalidos caen a 'dark' via
   // .catch (frontera laxa; el default preserva el aspecto oscuro actual).
@@ -133,6 +136,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   // widgetEnabled opcional en disco: ficheros antiguos (sin la clave) o valores invalidos caen a
   // false via .catch (widget apagado por defecto, opt-in).
   widgetEnabled: z.boolean().catch(false),
+  // Sin la clave (ficheros anteriores a las tareas programadas) o con basura, apagado.
+  scheduledTasksKeepAwake: z.boolean().catch(false),
   // Igual que el widget: sin la clave (ficheros anteriores a la 0.1.5) o con basura, apagado.
   mageMcpEnabled: z.boolean().catch(false),
   // Igual de tolerante: un fichero de una version anterior no la trae, y un valor fuera de rango (o
@@ -195,6 +200,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   claudeAiConnectorsOff: z.array(z.string().min(1)).catch([]),
   // D5: Artifact. Ausente o basura -> false: el lado que no publica nada.
   artifactEnabled: z.boolean().catch(false),
+  // D3: contestar permisos desde la terminal. Ausente o basura -> false: el lado que no deja contestar.
+  hostPermissionAnswers: z.boolean().catch(false),
   // Aviso de gh descartado (DA-3). Ausente o basura -> false: el lado que vuelve a avisar.
   ghNoticeDismissed: z.boolean().catch(false),
   // Auto-archivar al cerrarse el PR. Ausente o basura -> false: no se cierra nada solo.
@@ -213,6 +220,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   // Idioma (F3). Ausente o basura -> ausente: «sin preferencia», que hereda la inicial o sigue al sistema.
   uiLanguage: z.enum(UI_LANGUAGE_PREFERENCES).optional().catch(undefined),
   keepAlive: KEEP_ALIVE_SCHEMA,
+  // Ausente o basura -> 30 (el valor por defecto).
+  idleCloseMinutes: z.number().int().min(IDLE_CLOSE_LIMITS.min).max(IDLE_CLOSE_LIMITS.max).catch(IDLE_CLOSE_LIMITS.default),
   delegation: DELEGATION_SCHEMA,
 });
 

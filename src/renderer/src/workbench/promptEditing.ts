@@ -48,6 +48,30 @@ export function continueListOnNewline(state: TextState): TextState | null {
   };
 }
 
+// Longitud de la indentacion y del marcador CON su espaciado («  3. » → 2 y 3), o null si la linea no es un item.
+function listMarkerSpan(line: string): { readonly indent: number; readonly marker: number } | null {
+  const unordered = UNORDERED_ITEM.exec(line);
+  if (unordered !== null) return { indent: (unordered[1] ?? '').length, marker: `${unordered[2]}${unordered[3]}`.length };
+  const ordered = ORDERED_ITEM.exec(line);
+  if (ordered !== null) return { indent: (ordered[1] ?? '').length, marker: `${ordered[2]}${ordered[3]}${ordered[4]}`.length };
+  return null;
+}
+
+// Retroceso justo detras del marcador de una lista («2. », «- »): borra el marcador entero (y su espaciado) de
+// una vez, conservando la indentacion. Null si no aplica: seleccion no colapsada, linea que no es un item o
+// cursor que no esta EXACTAMENTE al final del marcador (el caller deja el Retroceso normal).
+export function removeListMarker(state: TextState): TextState | null {
+  const { value, selectionStart, selectionEnd } = state;
+  if (selectionStart !== selectionEnd) return null;
+  const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
+  const lineEndRaw = value.indexOf('\n', selectionStart);
+  const span = listMarkerSpan(value.slice(lineStart, lineEndRaw === -1 ? value.length : lineEndRaw));
+  if (span === null) return null;
+  const markerStart = lineStart + span.indent;
+  if (selectionStart !== markerStart + span.marker) return null;
+  return { value: value.slice(0, markerStart) + value.slice(selectionStart), selectionStart: markerStart, selectionEnd: markerStart };
+}
+
 // Datos de un item de lista ya parseado: indentacion, contenido tras el marcador y el marcador que
 // tocaria en la linea siguiente (bullet igual; ordinal +1, conservando el delimitador y el espaciado).
 interface ParsedListItem {

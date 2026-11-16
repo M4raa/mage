@@ -47,7 +47,7 @@ function world(listTurns: (home: string, threadId: string) => Promise<readonly C
     removeFile: (path) => rmSync(path, { force: true }),
     nowMs: () => Date.parse('2026-10-07T10:00:00Z'),
     newId: () => `00000000-0000-4000-8000-${String((counter += 1)).padStart(12, '0')}`,
-    claude: { effectiveDir: (dir) => dir, deleteConversation: (ref) => { deleted.push(ref.sessionId); rmSync(resolveTranscriptPath(ref.accountDir, ref.cwd, ref.sessionId), { force: true }); } },
+    claude: { deleteConversation: (ref) => { deleted.push(ref.sessionId); rmSync(resolveTranscriptPath(ref.accountDir, ref.cwd, ref.sessionId), { force: true }); } },
     codex: { homeOf: (dir) => dir, history: codexHistory, listTurns, deleteThread: async (home, id) => { deleted.push(id); const path = codexHistory.findRollout(home, id); if (path !== null) rmSync(path); } },
     agy: { profileOf: (dir) => dir, externalOf: (dir) => (dir === dirs.agyA ? [dirs.agyReal] : []), history: agyHistory, writeDb: writeAgyConversationDb },
   });
@@ -80,11 +80,11 @@ describe('migración de punta a punta', () => {
     const w = world();
     seedCodex(w.dirs.codexA);
 
-    const result = await w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.claudeB, destProvider: 'claude' });
+    const result = await w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, destAccountDir: w.dirs.claudeB, destProvider: 'claude' });
 
     const file = resolveTranscriptPath(w.dirs.claudeB, CWD, result.sessionId);
     expect(existsSync(file)).toBe(true);
-    const back = await w.endpoints.claude.source.read({ accountDir: w.dirs.claudeB, sessionId: result.sessionId, cwd: CWD, privacy: 'shared' });
+    const back = await w.endpoints.claude.source.read({ accountDir: w.dirs.claudeB, sessionId: result.sessionId, cwd: CWD });
     expect(back.items.map((i) => i.kind)).toEqual(['user', 'tool', 'tool', 'assistant']);
     expect(w.codexHistory.findRollout(w.dirs.codexA, THREAD)).toBeNull();
     expect(w.deleted).toContain(THREAD);
@@ -97,7 +97,7 @@ describe('migración de punta a punta', () => {
     mkdirSync(dirname(source), { recursive: true });
     writeFileSync(source, claudeTranscriptText({ cwd: CWD, title: 't', items: [{ kind: 'user', text: 'hola agy', atMs: null }, { kind: 'assistant', text: 'hola', atMs: null }] }, { sessionId, newId: () => `u-${Math.random()}`, clock: { baseMs: 0 } }));
 
-    const result = await w.service.migrate({ sourceAccountDir: w.dirs.claudeA, sourceProvider: 'claude', sessionId, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.agyB, destProvider: 'agy' });
+    const result = await w.service.migrate({ sourceAccountDir: w.dirs.claudeA, sourceProvider: 'claude', sessionId, cwd: CWD, destAccountDir: w.dirs.agyB, destProvider: 'agy' });
 
     expect(w.agyHistory.findDb(w.dirs.agyB, result.sessionId)).not.toBeNull();
     expect(w.agyHistory.list(w.dirs.agyB, w.dirs.agyB)[0]).toMatchObject({ title: 'hola agy', providerId: 'agy' });
@@ -107,10 +107,10 @@ describe('migración de punta a punta', () => {
   it('agyACodex_laConversacionDeAgySeEscribeComoRolloutYSeRetiraDeAgy', async () => {
     const w = world();
     const sessionId = 'aaaaaaaa-0000-4000-8000-000000000001';
-    w.endpoints.agy.sink.write({ cwd: CWD, title: 't', items: [{ kind: 'user', text: 'pregunta', atMs: null }, { kind: 'assistant', text: 'respuesta', atMs: null }] }, { accountDir: w.dirs.agyA, privacy: 'shared' });
+    w.endpoints.agy.sink.write({ cwd: CWD, title: 't', items: [{ kind: 'user', text: 'pregunta', atMs: null }, { kind: 'assistant', text: 'respuesta', atMs: null }] }, { accountDir: w.dirs.agyA });
     const [created] = w.agyHistory.list(w.dirs.agyA, w.dirs.agyA);
 
-    const result = await w.service.migrate({ sourceAccountDir: w.dirs.agyA, sourceProvider: 'agy', sessionId: created!.sessionId, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.codexB, destProvider: 'codex' });
+    const result = await w.service.migrate({ sourceAccountDir: w.dirs.agyA, sourceProvider: 'agy', sessionId: created!.sessionId, cwd: CWD, destAccountDir: w.dirs.codexB, destProvider: 'codex' });
 
     expect(sessionId).toBeTruthy();
     expect(w.codexHistory.list(w.dirs.codexB)[0]).toMatchObject({ sessionId: result.sessionId, title: 'pregunta' });
@@ -121,7 +121,7 @@ describe('migración de punta a punta', () => {
     const w = world();
     seedCodex(w.dirs.codexA);
 
-    const result = await w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.codexB, destProvider: 'codex' });
+    const result = await w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, destAccountDir: w.dirs.codexB, destProvider: 'codex' });
 
     expect(result.sessionId).toBe(THREAD);
     const copied = w.codexHistory.findRollout(w.dirs.codexB, THREAD);
@@ -135,7 +135,7 @@ describe('migración de punta a punta', () => {
     seedCodex(w.dirs.codexA);
     seedCodex(w.dirs.codexB);
 
-    await expect(w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.codexB, destProvider: 'codex' }))
+    await expect(w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, destAccountDir: w.dirs.codexB, destProvider: 'codex' }))
       .rejects.toThrow('ya tiene la conversación');
 
     expect(w.codexHistory.findRollout(w.dirs.codexA, THREAD)).not.toBeNull();
@@ -148,7 +148,7 @@ describe('migración de punta a punta', () => {
       { conversationId: id, trajectoryId: 'traj', newId: () => 'step-id', clock: { baseMs: 0 } });
     writeAgyConversationDb(join(w.dirs.agyReal, '.gemini', 'antigravity-cli', 'conversations', `${id}.db`), content);
 
-    const result = await w.service.migrate({ sourceAccountDir: w.dirs.agyA, sourceProvider: 'agy', sessionId: id, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.codexB, destProvider: 'codex' });
+    const result = await w.service.migrate({ sourceAccountDir: w.dirs.agyA, sourceProvider: 'agy', sessionId: id, cwd: CWD, destAccountDir: w.dirs.codexB, destProvider: 'codex' });
 
     expect(w.codexHistory.list(w.dirs.codexB)[0]).toMatchObject({ sessionId: result.sessionId, title: 'del cli real' });
     expect(w.agyHistory.findDb(w.dirs.agyReal, id)).not.toBeNull();
@@ -159,9 +159,9 @@ describe('migración de punta a punta', () => {
     const w = world(listTurns);
     seedCodex(w.dirs.codexA);
 
-    const result = await w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.claudeB, destProvider: 'claude' });
+    const result = await w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, destAccountDir: w.dirs.claudeB, destProvider: 'claude' });
 
-    const back = await w.endpoints.claude.source.read({ accountDir: w.dirs.claudeB, sessionId: result.sessionId, cwd: CWD, privacy: 'shared' });
+    const back = await w.endpoints.claude.source.read({ accountDir: w.dirs.claudeB, sessionId: result.sessionId, cwd: CWD });
     expect(back.items.map((i) => i.kind)).toEqual(['user', 'tool', 'tool', 'assistant']);
     expect(listTurns).not.toHaveBeenCalled();
   });
@@ -172,9 +172,9 @@ describe('migración de punta a punta', () => {
     seedCodex(w.dirs.codexA);
     seedSegment(w.dirs.codexA);
 
-    const result = await w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.claudeB, destProvider: 'claude' });
+    const result = await w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, destAccountDir: w.dirs.claudeB, destProvider: 'claude' });
 
-    const back = await w.endpoints.claude.source.read({ accountDir: w.dirs.claudeB, sessionId: result.sessionId, cwd: CWD, privacy: 'shared' });
+    const back = await w.endpoints.claude.source.read({ accountDir: w.dirs.claudeB, sessionId: result.sessionId, cwd: CWD });
     expect(back.items.map((i) => i.kind)).toEqual(['user', 'assistant']);
     expect(back.items[0]).toMatchObject({ text: 'Turno vigente' });
     expect(listTurns).toHaveBeenCalledWith(w.dirs.codexA, THREAD);
@@ -186,11 +186,11 @@ describe('migración de punta a punta', () => {
     seedCodex(w.dirs.codexA);
     seedSegment(w.dirs.codexA);
 
-    const result = await w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.codexB, destProvider: 'codex' });
+    const result = await w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, destAccountDir: w.dirs.codexB, destProvider: 'codex' });
 
     expect(result.sessionId).not.toBe(THREAD);
     expect(w.codexHistory.findRollout(w.dirs.codexB, THREAD)).toBeNull();
-    const back = await w.endpoints.codex.source.read({ accountDir: w.dirs.codexB, sessionId: result.sessionId, cwd: CWD, privacy: 'shared' });
+    const back = await w.endpoints.codex.source.read({ accountDir: w.dirs.codexB, sessionId: result.sessionId, cwd: CWD });
     expect(back.items.map((i) => i.kind)).toEqual(['user', 'assistant']);
     expect(back.items[0]).toMatchObject({ text: 'Turno vigente' });
   });
@@ -200,7 +200,7 @@ describe('migración de punta a punta', () => {
     seedCodex(w.dirs.codexA);
     seedSegment(w.dirs.codexA);
 
-    await expect(w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.claudeB, destProvider: 'claude' }))
+    await expect(w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, destAccountDir: w.dirs.claudeB, destProvider: 'claude' }))
       .rejects.toThrow('Codex rechazó thread/turns/list');
 
     expect(existsSync(join(w.dirs.claudeB, 'projects'))).toBe(false);
@@ -216,7 +216,7 @@ describe('migrationEndpoints — errores de cara al usuario', () => {
     seedCodex(w.dirs.codexB);
 
     const err: unknown = await w.service
-      .migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.codexB, destProvider: 'codex' })
+      .migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, destAccountDir: w.dirs.codexB, destProvider: 'codex' })
       .catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(UserFacingError);
@@ -227,7 +227,7 @@ describe('migrationEndpoints — errores de cara al usuario', () => {
     const w = world();
 
     const err: unknown = await w.service
-      .migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.codexB, destProvider: 'codex' })
+      .migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, destAccountDir: w.dirs.codexB, destProvider: 'codex' })
       .catch((e: unknown) => e);
 
     expect((err as UserFacingError).localized).toEqual({ key: 'errors.conversations.sourceMissing', values: { provider: 'Codex', id: THREAD } });

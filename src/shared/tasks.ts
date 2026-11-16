@@ -1,11 +1,12 @@
 // Modo de tareas (F8): tipos compartidos y análisis puro de los bloques que el modelo escribe al terminar.
 // Sin dependencias de Node: lo importan main y el renderer.
 import { z } from 'zod';
+import type { TaskSchedule } from './taskSchedule';
 
 export type TaskProvider = 'claude' | 'codex';
 export type TaskLanguage = 'es' | 'en';
 
-export const TASK_LIMITS = { goalMaxChars: 8000, maxFolders: 10, maxDocuments: 20, maxCapabilities: 30, maxDeliverables: 200, maxPathChars: 1024 } as const;
+export const TASK_LIMITS = { goalMaxChars: 8000, maxFolders: 10, maxDocuments: 20, maxCapabilities: 30, maxDeliverables: 200, maxPathChars: 1024, nameMaxChars: 80, runErrorMaxChars: 500 } as const;
 export const TASK_PLAN_FENCE = 'mage-plan';
 export const TASK_DELIVERABLES_FENCE = 'mage-deliverables';
 
@@ -23,6 +24,8 @@ export interface DeliverableCheck {
 export type TaskVerdict = 'pending' | 'verified' | 'incomplete';
 
 export interface TaskDraft {
+  readonly name: string; // obligatorio en toda tarea nueva (1–80); los registros antiguos traen ''
+  readonly schedule: TaskSchedule | null; // null = sin programar (se ejecuta a mano)
   readonly goal: string;
   readonly language: TaskLanguage;
   readonly provider: TaskProvider;
@@ -32,7 +35,25 @@ export interface TaskDraft {
   readonly capabilities: readonly string[]; // títulos legibles de capacidades instaladas elegidas
 }
 
+export interface TaskRunRecord {
+  readonly atMs: number;
+  readonly scheduledForMs: number | null; // null = ejecutada a mano
+  readonly late: boolean; // llegó con más margen del permitido: Mage estaba cerrado
+  readonly outcome: 'started' | 'failed';
+  readonly error: string | null;
+}
+
+// SKILL.md en bruto de una tarea programada de Claude Desktop (solo lectura).
+export interface DesktopScheduledTaskFile {
+  readonly accountDir: string;
+  readonly folder: string;
+  readonly content: string;
+}
+
 export interface TaskRecord extends TaskDraft {
+  readonly enabled: boolean; // interruptor de la programación; sin efecto si schedule es null
+  readonly nextRunAtMs: number | null; // próxima ejecución programada (epoch ms UTC); null si no hay
+  readonly lastRun: TaskRunRecord | null; // la última ejecución lanzada (o fallida) y cómo fue
   readonly id: string;
   readonly createdAtMs: number;
   readonly sessionId: string | null; // id de sesión de Mage de la última vez que se lanzó

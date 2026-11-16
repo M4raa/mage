@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diffChip, folderChip, ghNoticeView, gitChip, isInside, lastPathSegment, prBarView, privacyChip } from './chatInfoView';
+import { diffChip, folderChip, ghNoticeView, gitChip, isInside, lastPathSegment, prBarView } from './chatInfoView';
 import { EMPTY_CHECK_SUMMARY, type GhPullRequest } from '@shared/gh';
 import type { GitRepoState } from '@shared/git';
 
@@ -82,16 +82,6 @@ describe('folderChip', () => {
   it('folderChip_cwdVacio_devuelveNull', () => {
     // Sin carpeta no hay etiqueta: una que abriera "" no llevaria a ningun sitio.
     expect(folderChip('   ', null)).toBeNull();
-  });
-});
-
-describe('privacyChip', () => {
-  it('privacyChip_privada_loDice', () => {
-    expect(privacyChip('private').label).toBe('Privado');
-  });
-
-  it('privacyChip_compartida_loDice', () => {
-    expect(privacyChip('shared').label).toBe('Compartido');
   });
 });
 

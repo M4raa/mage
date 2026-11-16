@@ -1,6 +1,4 @@
 import { useMemo } from 'react';
-import { useTaskStore } from '../../tasks/taskStore';
-import { buildTaskIndex, isTaskRow } from '../../tasks/taskView';
 import { useWorkbenchStore, type WorkbenchState } from '../../workbenchStore';
 import type { Account, ChatStatus } from '../../types';
 import { backgroundOfConversation, type BackgroundSession } from '../../backgroundWork';
@@ -13,6 +11,8 @@ import {
   rowAccountKnown,
   rowIndicator,
   sidebarRowId,
+  descendantRows,
+  withPendingDelegates,
   EMPTY_SIDEBAR_FILTER,
   type RowIndicator,
   type SidebarFilter,
@@ -53,6 +53,7 @@ export interface SidebarView {
   readonly filterActive: boolean;
   readonly statusOf: (row: SidebarRow) => ChatStatus | undefined;
   readonly indicatorOf: (row: SidebarRow) => RowIndicator | null;
+  readonly descendantIndicatorsOf: (row: SidebarRow) => readonly (RowIndicator | null)[];
   readonly backgroundOf: (row: SidebarRow) => BackgroundSession | undefined;
   readonly accountOf: (row: SidebarRow) => Account | undefined;
   readonly missingOwnerOf: (row: SidebarRow) => string | undefined;
@@ -68,14 +69,12 @@ export function useSidebarModel(filter: SidebarFilter): SidebarView {
   const settings = useWorkbenchStore((s) => s.settings);
   const scratchRoots = useWorkbenchStore((s) => s.scratchRoots);
   const backgroundSessions = useWorkbenchStore((s) => s.backgroundSessions);
-  const tasks = useTaskStore((s) => s.tasks);
   const statusKey = useWorkbenchStore(liveStatusKey);
   const lockKey = useWorkbenchStore(readOnlyKey);
   const statuses = useMemo(() => parseStatuses(statusKey), [statusKey]);
   const readOnlyIds = useMemo(() => new Set(lockKey.length === 0 ? [] : lockKey.split(KEY_SEPARATOR)), [lockKey]);
   const accountById = useMemo(() => new Map(accounts.map((account) => [account.id, account])), [accounts]);
-  const taskIndex = useMemo(() => buildTaskIndex(tasks), [tasks]);
-  const rows = useMemo(() => buildSidebarRows(tabs, history, sessionIdByChat).filter((row) => !isTaskRow(row, taskIndex, sessionIdByChat)), [tabs, history, sessionIdByChat, taskIndex]);
+  const rows = useMemo(() => buildSidebarRows(tabs, withPendingDelegates(history, backgroundSessions), sessionIdByChat), [tabs, history, sessionIdByChat, backgroundSessions]);
 
   return useMemo(() => {
     const backgroundOf = (row: SidebarRow): BackgroundSession | undefined => {
@@ -92,8 +91,9 @@ export function useSidebarModel(filter: SidebarFilter): SidebarView {
     };
     const archivedIds = new Set(settings.archivedConversations);
     const filtered = applySidebarFilter(rows, filter, { isWorking, archivedIds, sessionIdByChat });
-    const groups = groupSidebarRows(filtered.rows, { projects: settings.chatProjects, pinnedIds: new Set(settings.pinnedConversations), scratchRoots, sessionIdByChat });
-    const visibleToChips = applySidebarFilter(rows, EMPTY_SIDEBAR_FILTER, { isWorking, archivedIds, sessionIdByChat }).rows;
+    const groups = groupSidebarRows(filtered.rows, { projects: settings.chatProjects, pinnedIds: new Set(settings.pinnedConversations), scratchRoots, sessionIdByChat, projectOrder: settings.projectOrder });
+    const descendantIndicatorsOf = (row: SidebarRow): readonly (RowIndicator | null)[] => descendantRows(row, groups.childrenOf, sessionIdByChat).map(indicatorOf);
+    const visibleToChips =applySidebarFilter(rows, EMPTY_SIDEBAR_FILTER, { isWorking, archivedIds, sessionIdByChat }).rows;
     const accountIds = new Set(rows.filter(rowAccountKnown).map((row) => row.accountId));
     return {
       groups,
@@ -104,6 +104,7 @@ export function useSidebarModel(filter: SidebarFilter): SidebarView {
       filterActive: filter.archived || filter.working || filter.provider !== null || filter.accountId !== null || filter.query.trim().length > 0,
       statusOf,
       indicatorOf,
+      descendantIndicatorsOf,
       backgroundOf,
       // Sin cuenta conocida no se nombra ninguna (antes salía la activa en todas las compartidas sin apuntar).
       accountOf: (row) => (findMissingOwner(row, (id) => accountById.has(id)) === undefined && rowAccountKnown(row) ? accountById.get(row.accountId) : undefined),

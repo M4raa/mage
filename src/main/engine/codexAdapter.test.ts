@@ -202,6 +202,44 @@ describe('CodexAdapter: turno', () => {
     expect(serialized).toContain('[clave oculta]');
   });
 
+  const stdioWithEnv = (env: Record<string, string>): LaunchParams => {
+    const server = { name: 'srv', transport: 'stdio', source: 'user', onlyIn: null, extra: {}, secrets: {}, command: 'x', args: [], env, cwd: null };
+    return { ...launch, shared: { mcpServers: [server], settingsFragment: null, claudeAiConnectors: true } } as unknown as LaunchParams;
+  };
+  const textEvent = (text: string): Rpc => notification('item/completed', { item: { id: 'm', type: 'mcpToolCall', server: 's', tool: 't',
+    status: 'completed', result: { content: [{ type: 'text', text }] } } }) as Rpc;
+
+  it('redact_valorCortoDeEnv_noSeEnmascara', () => {
+    const adapter = codex();
+    adapter.buildSpawnPlan(stdioWithEnv({ X: '1' }));
+    const uuid = '0f1a2b3c-1111-4cf9-a1a1-0123456789ab';
+
+    const serialized = JSON.stringify(adapter.normalize(textEvent(uuid)));
+
+    expect(serialized).toContain(uuid);
+    expect(serialized).not.toContain('[clave oculta]');
+  });
+
+  it('redact_valorLargoDeEnv_seEnmascara', () => {
+    const adapter = codex();
+    adapter.buildSpawnPlan(stdioWithEnv({ TOKEN: 'valor-largo-de-env' }));
+
+    const serialized = JSON.stringify(adapter.normalize(textEvent('hola valor-largo-de-env')));
+
+    expect(serialized).not.toContain('valor-largo-de-env');
+    expect(serialized).toContain('[clave oculta]');
+  });
+
+  it('redact_apiKey_siempre', () => {
+    const adapter = new CodexAdapter({ resolveBinary: () => 'codex', resolveAccount: () => ({ home: 'h', apiKey: 'k1' }) });
+    adapter.buildSpawnPlan(launch);
+
+    const serialized = JSON.stringify(adapter.normalize(textEvent('clave k1')));
+
+    expect(serialized).not.toContain('k1');
+    expect(serialized).toContain('[clave oculta]');
+  });
+
   it('normalize_errorMcpConCredencial_excluyeMensajeCrudo', () => {
     const adapter = codex();
     const raw = notification('item/completed', { item: {

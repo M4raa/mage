@@ -5,7 +5,6 @@ import { selectAccount, useWorkbenchStore } from '../workbenchStore';
 import { severityForPct, shortCountdown, type UsageSeverity } from '../usageView';
 import { UsagePopover } from './UsagePopover';
 import { reportActionError } from '../notificationStore';
-import { providerLabel } from '../accountView';
 import { conversationIdOfTab } from '../conversationId';
 import { conversationSizeById } from '../sidebarModel';
 import { formatSize } from '../conversationList';
@@ -46,12 +45,10 @@ const SEVERITY_COLOR: Record<UsageSeverity, string> = {
 export function StatusBar(): React.JSX.Element {
   const account = useWorkbenchStore((s) => selectAccount(s, s.activeAccountId));
   const status = useWorkbenchStore((s) => s.status);
-  // P-028, 2: el proveedor es de la PESTAÑA enfocada (agy o el gateway corren bajo una cuenta de Claude).
-  const focusedProvider = useWorkbenchStore((s) => providerLabel(s.tabs.find((t) => t.id === s.activeTabId)?.provider ?? 'claude'));
 
   return (
     <div data-status-bar="true" className="flex h-[26px] items-center gap-[14px] border-t border-mg-border bg-mg-rail px-[12px] text-[10.5px] text-mg-ter">
-      {account !== undefined && <AccountStatus account={account} provider={focusedProvider} />}
+      {account !== undefined && <AccountStatus account={account} />}
       <ServiceStatus status={status} />
       <AppVersion />
       <UpdateIndicator />
@@ -134,7 +131,7 @@ function AppVersion(): React.JSX.Element | null {
   );
 }
 
-function AccountStatus({ account, provider }: { readonly account: Account; readonly provider: string }): React.JSX.Element {
+function AccountStatus({ account }: { readonly account: Account }): React.JSX.Element {
   const openAccountsUsage = useWorkbenchStore((s) => s.openAccountsUsage);
   const t = useT();
   const { fiveHour, weekly } = account.usage;
@@ -154,10 +151,6 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
   };
   return (
     <>
-      <span className="flex items-center gap-[6px]" style={{ color: account.accent.tint }}>
-        <span className="h-[7px] w-[7px] rounded-[2px]" style={{ background: account.accent.base }} />
-        <span data-status-provider="true">{provider}</span> · {account.alias} ▾
-      </span>
       {/* Sin el modelo por defecto de la cuenta (P-026, D18): no era el del chat, su ▾ no abria nada y
           el modelo ya se ve —y se cambia— en el selector del input. */}
 

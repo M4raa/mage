@@ -1,10 +1,11 @@
 // Modelo PURO del lateral de conversaciones de TODAS las cuentas (D6): fusión de los historiales,
-// agrupación (Fijadas → Proyectos → Sin proyecto → Privadas), filtros e indicadores de fila. Sin store
+// agrupación (Fijadas → Sin proyecto → Proyectos), filtros e indicadores de fila. Sin store
 // ni IPC: el componente solo pinta lo que sale de aquí.
 import type { ConversationSummary } from '@shared/conversations';
 import type { ChatProject } from '@shared/settings';
 import type { Tab, ChatStatus } from './types';
-import type { BackgroundState } from './backgroundWork';
+import type { AdoptableSession } from '@shared/ipc';
+import type { BackgroundSession, BackgroundState } from './backgroundWork';
 import { rowRecency, rowTitle } from './conversationList';
 import { conversationIdOfTab } from './conversationId';
 import { projectForRow } from './chatProjects';
@@ -17,7 +18,7 @@ export interface AccountConversation {
   // La cuenta con la que se abre. Si no se sabe de quién es, la primera que la listó: sirve para abrirla, no para
   // decir de quién es (ver `accountKnown`).
   readonly accountId: string;
-  // Se sabe de verdad de qué cuenta es: la lista una sola cuenta (privadas, Codex, agy) o el índice de Mage sabe con cuál
+  // Se sabe de verdad de qué cuenta es: la lista una sola cuenta (Codex, agy) o el índice de Mage sabe con cuál
   // se usó por última vez. Una compartida de Claude que nadie apuntó (antigua, del CLI en la terminal, o de otro perfil
   // de Mage) sale en TODAS las cuentas y no es de ninguna en concreto (P-038, informe del 10-11).
   readonly accountKnown?: boolean; // ausente = se sabe
@@ -29,7 +30,7 @@ export interface AccountHistory {
 }
 
 function historyKey(item: ConversationSummary): string {
-  return `${item.providerId ?? DEFAULT_PROVIDER}:${item.privacy}:${item.sessionId}`;
+  return `${item.providerId ?? DEFAULT_PROVIDER}:${item.sessionId}`;
 }
 
 // Une los historiales de varias cuentas. Una conversación compartida de Claude sale en todas las cuentas de
@@ -76,10 +77,6 @@ export function providerOfRow(row: SidebarRow): string {
   return row.kind === 'tab' ? row.tab.provider : (row.item.providerId ?? DEFAULT_PROVIDER);
 }
 
-function privacyOfRow(row: SidebarRow): 'shared' | 'private' {
-  return row.kind === 'tab' ? row.tab.privacy : row.item.privacy;
-}
-
 function cwdOfRow(row: SidebarRow): string {
   return row.kind === 'tab' ? row.tab.cwd : row.item.cwd;
 }
@@ -105,6 +102,36 @@ export function buildSidebarRows(
     .filter((entry) => !openIds.has(entry.item.sessionId))
     .map((entry): SidebarRow => ({ kind: 'history', item: entry.item, accountId: entry.accountId, accountKnown: entry.accountKnown }));
   return [...tabRows, ...historyRows].sort((a, b) => rowRecency(b) - rowRecency(a));
+}
+
+// Decisión 13-11: subsesiones del MCP sin pestaña cuya transcripción aún no está en el historial. Una fila
+// provisional con lo que dio main, para que cuelguen de su creadora desde el primer momento. Sin ninguna,
+// devuelve la MISMA lista.
+export function withPendingDelegates(
+  history: readonly AccountConversation[],
+  background: Readonly<Record<string, BackgroundSession>>,
+): readonly AccountConversation[] {
+  const known = new Set(history.map((entry) => entry.item.sessionId));
+  const pending: AccountConversation[] = [];
+  for (const entry of Object.values(background)) {
+    if (entry.hostSession === undefined || entry.conversationId === undefined || known.has(entry.conversationId)) continue;
+    pending.push({ accountId: entry.accountId, item: pendingDelegateItem(entry.conversationId, entry, entry.hostSession) });
+  }
+  return pending.length === 0 ? history : [...history, ...pending];
+}
+
+function pendingDelegateItem(conversationId: string, entry: BackgroundSession, host: AdoptableSession): ConversationSummary {
+  return {
+    sessionId: conversationId,
+    configDir: host.configDir,
+    cwd: host.cwd,
+    title: entry.title,
+    updatedAtMs: entry.sinceMs,
+    sizeBytes: 0,
+    isScheduled: false,
+    ...(host.provider === 'codex' ? { providerId: 'codex' as const } : {}),
+    ...(host.createdBy === null ? {} : { createdByConversationId: host.createdBy.conversationId }),
+  };
 }
 
 export type ProviderMonogram = 'C' | 'X' | 'A' | 'R';
@@ -175,7 +202,44 @@ export interface SidebarGroups {
   readonly pinned: SidebarRow[];
   readonly projects: ProjectGroup[];
   readonly unassigned: SidebarRow[];
-  readonly private: SidebarRow[];
+  // Subsesiones por id de su creadora directa (las que cuelgan de ella en el lateral, a cualquier profundidad).
+  readonly childrenOf: ReadonlyMap<string, readonly SidebarRow[]>;
+}
+
+export interface NestedRows {
+  readonly top: readonly SidebarRow[];
+  readonly childrenOf: ReadonlyMap<string, readonly SidebarRow[]>;
+}
+
+// Quién creó la conversación de una fila con `mage_create_session`. Una pestaña reabierta del historial ya no
+// lleva `createdBy`, pero su fila de historial sí: se prueba con las dos.
+function creatorOfRow(row: SidebarRow): string | undefined {
+  if (row.kind === 'history') return row.item.createdByConversationId;
+  return row.tab.createdBy?.conversationId ?? row.history?.createdByConversationId;
+}
+
+// Separa las filas en las de primer nivel y las que cuelgan de su creadora (comparando ids de conversación). Una fila
+// cuya creadora no está entre `rows` (cerrada y fuera de la lista, archivada, filtrada) queda arriba. El orden relativo
+// se conserva; la hija de una hija cuelga de su creadora directa.
+export function nestDelegatedRows(rows: readonly SidebarRow[], sessionIdByChat: Readonly<Record<string, string>>): NestedRows {
+  const present = new Set<string>();
+  for (const row of rows) {
+    const id = sidebarRowId(row, sessionIdByChat);
+    if (id !== undefined) present.add(id);
+  }
+  const top: SidebarRow[] = [];
+  const childrenOf = new Map<string, SidebarRow[]>();
+  for (const row of rows) {
+    const creator = creatorOfRow(row);
+    if (creator === undefined || creator === sidebarRowId(row, sessionIdByChat) || !present.has(creator)) {
+      top.push(row);
+      continue;
+    }
+    const siblings = childrenOf.get(creator);
+    if (siblings === undefined) childrenOf.set(creator, [row]);
+    else siblings.push(row);
+  }
+  return { top, childrenOf };
 }
 
 export interface GroupContext {
@@ -183,6 +247,8 @@ export interface GroupContext {
   readonly pinnedIds: ReadonlySet<string>;
   readonly scratchRoots: readonly string[];
   readonly sessionIdByChat: Readonly<Record<string, string>>;
+  // Orden manual de las carpetas (claves de grupo).
+  readonly projectOrder: readonly string[];
 }
 
 function isPinnedRow(row: SidebarRow, ctx: GroupContext): boolean {
@@ -209,12 +275,30 @@ function groupRecency(group: ProjectGroup): number {
   return Math.max(0, ...group.rows.map(rowRecency));
 }
 
-// Los grupos con filas, por su fila más reciente; los vacíos (proyectos del usuario sin conversaciones), al final
-// por nombre.
-function sortProjectGroups(groups: readonly ProjectGroup[]): ProjectGroup[] {
-  const filled = groups.filter((group) => group.rows.length > 0).sort((a, b) => groupRecency(b) - groupRecency(a));
-  const empty = groups.filter((group) => group.rows.length === 0).sort((a, b) => a.name.localeCompare(b.name));
-  return [...filled, ...empty];
+// Orden de las carpetas: solo lo cambia el usuario al arrastrar. Los grupos cuya clave aún no está en `order`
+// (carpetas nuevas, hasta que se guardan) van PRIMERO, por recencia descendente; después los guardados, en el
+// orden de `order`. Los proyectos vacíos del usuario siguen la misma regla.
+export function orderProjectGroups(groups: readonly ProjectGroup[], order: readonly string[]): ProjectGroup[] {
+  const position = new Map(order.map((key, index) => [key, index]));
+  const fresh = groups.filter((group) => !position.has(group.key)).sort((a, b) => groupRecency(b) - groupRecency(a));
+  const saved = groups.filter((group) => position.has(group.key)).sort((a, b) => (position.get(a.key) ?? 0) - (position.get(b.key) ?? 0));
+  return [...fresh, ...saved];
+}
+
+// `order` con las claves de `keys` que le faltan AÑADIDAS AL PRINCIPIO, en el orden en que llegan. Sin ninguna
+// que falte devuelve la MISMA referencia (para no guardar en bucle).
+export function withNewProjectKeys(order: readonly string[], keys: readonly string[]): readonly string[] {
+  const known = new Set(order);
+  const missing = [...new Set(keys)].filter((key) => !known.has(key));
+  return missing.length === 0 ? order : [...missing, ...order];
+}
+
+// Pone `key` justo antes de `beforeKey` (null = al final). Si `key` no está o ya es `beforeKey`, devuelve `order`.
+export function moveProjectKey(order: readonly string[], key: string, beforeKey: string | null): readonly string[] {
+  if (key === beforeKey || !order.includes(key)) return order;
+  const rest = order.filter((candidate) => candidate !== key);
+  const at = beforeKey === null ? -1 : rest.indexOf(beforeKey);
+  return at < 0 ? [...rest, key] : [...rest.slice(0, at), key, ...rest.slice(at)];
 }
 
 function addToProjectGroup(groups: Map<string, ProjectGroup>, target: Omit<ProjectGroup, 'rows'>, row: SidebarRow): void {
@@ -229,18 +313,15 @@ function addToProjectGroup(groups: Map<string, ProjectGroup>, target: Omit<Proje
 export function groupSidebarRows(rows: readonly SidebarRow[], ctx: GroupContext): SidebarGroups {
   const pinned: SidebarRow[] = [];
   const unassigned: SidebarRow[] = [];
-  const privateRows: SidebarRow[] = [];
   const groups = new Map<string, ProjectGroup>(
     ctx.projects.map((project) => [
       `p:${project.id}`,
       { key: `p:${project.id}`, name: project.name, cwd: project.cwd, projectId: project.id, rows: [] },
     ]),
   );
-  for (const row of rows) {
-    if (privacyOfRow(row) === 'private') {
-      privateRows.push(row);
-      continue;
-    }
+  // Solo las de primer nivel se reparten por grupos: una subsesión sale siempre bajo su creadora, sea cual sea su carpeta.
+  const { top, childrenOf } = nestDelegatedRows(rows, ctx.sessionIdByChat);
+  for (const row of top) {
     if (isPinnedRow(row, ctx)) {
       pinned.push(row);
       continue;
@@ -249,7 +330,7 @@ export function groupSidebarRows(rows: readonly SidebarRow[], ctx: GroupContext)
     if (target === null) unassigned.push(row);
     else addToProjectGroup(groups, target, row);
   }
-  return { pinned, projects: sortProjectGroups([...groups.values()]), unassigned, private: privateRows };
+  return { pinned, projects: orderProjectGroups([...groups.values()], ctx.projectOrder), unassigned, childrenOf };
 }
 
 export interface SidebarFilter {
@@ -310,10 +391,44 @@ export function projectSummary(indicators: readonly (RowIndicator | null)[]): { 
   };
 }
 
+const PROPAGATED_RANK: Readonly<Record<RowIndicator, number>> = { attention: 3, error: 2, working: 1, readOnly: 0 };
+
+// Filas que cuelgan de `row` a cualquier profundidad (sin ella). Termina aunque hubiera un ciclo.
+export function descendantRows(
+  row: SidebarRow,
+  childrenOf: ReadonlyMap<string, readonly SidebarRow[]>,
+  sessionIdByChat: Readonly<Record<string, string>>,
+): readonly SidebarRow[] {
+  const found: SidebarRow[] = [];
+  const seen = new Set<string>();
+  const visit = (parent: SidebarRow): void => {
+    const id = sidebarRowId(parent, sessionIdByChat);
+    if (id === undefined || seen.has(id)) return;
+    seen.add(id);
+    for (const child of childrenOf.get(id) ?? []) {
+      found.push(child);
+      visit(child);
+    }
+  };
+  visit(row);
+  return found;
+}
+
+// Indicador de una creadora PLEGADA (D-7): el más fuerte entre el suyo y los de sus descendientes; el candado de
+// una hija no sube.
+export function foldedIndicator(own: RowIndicator | null, descendants: readonly (RowIndicator | null)[]): RowIndicator | null {
+  let best = own;
+  for (const indicator of descendants) {
+    if (indicator === null || indicator === 'readOnly') continue;
+    if (best === null || PROPAGATED_RANK[indicator] > PROPAGATED_RANK[best]) best = indicator;
+  }
+  return best;
+}
+
 // Con qué cuenta se abre una fila: una conversación compartida de Claude se abre con la cuenta activa si es de
 // Claude (regla de `openConversation`); el resto, con la de la fila.
 export function accountToOpenWith(row: SidebarRow, active: { readonly id: string; readonly providerId: string } | undefined): string {
-  const isSharedClaudeHistory = row.kind === 'history' && providerOfRow(row) === DEFAULT_PROVIDER && row.item.privacy === 'shared';
+  const isSharedClaudeHistory = row.kind === 'history' && providerOfRow(row) === DEFAULT_PROVIDER;
   if (isSharedClaudeHistory && active !== undefined && active.providerId === DEFAULT_PROVIDER) return active.id;
   return row.accountId;
 }

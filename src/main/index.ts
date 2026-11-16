@@ -58,6 +58,7 @@ import {
   nativeTheme,
   safeStorage,
   screen,
+  powerSaveBlocker,
 } from 'electron';
 import {
   CLOSE_PROMPT_CHANNEL,
@@ -65,6 +66,7 @@ import {
   SESSION_ADOPTABLE_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
+  TASKS_DUE_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
   GH_PR_UPDATE_CHANNEL,
   NOTIFICATION_CLICKED_CHANNEL,
@@ -134,6 +136,10 @@ import { nodeCapabilityFs } from './capabilities/capabilityFs';
 import type { CapabilityEngine } from './capabilities/capabilityPackage';
 import { bundledContents, loadBundledCatalog } from './capabilities/catalog/libraryCatalog';
 import { registerLibraryIpc } from './capabilities/library/libraryIpc';
+import { registerCapabilitiesIpc } from './capabilities/overview/capabilitiesIpc';
+import { managedSettingsDir, readCapabilitiesOverview, readPluginCatalog } from './capabilities/overview/capabilitiesOverview';
+import { readSkillFile } from './capabilities/overview/skillFiles';
+import { runNativeCommand } from './capabilities/nativeRunner';
 import { BROWSER_STATE_CHANNEL } from '@shared/browser';
 import { registerBrowserIpc } from './browser/browserIpc';
 import { BROWSER_SWEEP_INTERVAL_MS, BrowserRegistry } from './browser/browserRegistry';
@@ -147,7 +153,9 @@ import { LibraryService, type LibraryAccount } from './capabilities/library/libr
 import { decideTestLibraryClaudeDir, testLibraryAccounts } from './capabilities/library/testLibraryAccount';
 import { registerTaskIpc } from './tasks/taskIpc';
 import { buildTaskInstructions } from './tasks/taskInstructions';
-import { nodeDeliverableFs, nodeIsDirectory, nodeIsFile, nodeTaskStoreFs } from './tasks/taskNodeFs';
+import { nodeDeliverableFs, nodeDesktopTaskFs, nodeIsDirectory, nodeIsFile, nodeTaskStoreFs } from './tasks/taskNodeFs';
+import { listDesktopScheduledTasks } from './tasks/desktopScheduledTasks';
+import { KeepAwake } from './tasks/keepAwake';
 import { TaskService } from './tasks/taskService';
 import { loadTasks, saveTasks } from './tasks/taskStore';
 import { withTaskDirectories } from './tasks/taskLaunch';
@@ -202,10 +210,13 @@ import { claudeSharedLaunch } from './config/mcpProviderTranslate';
 import { mergeServerLists, selectForTarget, type ResolvedMcpServer } from './config/mcpResolved';
 import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
-import { ConversationsService, withHostOwner, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
+import { ConversationsService, withCreator, withHostOwner, withLastAccount, withScheduledTaskRun, type ConversationsDeps } from './conversations/conversationsService';
+import { taskRunMarker } from './tasks/taskRunMarker';
+import type { TaskRecord } from '@shared/tasks';
+import { migratePrivateConversations } from './conversations/privateConversationsMigration';
 import { CodexHistoryService } from './conversations/codexHistory';
 import { deleteCodexConversation } from './conversations/codexDeletion';
-import { forgetDeletedConversation } from './conversations/deletedConversation';
+import { forgetDeletedConversation, forgetMigratedSource } from './conversations/deletedConversation';
 import { updateLegacyCodexThread } from './conversations/codexLegacyUpdate';
 import { ConversationMigrationService } from './conversations/conversationMigration';
 import { createMigrationEndpoints } from './conversations/migrationEndpoints';
@@ -591,9 +602,6 @@ function onSharedMcpChanged(): void {
   else mainLog('info', 'Sincronizado con agy', { cambios: result.changes.length });
 }
 
-// Perfil privado de una cuenta (AccountService): cuenta como su cuenta (mismo login, mismo «Solo en…»).
-const PRIVATE_PROFILE_DIR_NAME = 'mage-private';
-
 // Carpetas extra de la tarea que se está lanzando (F8); solo vive durante `sessionCoordinator.create`.
 // ponytail: canal por variable de módulo porque create() es síncrono; si deja de serlo, pasar las carpetas por SharedLaunchConfig
 let launchingTaskExtras: readonly string[] = [];
@@ -602,7 +610,7 @@ let launchingTaskExtras: readonly string[] = [];
 // son ficheros que el usuario puede editar entre una sesion y la siguiente.
 function loadSharedLaunch(provider: string, accountDir: string, sessionId: string | null): SharedLaunchConfig {
   const family = mcpFamilyOf(provider);
-  const account = basename(accountDir) === PRIVATE_PROFILE_DIR_NAME ? dirname(accountDir) : accountDir;
+  const account = accountDir;
   const shared = getMcpServices().sharedMcp();
   for (const warning of shared.warnings) mainLog('warn', warning);
   const settingsCommon = getSharedConfigService().loadSettingsCommon(settingsCommonPath());
@@ -826,11 +834,9 @@ function runtimeEnv(): RuntimeEnv {
 const mcpLogins = new McpLoginRegistry({ openUrl: (url) => openOAuthUrl(url), newId: randomUUID });
 
 // La pagina de login de un servidor MCP remoto (OAuth del runtime propio) se abre en el navegador del
-// sistema cuando el usuario pulsa «Iniciar sesión». Solo http(s): una URL de otro esquema no la abre Mage.
+// sistema cuando el usuario pulsa «Iniciar sesión». Se abre por OpenWithService: https, o http a esta máquina (H7).
 async function openOAuthUrl(url: string): Promise<void> {
-  const protocol = new URL(url).protocol;
-  if (protocol !== 'https:' && protocol !== 'http:') throw new Error(`URL de autorización con esquema no permitido: ${protocol}`);
-  await shell.openExternal(url);
+  await openWithService.openAuthorizationUrl(url);
 }
 
 // Ventana y herramientas de los modelos del runtime propio, con cache compartida entre sesiones (R5).
@@ -1312,8 +1318,8 @@ const accountService = new AccountService({
   linkService,
   log: mainLog,
 });
-// Historial de conversaciones en disco (M2.6). Lee prefijos de los .jsonl bajo projects/ (comun) y
-// mage-private/projects/ (privado) de la cuenta. Solo FS de lectura.
+// Historial de conversaciones en disco (M2.6). Lee prefijos de los .jsonl bajo projects/ de la cuenta.
+// Solo FS de lectura.
 const conversationFsDeps: ConversationsDeps = {
   exists: existsSync,
   listDir: (path) => readdirSync(path),
@@ -1522,7 +1528,6 @@ function usageHistoryRoots(): readonly TranscriptRoot[] {
     if (agyProfile !== null) for (const profile of [agyProfile, ...agyExternalProfileOf(account.configDir)]) add(join(profile, ...AGY_CONVERSATIONS_DIR), account.configDir, 'agy');
     if (account.providerId !== 'claude') continue;
     add(join(account.configDir, 'projects'));
-    add(join(account.configDir, PRIVATE_PROFILE_DIR_NAME, 'projects'), account.configDir);
   }
   return roots;
 }
@@ -1561,13 +1566,8 @@ const memoryService = new MemoryService({
 // IPC, una frontera de seguridad distinta de la logica de cuentas).
 const ACCOUNT_DIR_PATTERN = /^\.claude(-.*|\d*)$/;
 
-// Nombre del dir de perfil privado (M2.6); mismo valor que AccountService.PRIVATE_PROFILE_DIR,
-// duplicado aqui a proposito (frontera de seguridad IPC, no logica de cuentas).
-const PRIVATE_PROFILE_SEGMENT = 'mage-private';
-
-// Verifica que una ruta (transcripcion o carpeta de memoria) cae bajo <cuenta>/projects/ (compartido)
-// o <cuenta>/mage-private/projects/ (perfil privado, M2.6) de alguna cuenta gestionada bajo HOME
-// (nunca una ruta arbitraria via IPC). No exige que exista (eso lo validan los servicios al leer).
+// Verifica que una ruta (transcripcion o carpeta de memoria) cae bajo <cuenta>/projects/ de alguna
+// cuenta gestionada bajo HOME (nunca una ruta arbitraria via IPC). No exige que exista (eso lo validan los servicios al leer).
 function isUnderManagedProjects(targetPath: string): boolean {
   const resolved = resolve(targetPath);
   // Las transcripciones del runtime propio (P-032, ficha D3) viven en userData/runtime/projects.
@@ -1578,11 +1578,10 @@ function isUnderManagedProjects(targetPath: string): boolean {
   if (!isInsideHome(resolved)) return false;
   const segments = resolved.slice(accountsHome().length).split(sep).filter(Boolean);
   if (segments.length < 2 || !ACCOUNT_DIR_PATTERN.test(segments[0] ?? '')) return false;
-  if (segments[1] === 'projects') return true;
-  return segments[1] === PRIVATE_PROFILE_SEGMENT && segments[2] === 'projects';
+  return segments[1] === 'projects';
 }
 
-// Verifica que una ruta cae bajo <cuenta>/plans/ (o <cuenta>/mage-private/plans/) de alguna cuenta
+// Verifica que una ruta cae bajo <cuenta>/plans/ de alguna cuenta
 // gestionada bajo HOME. Es donde el CLI escribe los PLANES del modo plan, que no viven bajo el cwd de
 // ninguna conversacion: sin esta raiz, el panel de Ficheros listaba el plan y luego se negaba a abrirlo
 // ("el fichero está fuera de la carpeta de la conversación" — reporte del usuario).
@@ -1594,8 +1593,7 @@ function isUnderManagedPlans(targetPath: string): boolean {
   return rest !== null && rest[0] === 'plans' && rest.length >= 2;
 }
 
-// Tercera raiz (P-028, 15): la MEMORIA del CLI, `<cuenta>/projects/<slug>/memory/…` (y la del perfil
-// privado). Un tercio de los ficheros que el panel no abria eran estos `.md`. Anclada por estructura
+// Tercera raiz (P-028, 15): la MEMORIA del CLI, `<cuenta>/projects/<slug>/memory/…`. Un tercio de los ficheros que el panel no abria eran estos `.md`. Anclada por estructura
 // como `plans`: solo el subdirectorio `memory` de un proyecto, nunca `projects` entero (ahi viven las
 // transcripciones de todas las conversaciones).
 function isUnderManagedMemory(targetPath: string): boolean {
@@ -1603,14 +1601,14 @@ function isUnderManagedMemory(targetPath: string): boolean {
   return rest !== null && rest[0] === 'projects' && rest[2] === 'memory' && rest.length >= 4;
 }
 
-// Segmentos de la ruta DENTRO del config dir de una cuenta gestionada (saltando `mage-private` si
-// esta), o null si no cuelga de ninguna. Es la base comun de las raices ancladas por estructura.
+// Segmentos de la ruta DENTRO del config dir de una cuenta gestionada, o null si no cuelga de ninguna.
+// Es la base comun de las raices ancladas por estructura.
 function segmentsInsideManagedConfigDir(targetPath: string): readonly string[] | null {
   const resolved = resolve(targetPath);
   if (!isInsideHome(resolved)) return null;
   const segments = resolved.slice(accountsHome().length).split(sep).filter(Boolean);
   if (!ACCOUNT_DIR_PATTERN.test(segments[0] ?? '')) return null;
-  return segments[1] === PRIVATE_PROFILE_SEGMENT ? segments.slice(2) : segments.slice(1);
+  return segments.slice(1);
 }
 
 // Ficheros de fuera del cwd que el usuario aprobo abrir EN ESTA EJECUCION (P-028, 15). En memoria a
@@ -1852,6 +1850,11 @@ function createRewindCoordinator(): RewindCoordinator {
       onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente al rebobinar', { uuid }),
     }),
     state: getRewindState(),
+    // El buffer en vuelo de esa sesion es de la rama descartada: se suelta antes de recortar.
+    forgetDiscardedThinking: (nativeId, count) => {
+      thinkingBuffers.delete(nativeId);
+      getThinkingStore().dropLast(nativeId, count);
+    },
     newId: randomUUID,
     now: Date.now,
     log: (level, message, data) => mainLog(level, message, data),
@@ -2292,14 +2295,14 @@ function probeLoggedInAccounts(): void {
   probeModelsInBackground(dirs);
 }
 
-function cacheCommandCatalog(accountDir: string, commands: readonly SlashCommandInfo[]): void {
+function cacheCommandCatalog(accountDir: string, commands: readonly SlashCommandInfo[], cwd: string): void {
   // Si el catalogo es identico al ultimo escrito, no se toca el disco (P12). Solo cambia al instalar
   // o quitar un plugin; el resto de los turnos reescribia 74 kB para dejarlos igual.
-  const json = JSON.stringify(commands);
+  const json = JSON.stringify({ commands, cwd });
   if (lastCommandCatalogJson.get(accountDir) === json) return;
   lastCommandCatalogJson.set(accountDir, json);
   try {
-    getCommandCatalogStore().save(accountDir, commands, Date.now());
+    getCommandCatalogStore().save(accountDir, commands, Date.now(), cwd);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     mainLog('warn', `No se pudo cachear el catalogo de comandos de "${accountDir}": ${detail}`);
@@ -2881,16 +2884,15 @@ function stopSessionsWhenDestroyed(sender: Electron.WebContents): void {
 // Registro de handlers IPC: puentean el renderer con el SessionManager. Los eventos del motor se
 // empujan al webContents que creo la sesion (guardando contra un renderer ya destruido).
 function relaySessionEvent(payload: { readonly sessionId: string; readonly event: MageEvent },
-  { sender, configDir, accountDir }: { sender: Electron.WebContents | null; configDir: string; accountDir: string }): void {
+  { sender, configDir, accountDir, cwd }: { sender: Electron.WebContents | null; configDir: string; accountDir: string; cwd: string }): void {
   sessionSettings.observe(payload.sessionId, payload.event);
       // Cache del catalogo "/" (2.2): la sesion es la UNICA fuente del catalogo real, y una
-      // conversacion recien abierta no tiene sesion. Se escribe con el config dir EFECTIVO (para una
-      // conversacion privada, el perfil `mage-private`), nunca con el de la cuenta: si no, la cache de
-      // una cuenta acabaria con el catalogo de otra.
+      // conversacion recien abierta no tiene sesion. Se escribe con el config dir de la sesion: si no,
+      // la cache de una cuenta acabaria con el catalogo de otra.
       if (payload.event.kind === 'commands_available') {
-        cacheCommandCatalog(configDir, payload.event.commands);
+        cacheCommandCatalog(configDir, payload.event.commands, cwd);
       }
-      // Y el de modelos (P-026 2.4), del mismo `initialize` y con el mismo config dir efectivo.
+      // Y el de modelos (P-026 2.4), del mismo `initialize` y con el mismo config dir.
       if (payload.event.kind === 'models_available') {
         cacheModelCatalog(configDir, payload.event.models);
       }
@@ -2899,12 +2901,9 @@ function relaySessionEvent(payload: { readonly sessionId: string; readonly event
       // bloque en cuanto llega un evento que no es un delta de pensamiento.
       captureThinking(payload.sessionId, payload.event);
       // Uso por stream (9.3): el CLI regala la foto de consumo en cada turno, sin que Mage gaste una
-      // peticion. Va al config dir EFECTIVO, igual que el catalogo: el perfil privado y su cuenta
-      // comparten login, asi que comparten uso, pero cada dir guarda el suyo y nadie pisa a nadie.
+      // peticion.
       if (payload.event.kind === 'usage_limits') {
-        // Con la clave de la CUENTA, no con el config dir efectivo: `UsageGet` solo sirve cuentas
-        // gestionadas (rechaza `mage-private`), asi que guardarlo bajo el perfil privado era escribir
-        // en una entrada que nadie lee jamas. Y es correcto compartirlo: mismo login, mismo uso.
+        // Con la clave de la CUENTA: `UsageGet` solo sirve cuentas gestionadas.
         usageService.recordStreamUsage(accountDir, {
           fiveHour: payload.event.fiveHour,
           sevenDay: payload.event.sevenDay,
@@ -2932,12 +2931,8 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
     assertLaunchable(params);
     assertConversationNotLockedElsewhere(params);
     prepareAgyResume(params);
-    // M2.6: una conversacion privada se lanza bajo el perfil privado de la cuenta (mismo login,
-    // projects propio). Compartida (default) usa la cuenta tal cual. El config dir efectivo vuelve al
-    // renderer para localizar transcripciones/memoria de la conversacion.
-    // El perfil privado es de Claude: en otro proveedor la privacidad no cambia el dir de la cuenta.
-    const configDir =
-      params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
+    // El config dir vuelve al renderer para localizar transcripciones/memoria de la conversacion.
+    const configDir = params.accountDir;
     const project = params.projectId === undefined ? undefined : getSettingsStore().load().chatProjects.find((candidate) => candidate.id === params.projectId);
     const task = params.provider === 'claude' || params.provider === 'codex'
       ? getTaskService().claimForLaunch({ provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, resumeSessionId: params.resumeSessionId, taskId: params.taskId })
@@ -2946,9 +2941,13 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
     launchingTaskExtras = task === null ? [] : getTaskService().launchExtrasFor(task, params.cwd);
+    const markTaskRun = taskRunMarkerFor(task, params);
     let sessionId: string;
     try {
-      sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+      sessionId = sessionCoordinator.create(effectiveParams, (payload) => {
+        markTaskRun(payload.conversationId);
+        relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir, cwd: params.cwd });
+      }, sender?.id);
     } finally {
       launchingTaskExtras = [];
     }
@@ -2958,6 +2957,15 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
     if (sender !== null) stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
   }
+
+// Una conversación NUEVA que lanza una tarea de Mage queda marcada en el índice en cuanto tiene id. Reanudarla no la vuelve a marcar.
+function taskRunMarkerFor(task: TaskRecord | null, params: CreateSessionParams): (conversationId: string | null) => void {
+  if (task === null || params.resumeSessionId !== undefined) return () => undefined;
+  return taskRunMarker({
+    record: (conversationId) => getConversationIndexStore().recordTaskRun(conversationId, task.id),
+    warn: (message, data) => mainLog('warn', message, data),
+  });
+}
 
 // U17: sesiones del host (sin ventana) que la ventana principal puede adoptar, y quién sigue cuál.
 const adoptableSessions = new AdoptableSessions();
@@ -2972,7 +2980,7 @@ const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordina
 // Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel o, sin panel, en la de aparcamiento (D-S3, Z01).
 const viewPlacement = new ViewPlacement(createParkingHost(createParkingWindow));
 const browserRegistry = new BrowserRegistry({
-  createBrowser: (instanceId) => new IsolatedBrowser(instanceId, electronBrowserDeps),
+  createBrowser: (instanceId, sessionId) => new IsolatedBrowser(instanceId, electronBrowserDeps, sessionCoordinator.rewindContext(sessionId).cwd),
   newId: randomUUID,
   isLive: (sessionId) => sessionCoordinator.ownerOf(sessionId) !== undefined,
   onChange: (states) => windowManager.broadcast(BROWSER_STATE_CHANNEL, states),
@@ -2997,12 +3005,13 @@ function liveIdsOf(sessionId: string): { conversationId: string | null; nativeId
 }
 
 // Una sesión del host (sin ventana): se lanza como siempre y queda adoptable por la ventana principal (U17).
-function launchHostSession(params: CreateSessionParams, origin: AdoptableSession['origin'], createdBy: AdoptableSession['createdBy'] = null): string {
+function launchHostSession(params: CreateSessionParams, origin: AdoptableSession['origin'], createdBy: AdoptableSession['createdBy'] = null, title?: string): string {
   const { sessionId, configDir } = launchSession(params, null);
   const entry = {
     sessionId, provider: params.provider, accountId: params.accountDir, configDir, cwd: params.cwd, model: params.model,
     ...(params.effort === undefined ? {} : { effort: params.effort }),
     ...(params.permissionMode === undefined ? {} : { permissionMode: params.permissionMode }),
+    ...(title === undefined ? {} : { title }),
     origin, createdBy,
   };
   adoptableSessions.add(entry);
@@ -3074,8 +3083,6 @@ function createIpcConversationAdminService() {
     ensureDir: (p) => mkdirSync(p, { recursive: true }),
     move: (from, to) => renameSync(from, to),
     realpath: (p) => realpathSync(p),
-    privateProfileDir: (dir) => join(dir, PRIVATE_PROFILE_SEGMENT),
-    ensurePrivateProfile: (dir) => accountService.ensurePrivateProfile(dir),
     runtimeRoot: runtimeTranscriptRoot(),
   });
 }
@@ -3373,7 +3380,7 @@ function getAgyLogin(): AgyLoginService {
     spawnLogin: (profileDir) => spawn(resolveAgyBinary(), AGY_USAGE_ARGS, {
       cwd: profileDir, env: { ...scrubAgentEnv(process.env), USERPROFILE: profileDir, HOME: homedir(), ...AGY_FILE_TOKEN_ENV }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     }),
-    openUrl: (url) => shell.openExternal(url),
+    openUrl: (url) => openWithService.openExternal(url),
     killTree: (child) => killProcessTree(child, defaultKillTreeDeps()),
     sendCode: (child, code) => sendAgyLoginCode(child, code),
     tokenExists: (profileDir) => existsSync(join(profileDir, ...AGY_TOKEN_PARTS)),
@@ -3680,6 +3687,13 @@ function listClaudeConversations(accountDir: string): readonly ConversationSumma
   return withHostOwner(listed, (id) => getConversationIndexStore().loadPrefs(id)?.hostOwnerAccountId);
 }
 
+// Lo que sabe el índice de Mage y no el disco: quién creó cada conversación por delegación y cuáles creó una tarea suya.
+function withIndexMarks(items: readonly ConversationSummary[]): ConversationSummary[] {
+  const index = getConversationIndexStore();
+  const withCreators = withCreator(items, (id) => index.delegationOf(id).createdBy?.conversationId);
+  return withScheduledTaskRun(withCreators, (id) => index.taskRunOf(id) !== undefined);
+}
+
 function registerTranscriptIpc2(deps: IpcDependencies): void {
   const { conversationAdminService, requireSafeConversation } = deps;
   ipcMain.handle(IpcChannel.TranscriptCancel, (_e, transcriptId: string) => {
@@ -3700,10 +3714,10 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
   // ser un dir de cuenta gestionado bajo HOME (nunca una ruta arbitraria via IPC).
   ipcMain.handle(IpcChannel.ConversationsList, (_e, accountDir: string): readonly ConversationSummary[] => {
     const codex = getProviderAccounts().find('codex', accountDir);
-    if (codex !== null) return codexHistory.list(codex.home);
+    if (codex !== null) return withIndexMarks(codexHistory.list(codex.home));
     const agyProfile = agyProfileOfAccount(accountDir);
-    if (agyProfile !== null) return agyHistory.list(agyProfile, accountDir, agyExternalProfileOf(accountDir));
-    return listClaudeConversations(accountDir);
+    if (agyProfile !== null) return withIndexMarks(agyHistory.list(agyProfile, accountDir, agyExternalProfileOf(accountDir)));
+    return withIndexMarks(listClaudeConversations(accountDir));
   });
   ipcMain.handle(IpcChannel.ConversationsDelete, async (_e, params: DeleteConversationParams): Promise<void> => {
     requireSafeConversation(params.accountDir, params.sessionId);
@@ -3815,12 +3829,14 @@ function registerCodexLegacyIpc(requireSafeConversation: (accountDir: string, se
 // Migración de una conversación a una cuenta de otro proveedor (formato nativo del destino). La frontera valida la
 // forma y que cada cuenta sea REALMENTE del proveedor que dice el renderer; el servicio lo demás.
 function registerConversationMigrationIpc(): void {
-  ipcMain.handle(IpcChannel.ConversationsMigrate, (_e, input: unknown): Promise<MigrateConversationResult> => {
+  ipcMain.handle(IpcChannel.ConversationsMigrate, async (_e, input: unknown): Promise<MigrateConversationResult> => {
     const params = MIGRATE_CONVERSATION_SCHEMA.parse(input);
     for (const [dir, provider] of [[params.sourceAccountDir, params.sourceProvider], [params.destAccountDir, params.destProvider]] as const) {
       if (accountProviderOf(dir) !== provider) throw new Error(`La cuenta ${dir} no es de ${provider}`);
     }
-    return conversationMigration().migrate(params);
+    const result = await conversationMigration().migrate(params);
+    forgetMigratedSource({ index: getConversationIndexStore(), prCatalog: getPrCatalogStore(), thinking: getThinkingStore(), rewindState: getRewindState() }, params.sessionId, result.sessionId);
+    return result;
   });
 }
 
@@ -3841,8 +3857,7 @@ function conversationMigration(): ConversationMigrationService {
     nowMs: Date.now,
     newId: randomUUID,
     claude: {
-      effectiveDir: (accountDir, privacy) => (privacy === 'private' ? accountService.ensurePrivateProfile(accountDir) : accountDir),
-      deleteConversation: (ref) => createIpcConversationAdminService().deleteConversation({ accountDir: ref.accountDir, sessionId: ref.sessionId, cwd: ref.cwd, privacy: ref.privacy }),
+      deleteConversation: (ref) => createIpcConversationAdminService().deleteConversation({ accountDir: ref.accountDir, sessionId: ref.sessionId, cwd: ref.cwd }),
     },
     codex: {
       homeOf: (accountDir) => getProviderAccounts().find('codex', accountDir)?.home ?? failMigration(`Cuenta de Codex no valida: ${accountDir}`),
@@ -3899,6 +3914,7 @@ function registerSettingsIpc1(deps: IpcDependencies): void {
     const trustedFolders = settings.trustedFolders.filter(folder => folder.trim().length > 0).map(folder => canonicalPath(folder));
     const distrustedFolders = (settings.distrustedFolders ?? []).map(folder => canonicalPath(folder)).filter(folder => !trustedFolders.some(own => (process.platform === 'win32' ? own.toLowerCase() === folder.toLowerCase() : own === folder)));
     settingsStore.save({ ...settings, trustedFolders, distrustedFolders });
+    syncScheduledKeepAwake();
     windowManager.broadcast(SETTINGS_CHANGED_CHANNEL, settings, event.sender.id);
     getUiLanguageService().refresh();
   });
@@ -4111,7 +4127,37 @@ function wireTaskIpc(): void {
     pickPaths: pickTaskPaths,
     showSaveDialog: pickTaskSavePath,
     copyFile: (from, to) => copyFileSync(from, to),
+    isMainWindowSender: (event) => senderWindowId(event as Electron.IpcMainInvokeEvent) === MAIN_WINDOW_ID,
+    listDesktopTasks: () => listDesktopScheduledTasks(listAllAccounts().filter((a) => a.providerId === 'claude').map((a) => a.configDir), nodeDesktopTaskFs),
   });
+}
+
+// Planificador de tareas programadas: solo corre con Mage abierto. Cada vuelta avisa a la ventana principal si hay
+// pendientes (el renderer las recoge con takeDueTaskRuns) y sincroniza «Mantener activo».
+const TASK_SCHEDULER_TICK_MS = 30_000;
+let scheduledKeepAwake: KeepAwake | null = null;
+
+function syncScheduledKeepAwake(): void {
+  scheduledKeepAwake?.sync(getSettingsStore().load().scheduledTasksKeepAwake && getTaskService().hasActiveSchedule());
+}
+
+function tickTaskScheduler(): void {
+  syncScheduledKeepAwake();
+  if (getTaskService().hasDue()) liveMainWindow()?.webContents.send(TASKS_DUE_CHANNEL);
+}
+
+function startTaskScheduler(): void {
+  scheduledKeepAwake = new KeepAwake({ start: () => powerSaveBlocker.start('prevent-app-suspension'), stop: (id) => powerSaveBlocker.stop(id) });
+  // Registra y sigue: una vuelta rota no debe tumbar main.
+  const tick = (): void => {
+    try {
+      tickTaskScheduler();
+    } catch (err) {
+      mainLog('error', 'El planificador de tareas falló en esta vuelta', { error: err instanceof Error ? err.message : String(err) });
+    }
+  };
+  tick();
+  setInterval(tick, TASK_SCHEDULER_TICK_MS).unref();
 }
 
 function getLibraryService(): LibraryService {
@@ -4162,11 +4208,29 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
     service: getLibraryService,
   });
+  registerCapabilitiesIpcFromMain();
   registerBrowserIpcFromMain();
   wireTaskIpc();
   ipcMain.handle(IpcChannel.PromptImprove, (_e, params: ImprovePromptParams): Promise<string> =>
     promptService.improve(params.draft, params.accountDir),
   );
+}
+
+// Capacidades: skills, plugins y políticas de cada cuenta de Claude, solo lectura. Con el HOME de prueba,
+// los ajustes gestionados se leen de una carpeta dentro de él (managedSettingsDir).
+function registerCapabilitiesIpcFromMain(): void {
+  const managedDir = managedSettingsDir(process.platform, decideTestHome({ env: process.env, isPackaged: app.isPackaged }));
+  registerCapabilitiesIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
+    overview: (accountDir) => readCapabilitiesOverview({ fs: nodeCapabilityFs(), managedDir }, accountDir),
+    claudeAccountDirs: () => listAllAccounts().filter((account) => account.providerId === 'claude').map((account) => account.configDir),
+    pluginCatalog: (accountDir) => readPluginCatalog({ fs: nodeCapabilityFs(), managedDir }, accountDir),
+    // D-4 de la 094: el CLI de la cuenta con el entorno saneado (buildNativeEnv); ninguna clave llega al hijo.
+    runPluginCommand: async (accountDir, command) => {
+      await runNativeCommand({ engine: 'claude', binary: resolveClaudeBinary(), configDir: accountDir, runner: execFileRunner, baseEnv: process.env }, command);
+    },
+    skillFile: (params) => readSkillFile({ fs: nodeCapabilityFs(), projectDir: getCommandCatalogStore().loadCwd(params.accountDir) }, params),
+  });
 }
 
 // Navegador de Mage (F11b.3): su IPC va aparte para no engordar el registro de arriba.
@@ -4183,10 +4247,6 @@ function registerBrowserIpcFromMain(): void {
 function registerPromptIpc2(deps: IpcDependencies): void {
   const { promptService } = deps;
   ipcMain.handle(IpcChannel.PromptHandoff, (_e, params: HandoffPromptParams): Promise<string> => {
-    // El handoff reanuda la sesion con el config dir EFECTIVO, que en una conversacion privada es el
-    // perfil privado: hay que convergir sus credenciales antes de spawnear igual que al crear la
-    // sesion, o el CLI arrancaria con el token que quedo divergido tras el ultimo refresh.
-    accountService.ensureCredentialsFor(params.accountDir);
     return promptService.handoff(params);
   });
   // Notificacion del SO (M2.3): solo si la ventana NO tiene el foco (si el usuario ya esta mirando,
@@ -4501,6 +4561,7 @@ function hostControlDeps(): HostControlDeps {
     listProjects: () => getSettingsStore().load().chatProjects,
     defaultModels: () => getSettingsStore().load().defaultModelByProvider,
     isTrusted: isFolderTrusted,
+    canonicalPath,
     launch: (params) => launchHostSession(params, 'terminal'),
     conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
     // Lo que se cambia desde la terminal también queda en el índice (la ventana reabre con ello).
@@ -4523,6 +4584,7 @@ function hostControlDeps(): HostControlDeps {
     },
     createAccount: (params) => getProviderAccounts().create(params),
     requestQuit: () => { setTimeout(() => app.quit(), HOST_STOP_DELAY_MS); },
+    permissionAnswersAllowed: () => getSettingsStore().load().hostPermissionAnswers,
   };
 }
 
@@ -4539,7 +4601,7 @@ export function createHostSessionsPort(callerSessionId: string): HostSessionsPor
     accounts: () => listAllAccounts().filter((account) => (HOST_SESSION_PROVIDERS as readonly string[]).includes(account.providerId))
       .map((account) => ({ id: account.configDir, provider: account.providerId })),
     projects: () => getSettingsStore().load().chatProjects,
-    launch: (request, createdBy) => launchHostSession(resolveHostLaunchParams(deps, request, { cliDefaultModel: true }), 'mcp', createdBy),
+    launch: (request, createdBy, title) => launchHostSession(resolveHostLaunchParams(deps, request, { cliDefaultModel: true }), 'mcp', createdBy, title),
     creatorSettings: () => sessionSettings.get(callerSessionId),
     modelCatalog: (accountDir) => getCommandCatalogStore().loadModels(accountDir),
     setPermissionMode: (sessionId, mode) => { sessionManager.setPermissionMode(sessionId, mode); sessionSettings.apply(sessionId, 'permissionMode', mode); },
@@ -4621,9 +4683,24 @@ if (cliRelay !== null) {
   });
 }
 
+// Las conversaciones privadas ya no existen: las que hubiera en el perfil privado de su cuenta pasan al historial
+// normal de su cuenta, antes de listar nada o lanzar una sesión. Idempotente; no borra ninguna carpeta.
+function movePrivateConversationsOnce(): void {
+  const claudeDirs = listAllAccounts().filter((account) => account.providerId === 'claude').map((account) => account.configDir);
+  migratePrivateConversations(claudeDirs, {
+    exists: existsSync,
+    listDir: (path) => readdirSync(path),
+    isDirectory: (path) => statSync(path).isDirectory(),
+    ensureDir: (path) => { mkdirSync(path, { recursive: true }); },
+    move: renameSync,
+    log: (level, message) => mainLog(level, message),
+  });
+}
+
 // Lo que las sesiones necesitan con ventana y sin ella: el latido de los bloqueos de conversación, las claves de
 // proveedor antiguas ya en la bóveda y los MCP compartidos importados antes de la primera sesión.
 function prepareSessionServices(): void {
+  movePrivateConversationsOnce();
   startConversationLockHeartbeat();
   migrateLegacyProviderKeysOnce();
   importSharedMcpOnce();
@@ -4661,6 +4738,7 @@ app.whenReady().then(async () => {
 
   const mainWindow = windowManager.ensureMain();
   tray = createTray();
+  startTaskScheduler();
   // Catalogo de modelos real de cada cuenta con sesion (P-026 2.4, D7), con la ventana ya abierta.
   // `pnpm verify:gui` lo apaga: su contrato es no lanzar nunca el CLI.
   if (process.env.MAGE_SKIP_MODEL_PROBE !== '1') setTimeout(probeLoggedInAccounts, MODEL_PROBE_START_DELAY_MS).unref();

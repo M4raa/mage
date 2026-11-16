@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { ConversationSummary } from '@shared/conversations';
 import type { ChatProject } from '@shared/settings';
+import type { AdoptableSession } from '@shared/ipc';
+import type { BackgroundSession } from './backgroundWork';
 import type { Tab } from './types';
 import {
   accountToOpenWith,
+  descendantRows,
+  foldedIndicator,
+  withPendingDelegates,
   applySidebarFilter,
   buildSidebarRows,
   conversationSizeById,
@@ -12,7 +17,12 @@ import {
   groupSidebarRows,
   mergeAccountHistories,
   missingOwnerOf,
+  moveProjectKey,
+  nestDelegatedRows,
   normalizeFolderKey,
+  orderProjectGroups,
+  withNewProjectKeys,
+  type ProjectGroup,
   projectSummary,
   providerMonogram,
   rowIndicator,
@@ -32,7 +42,6 @@ const tab = (over: Partial<Tab> = {}): Tab => ({
   model: 'sonnet',
   provider: 'claude',
   title: 'abierta',
-  privacy: 'shared',
   ...over,
 });
 
@@ -41,7 +50,6 @@ const summary = (over: Partial<ConversationSummary> = {}): ConversationSummary =
   configDir: 'acc-a',
   cwd: 'C:\\vg\\proyecto-a',
   title: 'historica',
-  privacy: 'shared',
   updatedAtMs: 1000,
   sizeBytes: 2048,
   isScheduled: false,
@@ -59,6 +67,7 @@ const groupCtx = (over: Partial<GroupContext> = {}): GroupContext => ({
   pinnedIds: new Set(),
   scratchRoots: [],
   sessionIdByChat: {},
+  projectOrder: [],
   ...over,
 });
 
@@ -177,16 +186,71 @@ describe('proveedores y carpetas', () => {
   });
 });
 
-describe('groupSidebarRows', () => {
-  it('groupSidebarRows_privatePinned_staysPrivate', () => {
-    const row = historyRow({ sessionId: 'x', privacy: 'private' });
+describe('nestDelegatedRows', () => {
+  const NO_LIVE: Readonly<Record<string, string>> = {};
+  const child = (sessionId: string, createdByConversationId: string): SidebarRow => historyRow({ sessionId, createdByConversationId });
+  const ids = (rows: readonly SidebarRow[] | undefined): readonly (string | undefined)[] => (rows ?? []).map((row) => sidebarRowId(row, NO_LIVE));
 
-    const groups = groupSidebarRows([row], groupCtx({ pinnedIds: new Set(['x']) }));
+  it('nestDelegatedRows_hijaConCreadoraPresente_seAnida', () => {
+    const rows = [historyRow({ sessionId: 'madre' }), child('hija', 'madre')];
 
-    expect(groups.private).toEqual([row]);
-    expect(groups.pinned).toEqual([]);
+    const { top, childrenOf } = nestDelegatedRows(rows, NO_LIVE);
+
+    expect(ids(top)).toEqual(['madre']);
+    expect(ids(childrenOf.get('madre'))).toEqual(['hija']);
   });
 
+  it('nestDelegatedRows_creadoraAusente_quedaArriba', () => {
+    const rows = [child('hija', 'madre-archivada')];
+
+    const { top, childrenOf } = nestDelegatedRows(rows, NO_LIVE);
+
+    expect(ids(top)).toEqual(['hija']);
+    expect(childrenOf.size).toBe(0);
+  });
+
+  it('nestDelegatedRows_nietas_bajoSuCreadora', () => {
+    const rows = [historyRow({ sessionId: 'abuela' }), child('madre', 'abuela'), child('nieta', 'madre')];
+
+    const { top, childrenOf } = nestDelegatedRows(rows, NO_LIVE);
+
+    expect(ids(top)).toEqual(['abuela']);
+    expect(ids(childrenOf.get('abuela'))).toEqual(['madre']);
+    expect(ids(childrenOf.get('madre'))).toEqual(['nieta']);
+  });
+
+  it('nestDelegatedRows_historialYPestanas_mezclados', () => {
+    const madre: SidebarRow = { kind: 'tab', tab: tab({ id: 't1', resumeSessionId: 'madre' }), accountId: 'acc-a' };
+    const hijaTab: SidebarRow = { kind: 'tab', tab: tab({ id: 't2', resumeSessionId: 'hija-1', createdBy: { conversationId: 'madre', sessionId: 'vivo' } }), accountId: 'acc-a' };
+    const reabierta: SidebarRow = { kind: 'tab', tab: tab({ id: 't3', resumeSessionId: 'hija-2' }), history: summary({ sessionId: 'hija-2', createdByConversationId: 'madre' }), accountId: 'acc-a' };
+    const rows = [madre, hijaTab, child('hija-3', 'madre'), reabierta];
+
+    const { top, childrenOf } = nestDelegatedRows(rows, NO_LIVE);
+
+    expect(top).toEqual([madre]);
+    expect(ids(childrenOf.get('madre'))).toEqual(['hija-1', 'hija-3', 'hija-2']);
+  });
+
+  it('nestDelegatedRows_sinDelegadas_igual', () => {
+    const rows = [historyRow({ sessionId: 'a' }), historyRow({ sessionId: 'b' })];
+
+    const { top, childrenOf } = nestDelegatedRows(rows, NO_LIVE);
+
+    expect(top).toEqual(rows);
+    expect(childrenOf.size).toBe(0);
+  });
+
+  it('groupSidebarRows_hijaDeOtraCarpeta_noSeReparteYViajaEnChildrenOf', () => {
+    const rows = [historyRow({ sessionId: 'madre' }), historyRow({ sessionId: 'hija', cwd: 'C:\\vg\\otra', createdByConversationId: 'madre' })];
+
+    const groups = groupSidebarRows(rows, groupCtx());
+
+    expect(groups.projects.flatMap((group) => group.rows)).toHaveLength(1);
+    expect(groups.childrenOf.get('madre')).toHaveLength(1);
+  });
+});
+
+describe('groupSidebarRows', () => {
   it('groupSidebarRows_pinnedTab_goesPinned', () => {
     const row: SidebarRow = { kind: 'tab', tab: tab({ pinned: true }), accountId: 'acc-a' };
 
@@ -224,14 +288,92 @@ describe('groupSidebarRows', () => {
     expect(groups.projects.map((group) => group.name)).toEqual(['app', 'app']);
   });
 
-  it('groupSidebarRows_emptyUserProject_listedLast', () => {
+  it('groupSidebarRows_emptyUserProject_sigueElOrdenGuardado', () => {
     const empty = project({ id: 'p2', name: 'Vacio' });
     const rows = [historyRow({ cwd: 'C:\\x\\app' })];
 
-    const groups = groupSidebarRows(rows, groupCtx({ projects: [empty] }));
+    const groups = groupSidebarRows(rows, groupCtx({ projects: [empty], projectOrder: ['p:p2', 'd:c:/x/app'] }));
 
-    expect(groups.projects.map((group) => group.key)).toEqual(['d:c:/x/app', 'p:p2']);
-    expect(groups.projects[1]?.rows).toEqual([]);
+    expect(groups.projects.map((group) => group.key)).toEqual(['p:p2', 'd:c:/x/app']);
+    expect(groups.projects[0]?.rows).toEqual([]);
+  });
+});
+
+// Un grupo con una sola fila de la recencia dada (0 = grupo vacío).
+const groupAt = (key: string, recency: number): ProjectGroup => ({
+  key,
+  name: key,
+  cwd: null,
+  projectId: null,
+  rows: recency === 0 ? [] : [historyRow({ sessionId: key, updatedAtMs: recency })],
+});
+const keysOf = (groups: readonly ProjectGroup[]): string[] => groups.map((group) => group.key);
+
+describe('orderProjectGroups', () => {
+  it('orderProjectGroups_ordenGuardado_lomantiene', () => {
+    const groups = [groupAt('d:a', 300), groupAt('d:b', 200), groupAt('d:c', 100)];
+
+    const result = orderProjectGroups(groups, ['d:c', 'd:b', 'd:a']);
+
+    expect(keysOf(result)).toEqual(['d:c', 'd:b', 'd:a']);
+  });
+
+  it('orderProjectGroups_claveNueva_vaPrimero', () => {
+    const groups = [groupAt('d:a', 900), groupAt('d:nueva', 1)];
+
+    const result = orderProjectGroups(groups, ['d:a']);
+
+    expect(keysOf(result)).toEqual(['d:nueva', 'd:a']);
+  });
+
+  it('orderProjectGroups_variasNuevas_porRecencia', () => {
+    const groups = [groupAt('d:vieja', 1), groupAt('d:a', 900), groupAt('d:reciente', 50)];
+
+    const result = orderProjectGroups(groups, ['d:a']);
+
+    expect(keysOf(result)).toEqual(['d:reciente', 'd:vieja', 'd:a']);
+  });
+
+  it('orderProjectGroups_ordenVacio_porRecencia', () => {
+    const groups = [groupAt('d:a', 100), groupAt('d:b', 300), groupAt('d:vacio', 0)];
+
+    const result = orderProjectGroups(groups, []);
+
+    expect(keysOf(result)).toEqual(['d:b', 'd:a', 'd:vacio']);
+  });
+});
+
+describe('withNewProjectKeys', () => {
+  it('withNewProjectKeys_sinNuevas_mismaReferencia', () => {
+    const order = ['a', 'b'];
+
+    expect(withNewProjectKeys(order, ['b', 'a'])).toBe(order);
+  });
+
+  it('withNewProjectKeys_nuevas_alPrincipio', () => {
+    expect(withNewProjectKeys(['a'], ['x', 'a', 'y'])).toEqual(['x', 'y', 'a']);
+  });
+});
+
+describe('moveProjectKey', () => {
+  it('moveProjectKey_antesDeOtra', () => {
+    expect(moveProjectKey(['a', 'b', 'c'], 'c', 'a')).toEqual(['c', 'a', 'b']);
+  });
+
+  it('moveProjectKey_alFinal', () => {
+    expect(moveProjectKey(['a', 'b', 'c'], 'a', null)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('moveProjectKey_mismaClave_sinCambios', () => {
+    const order = ['a', 'b'];
+
+    expect(moveProjectKey(order, 'a', 'a')).toBe(order);
+  });
+
+  it('moveProjectKey_claveAusente_sinCambios', () => {
+    const order = ['a', 'b'];
+
+    expect(moveProjectKey(order, 'z', 'a')).toBe(order);
   });
 });
 
@@ -327,10 +469,6 @@ describe('accountToOpenWith', () => {
     expect(accountToOpenWith(historyRow({ providerId: 'codex' }, 'cx-b'), active)).toBe('cx-b');
     expect(accountToOpenWith(historyRow({}, 'acc-b'), undefined)).toBe('acc-b');
   });
-
-  it('accountToOpenWith_private_usesRowAccount', () => {
-    expect(accountToOpenWith(historyRow({ privacy: 'private' }, 'acc-b'), active)).toBe('acc-b');
-  });
 });
 
 describe('conversationSizeById', () => {
@@ -397,5 +535,76 @@ describe('missingOwnerOf', () => {
 
   it('missingOwnerOf_pestanaNoFijada_undefined', () => {
     expect(missingOwnerOf(tabRow({}), known)).toBeUndefined();
+  });
+});
+
+// Decisión 13-11: subsesiones del MCP sin pestaña.
+describe('withPendingDelegates', () => {
+  const host = (over: Partial<AdoptableSession> = {}): AdoptableSession => ({
+    sessionId: 'viva', conversationId: 'hija', nativeId: null, provider: 'claude', accountId: 'acc-a', configDir: 'acc-a', cwd: 'C:\vg\proyecto-a',
+    model: 'haiku', origin: 'mcp', createdBy: { conversationId: 'madre', sessionId: 'madre-viva' }, ...over,
+  });
+  const entry = (over: Partial<BackgroundSession> = {}): BackgroundSession => ({
+    sessionId: 'viva', conversationId: 'hija', title: 'VG hija', accountId: 'acc-a', state: 'working', sinceMs: 5, hostSession: host(), ...over,
+  });
+
+  it('withPendingDelegates_subsesionSinFila_anadeProvisionalConSuCreadora', () => {
+    const merged = withPendingDelegates([], { viva: entry() });
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.item).toMatchObject({ sessionId: 'hija', title: 'VG hija', cwd: 'C:\vg\proyecto-a', createdByConversationId: 'madre' });
+    expect(merged[0]?.accountId).toBe('acc-a');
+  });
+
+  it('withPendingDelegates_yaEnElHistorial_mismaLista', () => {
+    const history: AccountConversation[] = [{ accountId: 'acc-a', item: summary({ sessionId: 'hija' }) }];
+
+    expect(withPendingDelegates(history, { viva: entry() })).toBe(history);
+  });
+
+  it('withPendingDelegates_cerradaTrabajando_noAnade', () => {
+    const history: AccountConversation[] = [];
+
+    expect(withPendingDelegates(history, { viva: entry({ hostSession: undefined }) })).toBe(history);
+  });
+
+  it('withPendingDelegates_codexSinHilo_noAnade', () => {
+    const history: AccountConversation[] = [];
+
+    expect(withPendingDelegates(history, { viva: entry({ conversationId: undefined }) })).toBe(history);
+  });
+});
+
+describe('descendantRows', () => {
+  const NO_LIVE: Readonly<Record<string, string>> = {};
+  const row = (sessionId: string): SidebarRow => historyRow({ sessionId });
+  const idsOf = (rows: readonly SidebarRow[]): readonly (string | undefined)[] => rows.map((r) => sidebarRowId(r, NO_LIVE));
+
+  it('descendantRows_nietas_todasLasDeAbajo', () => {
+    const childrenOf = new Map<string, readonly SidebarRow[]>([['abuela', [row('madre')]], ['madre', [row('nieta')]]]);
+
+    expect(idsOf(descendantRows(row('abuela'), childrenOf, NO_LIVE))).toEqual(['madre', 'nieta']);
+  });
+
+  it('descendantRows_sinHijas_vacio', () => {
+    expect(descendantRows(row('sola'), new Map(), NO_LIVE)).toEqual([]);
+  });
+});
+
+describe('foldedIndicator', () => {
+  it('foldedIndicator_hijaPidePermiso_atencion', () => {
+    expect(foldedIndicator(null, [null, 'attention'])).toBe('attention');
+  });
+
+  it('foldedIndicator_propiaTrabajandoHijaConError_error', () => {
+    expect(foldedIndicator('working', ['error'])).toBe('error');
+  });
+
+  it('foldedIndicator_hijaSoloLectura_noSube', () => {
+    expect(foldedIndicator(null, ['readOnly'])).toBeNull();
+  });
+
+  it('foldedIndicator_sinNada_null', () => {
+    expect(foldedIndicator(null, [])).toBeNull();
   });
 });

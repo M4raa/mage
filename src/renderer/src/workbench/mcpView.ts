@@ -273,6 +273,17 @@ export interface McpConnectorGroup {
   readonly rows: readonly McpConnectorRow[];
 }
 
+// D-7 de la 094 (tabla como Claude Desktop): web → Tipo «Web» y Autorización «Individual» (OAuth por cuenta); plugin →
+// «Complemento», «—»; extensión de Mage → «Escritorio» con el chip «Personalizado», «—»; «Claude in Chrome» →
+// «Escritorio» con el chip «Incluido», «—».
+export type ConnectorChip = 'custom' | 'included' | null;
+export function connectorColumns(kind: McpConnectorKind): { readonly chip: ConnectorChip; readonly individualAuth: boolean } {
+  if (kind === 'web') return { chip: null, individualAuth: true };
+  if (kind === 'extension') return { chip: 'custom', individualAuth: false };
+  if (kind === 'desktopOnly') return { chip: 'included', individualAuth: false };
+  return { chip: null, individualAuth: false };
+}
+
 export const CLAUDE_IN_CHROME = 'Claude in Chrome';
 const DESKTOP_ONLY_LABEL = 'mcp.connectors.desktopOnly';
 const CONNECTORS_OFF_LABEL = 'mcp.connectors.off';

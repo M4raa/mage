@@ -2,16 +2,14 @@
 // transcripcion persistida (`<configDir>/projects[/…]/<enc>/<sessionId>.jsonl`). NO incluye el
 // contenido ni credenciales; solo metadatos para listar/reabrir.
 import type { AccountProviderId } from './accounts';
-import type { ConversationPrivacy } from './state';
 
 export interface ConversationSummary {
   readonly sessionId: string;
-  // Config dir EFECTIVO donde vive la transcripcion: la cuenta (compartida) o su perfil privado
-  // (mage-private). Se usa como accountDir al reanudar y al abrir transcripcion/memoria.
+  // Config dir de la cuenta donde vive la transcripcion. Se usa como accountDir al reanudar y al abrir
+  // transcripcion/memoria.
   readonly configDir: string;
   readonly cwd: string; // cwd real leido de la transcripcion (o '' si no se pudo determinar)
   readonly title: string; // custom-title / ai-title / primer prompt / fallback
-  readonly privacy: ConversationPrivacy;
   readonly updatedAtMs: number; // mtime del fichero (para ordenar por reciente)
   // PESO de la conversacion: bytes del .jsonl en disco. Sale del MISMO `stat` que ya se hace para el
   // mtime, asi que listar el historial no cuesta ni una llamada mas. Es el tamaño del fichero, no un
@@ -26,30 +24,27 @@ export interface ConversationSummary {
   readonly lastAccountId?: string;
   // Cuenta dueña de una conversación creada fuera de la ventana (terminal o MCP), del índice de Mage; solo Claude.
   readonly hostOwnerAccountId?: string;
+  // Del índice de Mage: la conversación que la creó con `mage_create_session` (el lateral la anida bajo ella).
+  readonly createdByConversationId?: string;
 }
 
-// Borrado de una conversacion en disco (#2 de AJUSTES). accountDir es la cuenta RAIZ; privacy indica
-// si vive en el pozo comun o en el perfil privado (main resuelve el dir efectivo).
+// Borrado de una conversacion en disco (#2 de AJUSTES). accountDir es la cuenta que la guarda.
 export interface DeleteConversationParams {
   readonly accountDir: string;
   readonly sessionId: string;
   readonly cwd: string;
-  readonly privacy: ConversationPrivacy;
 }
 
-// Movimiento de una conversacion entre secciones (compartido/privado) y/o cuentas (#2 de AJUSTES).
-// Origen = {accountDir, privacy}; destino = {destAccountDir, destPrivacy}. Reubica el .jsonl (y la
-// carpeta de subagentes) al projects/ del destino.
+// Movimiento de una conversacion entre cuentas (#2 de AJUSTES). Reubica el .jsonl (y la carpeta de
+// subagentes) al projects/ de la cuenta destino.
 export interface MoveConversationParams {
   readonly accountDir: string;
   readonly sessionId: string;
   readonly cwd: string;
-  readonly privacy: ConversationPrivacy;
   readonly destAccountDir: string;
-  readonly destPrivacy: ConversationPrivacy;
 }
 
-// Resultado del movimiento: el config dir EFECTIVO donde ha quedado (cuenta o su perfil privado).
+// Resultado del movimiento: el config dir donde ha quedado.
 export interface MoveConversationResult {
   readonly configDir: string;
 }
@@ -62,7 +57,6 @@ export interface MigrateConversationParams {
   readonly sourceProvider: AccountProviderId;
   readonly sessionId: string;
   readonly cwd: string;
-  readonly privacy: ConversationPrivacy;
   readonly destAccountDir: string;
   readonly destProvider: AccountProviderId;
   // Título visible de la conversación en Mage: el destino lo conserva (Claude: línea `custom-title`). Sin él, el destino
@@ -73,7 +67,7 @@ export interface MigrateConversationParams {
 export interface MigrateConversationResult {
   // Id de la conversación en el destino (el de Claude, el hilo de Codex o la conversación de agy).
   readonly sessionId: string;
-  // Config dir EFECTIVO donde queda (la cuenta, o su perfil privado en Claude).
+  // Config dir de la cuenta donde queda.
   readonly configDir: string;
   readonly provider: AccountProviderId;
 }
