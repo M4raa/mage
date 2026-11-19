@@ -4971,6 +4971,44 @@ const CHECKS = [
     },
   },
   {
+    // Ficheros en el chat: un fichero creado por el agente y un adjunto del mensaje enviado salen como fichas, y la del
+    // adjunto abre Ficheros. Sin Enter ni CLI: los bloques se siembran en el store.
+    name: 'Chat: fichas de fichero creado y de adjunto enviado abren Ficheros',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      try {
+        await hydrateBlocks(page, [
+          { kind: 'user', id: 'vg-att-u', text: 'mira esto' + '\n\n```\n// notas.md\n# Hola\n```', time: '10:00', attachments: [], nativeId: null },
+          {
+            kind: 'tool', id: 'vg-att-t', toolUseId: 'u-vg-att-t', tool: 'Write', toolClass: 'edit', command: 'informe.md', meta: 'ok', isError: false,
+            output: [], filePath: 'informe.md', diff: null, writtenContent: null, artifact: null, artifactDraft: null, parentToolUseId: null,
+          },
+        ]);
+        const adjunto = page.locator('[data-sent-attachment$="notas.md"]').first();
+        const ficha = page.locator('[data-file-card$="informe.md"]').first();
+        await adjunto.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await ficha.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await adjunto.evaluate((el) => {
+          const burbuja = el.closest('.group');
+          return { burbujaSinContenido: !(burbuja?.textContent ?? '').includes('// notas.md'), texto: el.textContent ?? '' };
+        });
+        const conTamano = /\d+(?:[.,]\d+)? (?:B|kB|MB)/.test(medido.texto);
+        await adjunto.click();
+        const panel = page.locator('[data-files-panel="true"]').first();
+        const abierto = await panel.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+        const hechos = { burbujaSinContenido: medido.burbujaSinContenido, adjuntoConTamano: conTamano, fichaCreado: true, ficheros: abierto };
+        return { ok: Object.values(hechos).every(Boolean), detail: `${JSON.stringify(hechos)} adjunto="${medido.texto}"` };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
     // Maquetación del prompt: la caja vacía mide poco más que el botón y bajo la línea de información queda
     // poco margen. Sin Enter: solo se miden cajas.
     name: 'Prompt: alto de la caja vacía y hueco bajo la línea de información',
