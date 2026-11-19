@@ -1,5 +1,6 @@
 import { createdFilesOf, listedFile, type CreatedFile } from './createdFilesView';
 import type { FileTouch, FileTouchAction } from './fileTouches';
+import { splitSentAttachments } from './sentAttachments';
 import type { Block } from './types';
 
 // Referencias del chat al plan (F5.6, #31): modulo PURO. Una referencia del texto de un mensaje
@@ -219,14 +220,14 @@ export function anchorTextMatcher(key: string): RegExp {
 
 // ---- Lista del panel Ficheros ----
 
-export type FileSection = FileTouchAction | 'mentioned';
+export type FileSection = FileTouchAction | 'mentioned' | 'attached';
 
 export type PanelEntry =
   | { readonly kind: 'file'; readonly docId: string; readonly file: CreatedFile; readonly section: FileSection; readonly cited: boolean }
   | { readonly kind: 'plan'; readonly docId: string; readonly title: string; readonly text: string };
 
 // Orden de las secciones y, a la vez, su fuerza: un fichero se queda en la más fuerte en la que aparezca.
-const SECTION_RANK: Readonly<Record<FileSection, number>> = { created: 0, edited: 1, read: 2, mentioned: 3 };
+const SECTION_RANK: Readonly<Record<FileSection, number>> = { created: 0, edited: 1, read: 2, mentioned: 3, attached: 4 };
 // Herramientas que, sin `fileTouches` (bloques viejos o inyectados), se clasifican por su `filePath` como antes.
 const LEGACY_ACTION: ReadonlyMap<string, FileTouchAction> = new Map([['Write', 'created'], ['Edit', 'edited'], ['MultiEdit', 'edited'], ['NotebookEdit', 'edited'], ['Read', 'read']]);
 
@@ -272,9 +273,28 @@ function citedFile(path: string): CreatedFile {
 export function panelEntries(blocks: readonly Block[], cwd: string): readonly PanelEntry[] {
   const touched = touchedSections(blocks, cwd).map((f): PanelEntry => ({ kind: 'file', docId: f.docId, file: f.file, section: f.section, cited: false }));
   const known = new Set(touched.map((entry) => entry.docId));
+  const attached = attachedEntries(blocks, cwd, known);
+  // Un .md adjunto también aparece citado en el texto del mensaje: manda «Adjuntos», que es lo que fue.
+  const attachedIds = new Set(attached.map((entry) => entry.docId));
   const cited = associatedDocumentPaths(blocks, cwd)
-    .filter((path) => !known.has(path))
+    .filter((path) => !known.has(path) && !attachedIds.has(path))
     .map((path): PanelEntry => ({ kind: 'file', docId: path, file: citedFile(path), section: 'mentioned', cited: true }));
   const plans = planDocuments(blocks).map((doc): PanelEntry => ({ kind: 'plan', docId: doc.docId, title: doc.title, text: doc.text }));
-  return [...touched, ...cited, ...plans];
+  return [...touched, ...cited, ...attached, ...plans];
+}
+
+// Los ficheros adjuntos a mensajes del usuario que no estén ya listados, del más reciente al más antiguo.
+function attachedEntries(blocks: readonly Block[], cwd: string, listed: ReadonlySet<string>): readonly PanelEntry[] {
+  const seen = new Set(listed);
+  const entries: PanelEntry[] = [];
+  for (const block of [...blocks].reverse()) {
+    if (block.kind !== 'user') continue;
+    for (const attachment of [...splitSentAttachments(block.text).files].reverse()) {
+      const docId = fileDocId(attachment.path, cwd);
+      if (seen.has(docId)) continue;
+      seen.add(docId);
+      entries.push({ kind: 'file', docId, file: listedFile(attachment.path, block.id, false), section: 'attached', cited: false });
+    }
+  }
+  return entries;
 }

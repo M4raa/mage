@@ -225,6 +225,8 @@ function sectionLabel(section: PanelSection, t: Translate): string {
       return t('i3.files.section.read');
     case 'mentioned':
       return t('i3.files.section.mentioned');
+    case 'attached':
+      return t('i3.files.section.attached');
     case 'plans':
       return t('i3.files.section.plans');
   }

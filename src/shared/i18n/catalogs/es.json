@@ -1285,6 +1285,7 @@
   "history.recentProjects.title": "PROYECTOS RECIENTES",
   "i2.prompt.attachImage": "Adjuntar archivo",
   "i2.prompt.attachImageTip": "Adjuntar un archivo. Una imagen va como imagen; el resto entra como mención @: un PDF se adjunta en Claude, el texto va dentro del mensaje y lo demás como ruta. También puedes soltarlo en el chat.",
+  "i3.files.section.attached": "Adjuntos",
   "i3.files.section.created": "Creados",
   "i3.files.section.edited": "Editados",
   "i3.files.section.mentioned": "Mencionados",

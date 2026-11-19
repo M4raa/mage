@@ -161,6 +161,26 @@ describe('anchorTextMatcher', () => {
   });
 });
 
+describe('panelEntries adjuntos', () => {
+  const attachedText = 'mira\n\n```\n// notas.md\n# Hola\n```';
+
+  it('panelEntries_mensajeConAdjunto_seccionAttached', () => {
+    const blocks = [userBlock('u1', attachedText)];
+
+    const entries = panelEntries(blocks, 'C:/proj');
+
+    expect(entries.map((e) => (e.kind === 'file' ? [e.section, e.docId] : null))).toEqual([['attached', 'C:/proj/notas.md']]);
+  });
+
+  it('panelEntries_adjuntoYaEditado_noSeRepite', () => {
+    const blocks = [writeBlock('w1', 'C:/proj/notas.md'), userBlock('u1', attachedText)];
+
+    const entries = panelEntries(blocks, 'C:/proj');
+
+    expect(entries.map((e) => (e.kind === 'file' ? [e.section, e.docId] : null))).toEqual([['created', 'C:/proj/notas.md']]);
+  });
+});
+
 describe('panelEntries', () => {
   it('panelEntries_createdCitedAndPlans_inThatOrderWithoutDuplicates', () => {
     const blocks = [

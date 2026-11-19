@@ -1287,6 +1287,7 @@ export interface MessageValues {
   readonly "history.recentProjects.title": never;
   readonly "i2.prompt.attachImage": never;
   readonly "i2.prompt.attachImageTip": never;
+  readonly "i3.files.section.attached": never;
   readonly "i3.files.section.created": never;
   readonly "i3.files.section.edited": never;
   readonly "i3.files.section.mentioned": never;
