@@ -88,7 +88,8 @@ function mergeRepeatedError(rows: ChatRow[], block: Block): boolean {
 // Lo que va al panel: todo lo que no es del chat, menos un permiso que aun espera (ese esta en el chat) y
 // una pregunta pendiente (esa esta en el dock).
 export function isActivityStep(block: Block): boolean {
-  if (block.kind === 'tool') return !hasChatCard(block);
+  // La ficha de un fichero se AÑADE al hilo: su paso sigue en Actividad (con su diff), a diferencia de artifacts y subsesiones.
+  if (block.kind === 'tool') return artifactCardFrom(block) === null && delegationCardFrom(block) === null;
   if (block.kind === 'permission' || block.kind === 'question') return block.state !== 'pending';
   return block.kind === 'thinking' || block.kind === 'subagent';
 }
