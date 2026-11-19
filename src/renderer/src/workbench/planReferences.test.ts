@@ -4,6 +4,7 @@ import {
   associatedDocumentPaths,
   buildReferenceIndex,
   extractReferenceTokens,
+  fileDocId,
   indexDocumentAnchors,
   panelEntries,
   planDocuments,
@@ -16,6 +17,20 @@ const writeBlock = (id: string, filePath: string, isError = false): Block =>
 const userBlock = (id: string, text: string): Block => ({ kind: 'user', id, text }) as unknown as Block;
 const agentBlock = (id: string, text: string): Block =>
   ({ kind: 'agent', id, runs: [{ code: false, text }], streaming: false }) as unknown as Block;
+
+describe('fileDocId', () => {
+  it('fileDocId_rutaRelativaDentro_rutaResuelta', () => {
+    const docId = fileDocId('src/a.ts', 'C:/proj');
+
+    expect(docId).toBe('C:/proj/src/a.ts');
+  });
+
+  it('fileDocId_rutaFuera_laMisma', () => {
+    const docId = fileDocId('D:/otro/a.ts', 'C:/proj');
+
+    expect(docId).toBe('D:/otro/a.ts');
+  });
+});
 
 describe('extractReferenceTokens', () => {
   it('extractReferenceTokens_threeForms', () => {

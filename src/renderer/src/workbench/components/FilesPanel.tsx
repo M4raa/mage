@@ -311,7 +311,7 @@ function PlanViewer({ docId, name, text }: { readonly docId: string; readonly na
   useEffect(() => {
     if (target === null) return;
     clearDocumentTarget();
-    if (Date.now() - target.at <= TARGET_TTL_MS) reveal(docId, text, target.key);
+    if (Date.now() - target.at <= TARGET_TTL_MS && target.key !== '') reveal(docId, text, target.key);
   }, [target, docId, text, reveal, clearDocumentTarget]);
   return (
     <div ref={rootRef} data-plan-viewer={docId} className="flex min-w-0 flex-col">
@@ -371,6 +371,7 @@ function FileViewer({
   useEffect(() => {
     if (target === null) return;
     clearDocumentTarget();
+    if (target.key === '') return;
     if (Date.now() - target.at > TARGET_TTL_MS) return;
     if (hadContent.current) load();
     setAwaiting(target);

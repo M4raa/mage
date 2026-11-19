@@ -141,6 +141,11 @@ export function resolveDocumentPath(rawPath: string, cwd: string): string | null
   return resolveInside(rawPath, cwd);
 }
 
+// Clave de un fichero en Ficheros: su ruta resuelta dentro de la carpeta, o la que llegó.
+export function fileDocId(path: string, cwd: string): string {
+  return resolveInside(path, cwd) ?? path;
+}
+
 function resolveInside(rawPath: string, cwd: string): string | null {
   const root = normalizeSegments(cwd);
   const body = normalizeSegments(isAbsolutePath(rawPath) ? rawPath : `${cwd}/${rawPath}`);
@@ -231,7 +236,7 @@ interface SectionedFile {
   readonly section: FileSection;
 }
 
-function touchesOf(block: Block): readonly FileTouch[] {
+export function touchesOf(block: Block): readonly FileTouch[] {
   if (block.kind !== 'tool') return [];
   if (block.fileTouches !== undefined) return block.fileTouches;
   const action = LEGACY_ACTION.get(block.tool);
@@ -246,7 +251,7 @@ function touchedSections(blocks: readonly Block[], cwd: string): readonly Sectio
   const byDoc = new Map<string, SectionedFile>();
   for (const block of blocks) {
     for (const touch of touchesOf(block)) {
-      const docId = resolveInside(touch.path, cwd) ?? touch.path;
+      const docId = fileDocId(touch.path, cwd);
       const previous = byDoc.get(docId);
       if (previous !== undefined && SECTION_RANK[previous.section] < SECTION_RANK[touch.action]) continue;
       byDoc.delete(docId);

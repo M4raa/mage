@@ -426,6 +426,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   focusPrompt: () => void;
   // Abre el panel Ficheros en el documento de la referencia y fija el destino (F5.6, #31).
   openDocumentAnchor: (tabId: string, anchor: DocAnchor) => void;
+  openFileInPanel: (tabId: string, docId: string) => void;
   clearDocumentTarget: () => void;
   // Clic en una notificacion del SO (P-028 40): lleva a su pestaña y al prompt o, si la pestaña ya no
   // esta, RESALTA su fila del historial (reabrirla cortaria la sesion viva en segundo plano).
@@ -1985,6 +1986,11 @@ export function createWorkbenchStore(mage: MageClient) {
     focusPrompt: () => set((s) => ({ promptFocusToken: s.promptFocusToken + 1 })),
     openDocumentAnchor: (tabId, anchor) => {
       set({ documentTarget: { tabId, docId: anchor.docId, key: anchor.key, at: Date.now() } });
+      void import('./panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().revealPanelById('files'));
+    },
+    // Abre un fichero entero en Ficheros (ficha del chat): `key` vacía = sin punto que buscar.
+    openFileInPanel: (tabId, docId) => {
+      set({ documentTarget: { tabId, docId, key: '', at: Date.now() } });
       void import('./panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().revealPanelById('files'));
     },
     clearDocumentTarget: () => set({ documentTarget: null }),
