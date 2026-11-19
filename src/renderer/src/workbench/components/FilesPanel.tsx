@@ -14,6 +14,7 @@ import { langFromPath } from '../codeHighlight';
 import type { Block } from '../types';
 import type { ProjectFileContent } from '@shared/ipc';
 import { describeError } from '../describeError';
+import { openInBrowserPanel } from '../browser/openInBrowserPanel';
 
 // Panel "Ficheros" (2.10, peticion del usuario: "si creas un plan .md .txt o lo que sea tiene que
 // aparecer a la derecha como un artifact y así poder ver el plan, poder editarlo").
@@ -421,12 +422,7 @@ function FileViewer({
   const openInBrowser = (): void => {
     if (sessionId === undefined) return;
     setError(null);
-    void window.mage
-      .browserNavigate({ sessionId, url: file.path })
-      // Import dinámico, como en browserStore: panelLayoutStore importa el registro de paneles.
-      .then(() => import('../panelLayoutStore'))
-      .then((m) => m.usePanelLayoutStore.getState().revealPanelById('browser'))
-      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
+    void openInBrowserPanel(sessionId, file.path).catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
 
   return (

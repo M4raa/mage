@@ -675,6 +675,9 @@ export interface MessageValues {
   readonly "chat.instructions.scopeUser": never;
   readonly "chat.jumpToEnd": never;
   readonly "chat.keepAlive.rewindFailed": never;
+  readonly "chat.link.copy": never;
+  readonly "chat.link.openExternal": never;
+  readonly "chat.link.openInternal": never;
   readonly "chat.load.failed": { readonly "error": string | number };
   readonly "chat.load.loading": never;
   readonly "chat.load.missing": { readonly "provider": string | number };
@@ -2381,6 +2384,9 @@ export interface MessageValues {
   readonly "settings.storage.importedContext.label": never;
   readonly "settings.storage.importedContext.unit": never;
   readonly "settings.storage.intro": never;
+  readonly "settings.storage.links.hint": never;
+  readonly "settings.storage.links.label": never;
+  readonly "settings.storage.links.toggle": never;
   readonly "settings.storage.newFolder.label": never;
   readonly "settings.storage.newFolder.lastProject": never;
   readonly "settings.storage.newFolder.lastProjectHint": never;

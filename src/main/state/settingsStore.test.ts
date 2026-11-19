@@ -44,6 +44,7 @@ const VALID: AppSettings = {
   claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
   artifactEnabled: true,
   hostPermissionAnswers: false,
+  linksOpenExternally: false,
   ghNoticeDismissed: true,
   autoArchiveOnPrClose: true,
   agyCommandRules: { allow: ['git status'], deny: ['rm -rf build'] },

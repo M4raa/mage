@@ -12462,6 +12462,41 @@ const CHECKS = [
     },
   },
   {
+    // Enlaces del chat: el botón derecho abre un menú con tres elementos y Ctrl+clic va al navegador EXTERNO (`linkOpener.external`
+    // sustituido por un espía vía __mageDev: no se abre nada). Sin Enter ni CLI. No se prueba el clic normal: abriría el integrado con red.
+    name: 'Chat: menú de enlace y Ctrl+clic al navegador externo',
+    state: { tabs: 1 },
+    async run(page) {
+      await hydrateBlocks(page, [{ kind: 'agent', id: 'vg-link', runs: [{ code: false, text: '[enlace](https://example.com/)' }], streaming: false }]);
+      const enlace = page.locator('[data-chat-link]');
+      await enlace.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.evaluate(() => {
+        window.__vgLinkOriginal = window.__mageDev.linkOpener.external;
+        window.__vgLinkCalls = [];
+        window.__mageDev.linkOpener.external = (url) => { window.__vgLinkCalls.push(url); return Promise.resolve(); };
+      });
+      try {
+        await enlace.first().click({ button: 'right' });
+        const items = page.locator('[data-link-menu]');
+        await items.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const elementosDelMenu = await items.count();
+        await page.keyboard.press('Escape');
+        await items.first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const menuCerrado = (await items.count()) === 0;
+        await enlace.first().click({ modifiers: ['Control'] });
+        const llamadas = await page.evaluate(() => window.__vgLinkCalls);
+        const ctrlClicFuera = llamadas.length === 1 && llamadas[0] === 'https://example.com/';
+        return { ok: elementosDelMenu === 3 && menuCerrado && ctrlClicFuera, detail: JSON.stringify({ elementosDelMenu, menuCerrado, ctrlClicFuera, llamadas }) };
+      } finally {
+        await page.evaluate(() => {
+          if (window.__vgLinkOriginal !== undefined) window.__mageDev.linkOpener.external = window.__vgLinkOriginal;
+          delete window.__vgLinkOriginal;
+          delete window.__vgLinkCalls;
+        });
+      }
+    },
+  },
+  {
     // Carril R (R04): la entrada «Tareas programadas» del lateral (sustituye a la sección «Tareas»). Solo mide el DOM:
     // no pulsa Enter ni lanza ningún CLI.
     name: 'R: el lateral tiene la entrada Tareas programadas',

@@ -629,6 +629,7 @@ function StorageSection({
       <NewConversationFolderControl />
       <ImportedContextControl />
       <CloseBehaviorControl />
+      <LinkOpeningControl />
       <GhNoticeControl />
       <ArtifactControl />
       <KeepAliveSection />
@@ -754,6 +755,26 @@ function ArtifactControl(): React.JSX.Element {
         <span>
           <span className="font-semibold">{t('settings.storage.artifact.toggle')}</span>
           <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t('settings.storage.artifact.hint')}</span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+// Adónde abre el clic normal de un enlace del chat: el navegador de Mage (por defecto) o el del sistema. Ctrl/clic central
+// hace lo contrario, y el menú del botón derecho ofrece siempre los dos.
+function LinkOpeningControl(): React.JSX.Element {
+  const enabled = useWorkbenchStore((s) => s.settings.linksOpenExternally);
+  const setEnabled = useWorkbenchStore((s) => s.setLinksOpenExternally);
+  const t = useT();
+  return (
+    <div data-setting="links-open-externally" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.storage.links.label')}</span>
+      <label className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
+        <input type="checkbox" className="mt-[3px]" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        <span>
+          <span className="font-semibold">{t('settings.storage.links.toggle')}</span>
+          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t('settings.storage.links.hint')}</span>
         </span>
       </label>
     </div>

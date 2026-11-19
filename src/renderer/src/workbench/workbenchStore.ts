@@ -540,6 +540,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setArtifactEnabled: (enabled: boolean) => void;
   // D3: `mage chat` puede contestar permisos (apagado por defecto).
   setHostPermissionAnswers: (enabled: boolean) => void;
+  // Enlaces del chat: el clic normal abre fuera (true) o en el navegador de Mage (false).
+  setLinksOpenExternally: (enabled: boolean) => void;
   // Keep-alive de la caché de Claude (U11, U15): fusiona el parche con los ajustes; valida tipos y rangos.
   setKeepAlive: (patch: Partial<KeepAliveSettings>) => void;
   setIdleCloseMinutes: (minutes: number) => void;

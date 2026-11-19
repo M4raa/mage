@@ -248,6 +248,8 @@ export interface AppSettings {
   readonly delegation: DelegationSettings;
   // Revisión de seguridad, H1 (b): `mage chat` puede contestar permisos. Default false.
   readonly hostPermissionAnswers: boolean;
+  // Enlaces del chat: true = el clic normal abre en el navegador del sistema y Ctrl/clic central en el de Mage.
+  readonly linksOpenExternally: boolean;
 }
 
 export interface DelegationSettings {
@@ -355,4 +357,5 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   idleCloseMinutes: IDLE_CLOSE_LIMITS.default,
   delegation: DEFAULT_DELEGATION,
   hostPermissionAnswers: false,
+  linksOpenExternally: false,
 };

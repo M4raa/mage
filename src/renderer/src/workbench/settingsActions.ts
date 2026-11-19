@@ -48,6 +48,7 @@ export type SettingsActionName =
   | 'setDefaultProvider'
   | 'setArtifactEnabled'
   | 'setHostPermissionAnswers'
+  | 'setLinksOpenExternally'
   | 'setKeepAlive'
   | 'setIdleCloseMinutes'
   | 'setDelegationDepth'
@@ -245,6 +246,11 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
 
     setHostPermissionAnswers: (enabled) => {
       set((s) => ({ settings: { ...s.settings, hostPermissionAnswers: enabled } }));
+      deps.persistSettings();
+    },
+
+    setLinksOpenExternally: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, linksOpenExternally: enabled } }));
       deps.persistSettings();
     },
 

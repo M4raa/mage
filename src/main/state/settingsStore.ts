@@ -202,6 +202,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   artifactEnabled: z.boolean().catch(false),
   // D3: contestar permisos desde la terminal. Ausente o basura -> false: el lado que no deja contestar.
   hostPermissionAnswers: z.boolean().catch(false),
+  // Enlaces del chat. Ausente o basura -> false: el clic normal abre en el navegador de Mage.
+  linksOpenExternally: z.boolean().catch(false),
   // Aviso de gh descartado (DA-3). Ausente o basura -> false: el lado que vuelve a avisar.
   ghNoticeDismissed: z.boolean().catch(false),
   // Auto-archivar al cerrarse el PR. Ausente o basura -> false: no se cierra nada solo.

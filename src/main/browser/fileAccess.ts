@@ -1,4 +1,4 @@
-// Qué ficheros locales puede abrir el navegador de Mage (P-040): solo los de la carpeta de trabajo de la conversación y los del scratchpad del CLI.
+// Qué ficheros locales puede abrir el navegador de Mage: solo los de la carpeta de trabajo de la conversación y los del scratchpad del CLI.
 // Como página, solo .html/.htm; como subrecurso (css, js, imágenes…), cualquiera de dentro. Sin Electron.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
