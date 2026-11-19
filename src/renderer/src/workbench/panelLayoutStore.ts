@@ -24,7 +24,12 @@ import { describeError } from './describeError';
 // main por IPC (loadPanelLayout). Imprescindible: `PANEL_REGISTRY` trae `render` (una funcion) en cada
 // entrada, y el algoritmo de structured clone que usa Electron para IPC NO PUEDE serializar funciones
 // — mandar el registro completo tal cual lanzaria un DataCloneError en cuanto se abriera la app.
-const PANEL_PLACEMENT_REGISTRY: readonly PanelPlacement[] = PANEL_REGISTRY.map(({ id, defaultAnchor, defaultZone }) => ({ id, defaultAnchor, defaultZone }));
+const PANEL_PLACEMENT_REGISTRY: readonly PanelPlacement[] = PANEL_REGISTRY.map(({ id, defaultAnchor, defaultZone, defaultHidden }) => ({
+  id,
+  defaultAnchor,
+  defaultZone,
+  ...(defaultHidden === true ? { defaultHidden } : {}),
+}));
 
 // Store DEDICADO (F6 Fase 4, PLAN-F6-PANELES.md §3/§6/§7) para el layout de paneles EN VIVO: a
 // diferencia de Fase 3 (que cableo LeftDock/RightDock contra los booleanos preexistentes

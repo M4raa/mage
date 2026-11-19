@@ -34,6 +34,8 @@ export interface PanelPlacement {
   readonly id: PanelId;
   readonly defaultAnchor: Anchor;
   readonly defaultZone: ZoneKey;
+  /** Escondido en un perfil nuevo: sale en «Añadir panel», no en la barra. */
+  readonly defaultHidden?: boolean;
 }
 
 // Los tres tipos del estado se DERIVAN del esquema de escritura (`panelLayoutSchema.ts`): un campo
@@ -130,7 +132,7 @@ export const ANCHORS: readonly Anchor[] = ['left', 'right', 'bottom'];
 export const ZONE_KEYS: readonly ZoneKey[] = ['a', 'b'];
 
 function registryIdsForZone(registry: readonly PanelPlacement[], anchor: Anchor, zoneKey: ZoneKey): readonly PanelId[] {
-  return registry.filter((p) => p.defaultAnchor === anchor && p.defaultZone === zoneKey).map((p) => p.id);
+  return registry.filter((p) => p.defaultAnchor === anchor && p.defaultZone === zoneKey && p.defaultHidden !== true).map((p) => p.id);
 }
 
 function buildFreshZone(registry: readonly PanelPlacement[], anchor: Anchor, zoneKey: ZoneKey): ZoneState {
@@ -146,7 +148,7 @@ function buildFreshLayout(registry: readonly PanelPlacement[]): PanelLayoutState
   for (const anchor of ANCHORS) {
     stripes[anchor] = { a: buildFreshZone(registry, anchor, 'a'), b: buildFreshZone(registry, anchor, 'b'), splitPx: DEFAULT_SPLIT_SIZE_PX[anchor] };
   }
-  return { version: PANEL_LAYOUT_VERSION, stripes, hiddenPanelIds: [] };
+  return { version: PANEL_LAYOUT_VERSION, stripes, hiddenPanelIds: registry.filter((p) => p.defaultHidden === true).map((p) => p.id) };
 }
 
 // ¿Tiene `loaded` la forma minima para intentar reconciliarlo campo a campo? Un fichero ausente, no
