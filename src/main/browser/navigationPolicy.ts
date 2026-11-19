@@ -23,7 +23,7 @@ function assertFileAllowed(href: string, raw: string, files: FileAccess | null):
     throw new Error(`Esta conversación no tiene carpeta de trabajo: no se abren ficheros locales (${raw})`);
   }
   if (!files.allowsPage(href)) {
-    throw new Error(`Solo se abren ficheros .html o .htm que existan dentro de la carpeta de la conversación (${files.root}): «${raw}»`);
+    throw new Error(`Solo se abren ficheros .html o .htm que existan dentro de la carpeta de la conversación (${files.root}) o en el scratchpad del CLI: «${raw}»`);
   }
 }
 

@@ -1,7 +1,8 @@
 // El único fichero del módulo que carga Electron; no tiene test unitario (lo cubre el spike).
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { BaseWindow, nativeImage, net, screen, session, WebContentsView } from 'electron';
+import { app, BaseWindow, nativeImage, net, screen, session, WebContentsView } from 'electron';
+import { isUnderCliScratchpad } from '../files/cliScratchpad';
 import type { ImageDeps } from './annotatedCapture';
 import { ISOLATED_WEB_PREFERENCES } from './isolationConfig';
 import type { BrowserDeps } from './isolatedBrowser';
@@ -13,6 +14,8 @@ export const electronBrowserDeps: BrowserDeps = {
     new WebContentsView({ webPreferences: { ...ISOLATED_WEB_PREFERENCES, session: browserSession } }),
   now: () => new Date(),
   realpath: (target) => realpathSync.native(target),
+  // El scratchpad del CLI, la misma segunda raíz que acepta el visor de ficheros. La ruta llega ya real; el temp se resuelve igual.
+  isAllowedOutsideRoot: (realPath) => isUnderCliScratchpad(realpathSync.native(app.getPath('temp')), realPath),
   // Sin `bypassCustomProtocolHandlers` volvería al manejador `file` de la partición (bucle).
   serveFile: (realPath) => net.fetch(pathToFileURL(realPath).href, { bypassCustomProtocolHandlers: true }),
 };

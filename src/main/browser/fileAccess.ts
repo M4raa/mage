@@ -1,4 +1,4 @@
-// Qué ficheros locales puede abrir el navegador de Mage (P-040): solo los de la carpeta de trabajo de la conversación.
+// Qué ficheros locales puede abrir el navegador de Mage (P-040): solo los de la carpeta de trabajo de la conversación y los del scratchpad del CLI.
 // Como página, solo .html/.htm; como subrecurso (css, js, imágenes…), cualquiera de dentro. Sin Electron.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 export interface FileAccessDeps {
   /** `fs.realpathSync.native`: resuelve enlaces, junctions y nombres 8.3 (medido: el temporal sale como DMARAT~1). Lanza si no existe. */
   readonly realpath: (target: string) => string;
+  /** Segunda raíz: true si una ruta REAL de fuera de la carpeta también se puede abrir (el scratchpad del CLI). Opcional: sin ella, solo la carpeta. */
+  readonly isAllowedOutsideRoot?: (realPath: string) => boolean;
 }
 
 export interface FileAccess {
@@ -52,7 +54,7 @@ export function createFileAccess(root: string | null, deps: FileAccessDeps): Fil
   const resolve = (fileUrl: string): string | null => {
     const filePath = filePathOf(fileUrl);
     const real = filePath === null ? null : realOrNull(deps, filePath);
-    return real !== null && isInside(realRoot, real) ? real : null;
+    return real !== null && (isInside(realRoot, real) || deps.isAllowedOutsideRoot?.(real) === true) ? real : null;
   };
   return {
     root,

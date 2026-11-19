@@ -14,6 +14,9 @@ const LINK = path.join(ROOT, 'enlace', 'secreto.html');
 const SHORT_ROOT = path.resolve('/PROYEC~1');
 const SHORT_PAGE = path.join(SHORT_ROOT, 'index.html');
 
+const SCRATCH = path.resolve('/tmp/claude/slug/sesion/scratchpad/informe.html');
+const SCRATCH_CSS = path.resolve('/tmp/claude/slug/sesion/scratchpad/estilo.css');
+
 const REAL: ReadonlyMap<string, string> = new Map([
   [ROOT, ROOT],
   [SHORT_ROOT, ROOT],
@@ -24,6 +27,8 @@ const REAL: ReadonlyMap<string, string> = new Map([
   [STYLE, STYLE],
   [OUTSIDE, OUTSIDE],
   [LINK, OUTSIDE],
+  [SCRATCH, SCRATCH],
+  [SCRATCH_CSS, SCRATCH_CSS],
 ]);
 
 const deps: FileAccessDeps = {
@@ -32,6 +37,11 @@ const deps: FileAccessDeps = {
     if (real === undefined) throw new Error(`ENOENT: ${target}`);
     return real;
   },
+};
+
+const depsWithScratch: FileAccessDeps = {
+  ...deps,
+  isAllowedOutsideRoot: (real) => real.startsWith(path.resolve('/tmp/claude')),
 };
 
 const url = (target: string): string => pathToFileURL(target).href;
@@ -54,6 +64,30 @@ describe('createFileAccess', () => {
     const access = createFileAccess(ROOT, deps)!;
 
     expect(access.allowsPage(url(target))).toBe(expected);
+  });
+
+  it('allowsPage_scratchpadConSegundaRaiz_true', () => {
+    const access = createFileAccess(ROOT, depsWithScratch)!;
+
+    expect(access.allowsPage(url(SCRATCH))).toBe(true);
+  });
+
+  it('allowsPage_scratchpadSinSegundaRaiz_false', () => {
+    const access = createFileAccess(ROOT, deps)!;
+
+    expect(access.allowsPage(url(SCRATCH))).toBe(false);
+  });
+
+  it('resolve_recursoDelScratchpad_devuelveRutaReal', () => {
+    const access = createFileAccess(ROOT, depsWithScratch)!;
+
+    expect(access.resolve(url(SCRATCH_CSS))).toBe(SCRATCH_CSS);
+  });
+
+  it('allowsPage_fueraYSegundaRaizDiceQueNo_false', () => {
+    const access = createFileAccess(ROOT, depsWithScratch)!;
+
+    expect(access.allowsPage(url(OUTSIDE))).toBe(false);
   });
 
   it('resolve_resourceInside_returnsRealPath', () => {
