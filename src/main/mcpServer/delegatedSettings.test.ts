@@ -1,6 +1,6 @@
 import type { ProviderModel } from '@shared/providers';
 import { describe, expect, it } from 'vitest';
-import { permissionRank, resolveDelegatedSettings } from './delegatedSettings';
+import { grantsFullAccess, permissionRank, resolveDelegatedSettings } from './delegatedSettings';
 import type { SessionSettings } from './delegatedSettings';
 import { MagePolicyError, MageValidationError } from './errors';
 
@@ -135,5 +135,24 @@ describe('resolveDelegatedSettings', () => {
 describe('permissionRank', () => {
   it('permissionRank_proveedorSinMcp_null', () => {
     expect(permissionRank('agy', 'plan')).toBeNull();
+  });
+});
+
+describe('grantsFullAccess', () => {
+  it.each([
+    ['bypassPermissions', 'bypassPermissions'],
+    ['codexDangerFullAccessNever', ':danger-full-access|never'],
+    ['codexDangerFullAccess', ':danger-full-access'],
+    ['codexPerfilDesconocido', ':otro'],
+  ])('grantsFullAccess_%s_true', (_case, mode) => {
+    expect(grantsFullAccess(mode)).toBe(true);
+  });
+
+  it.each([
+    ['auto', 'auto'],
+    ['codexWorkspaceNever', ':workspace|never'],
+    ['vacio', ''],
+  ])('grantsFullAccess_%s_false', (_case, mode) => {
+    expect(grantsFullAccess(mode)).toBe(false);
   });
 });

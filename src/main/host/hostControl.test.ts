@@ -128,6 +128,13 @@ describe('HostControl.createSession', () => {
     expect(h.deps.launch).toHaveBeenCalledTimes(1);
   });
 
+  it('createSession_codexDangerFullAccess_rechazaSinLanzar', () => {
+    const h = harness();
+
+    expect(() => h.control.createSession(request({ provider: 'codex', accountId: '/h/.codex', model: 'gpt', permissionMode: ':danger-full-access' as never }))).toThrow(BypassPermissionsBlockedError);
+    expect(h.deps.launch).not.toHaveBeenCalled();
+  });
+
   it.each(['plan', 'acceptEdits', 'default', 'auto'] as const)('createSession_%s_siguenLanzando', (permissionMode) => {
     const h = harness();
 
@@ -217,6 +224,21 @@ describe('HostControl — opciones y catálogos', () => {
 
     expect(() => h.control.setOption('s-1', 'permissionMode', 'bypassPermissions')).toThrow(BypassPermissionsBlockedError);
     expect(h.deps.options.setPermissionMode).not.toHaveBeenCalled();
+  });
+
+  it('setOption_codexDangerFullAccessNever_rechaza', () => {
+    const h = harness();
+
+    expect(() => h.control.setOption('s-1', 'permissionMode', ':danger-full-access|never')).toThrow(BypassPermissionsBlockedError);
+    expect(h.deps.options.setPermissionMode).not.toHaveBeenCalled();
+  });
+
+  it('setOption_codexWorkspace_pasa', () => {
+    const h = harness();
+
+    h.control.setOption('s-1', 'permissionMode', ':workspace');
+
+    expect(h.deps.options.setPermissionMode).toHaveBeenCalledWith('s-1', ':workspace');
   });
 
   it('setOption_modelLlamadoBypassPermissions_noSeBloquea', () => {

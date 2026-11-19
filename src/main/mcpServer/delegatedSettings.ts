@@ -64,6 +64,15 @@ export function permissionRank(provider: string, mode: string): number | null {
   return canonical === null ? null : (CODEX_RANK[canonical] ?? UNKNOWN_PROFILE_RANK);
 }
 
+// Rango de «Omitir permisos» en la escala común: acceso total sin aprobación.
+export const FULL_ACCESS_RANK = 5;
+
+// ¿Da el modo acceso total en algún proveedor? bypassPermissions en Claude; :danger-full-access en Codex, pregunte o
+// no; y un perfil de Codex desconocido, que la escala ya cuenta como el más permisivo.
+export function grantsFullAccess(mode: string): boolean {
+  return permissionRank('claude', mode) === FULL_ACCESS_RANK || permissionRank('codex', mode) === FULL_ACCESS_RANK;
+}
+
 // El modo del destino más permisivo que no pasa de `rank`.
 export function modeForRank(provider: 'claude' | 'codex', rank: number): string {
   const modes: readonly string[] = provider === 'claude' ? CLAUDE_MODES_BY_RANK : CODEX_MODES_BY_RANK;

@@ -728,7 +728,7 @@ describe('HostConnection — métodos 1.2', () => {
 
     const [, , blocked] = h.lines();
     expect(blocked!.error.code).toBe(HostErrorCode.PermissionModeBlocked);
-    expect(blocked!.error.message).toContain('does not accept the “Bypass permissions” mode');
+    expect(blocked!.error.message).toContain('does not accept full-access modes that never ask');
   });
 
   it('sessionCancelQueued_llegaARemoveQueued', () => {
