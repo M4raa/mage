@@ -4,8 +4,12 @@ import { popoverAnchor } from './popoverAnchor';
 describe('popoverAnchor', () => {
   const row = { left: 100, right: 700, top: 500, bottom: 560 };
 
-  it('popoverAnchor_caracterEnMedio_encimaDelCaracter', () => {
-    expect(popoverAnchor({ left: 340, right: 348, top: 520, bottom: 538 }, row, 300)).toEqual({ left: 240, bottom: 46 });
+  it('popoverAnchor_caracterEnMedio_enSuColumnaYEncimaDeLaCaja', () => {
+    expect(popoverAnchor({ left: 340, right: 348, top: 520, bottom: 538 }, row, 300)).toEqual({ left: 240, bottom: 66 });
+  });
+
+  it('popoverAnchor_caracterEnLaSegundaLinea_mismoBottom', () => {
+    expect(popoverAnchor({ left: 340, right: 348, top: 540, bottom: 558 }, row, 300).bottom).toBe(66);
   });
 
   it('popoverAnchor_cercaDelBordeDerecho_seRecorta', () => {

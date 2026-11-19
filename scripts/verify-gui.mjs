@@ -5014,6 +5014,50 @@ const CHECKS = [
     },
   },
   {
+    // Los desplegables de «/» y «@» salen ENCIMA de la caja y por encima de cualquier otro contenido (hilo largo
+    // incluido). Sin Enter: solo se escribe el disparador y se mide el desplegable.
+    name: 'Prompt: los desplegables de / y @ salen encima de la caja y por encima del hilo',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const relleno = Array.from({ length: 30 }, (_, n) => ({ kind: 'agent', id: `vg-pop-${n}`, runs: [{ code: false, text: `línea de relleno ${n}` }], streaming: false }));
+      const medir = (selector) =>
+        page.evaluate(({ id, sel }) => {
+          const pane = document.querySelector(`[data-pane-tab-id="${id}"]`);
+          const pop = pane?.querySelector(sel);
+          const caja = pane?.querySelector('[data-prompt-editor="true"]')?.closest('.rounded-\\[9px\\]');
+          if (!pop || !caja) return null;
+          const [p, c] = [pop.getBoundingClientRect(), caja.getBoundingClientRect()];
+          const arriba = document.elementFromPoint(p.left + p.width / 2, p.top + 8);
+          const rect = (r) => ({ top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) });
+          const tapa = arriba && !pop.contains(arriba) ? `${arriba.tagName} ${[...arriba.attributes].filter((a) => a.name.startsWith('data-')).map((a) => a.name).join(',')}` : null;
+          return { encima: p.bottom <= c.top + 1, visible: pop.contains(arriba), tapa, pop: rect(p), caja: rect(c) };
+        }, { id: tabId, sel: selector });
+      const probar = async (disparador, selector) => {
+        await clearPrompt(page);
+        await page.keyboard.type(disparador);
+        const aparece = await page.locator(`[data-pane-tab-id="${tabId}"] ${selector}`).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+        return aparece ? medir(selector) : { abre: false };
+      };
+      try {
+        await page.locator(`[data-pane-tab-id="${tabId}"] [data-prompt-editor="true"] .cm-editor`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await hydrateBlocks(page, relleno);
+        const slash = await probar('hola /', '[role="listbox"]:not([data-mention-popover])');
+        const mencion = await probar('hola @', '[data-mention-popover="true"]');
+        const bien = (m) => m !== null && m.abre !== false && m.encima === true && m.visible === true;
+        return { ok: bien(slash) && bien(mencion), detail: JSON.stringify({ slash, mencion }) };
+      } finally {
+        await clearPrompt(page);
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
     // P-038: el «+» de abajo a la izquierda de la caja agrupa «Adjuntar imagen» (antes un clip suelto) y las acciones
     // del antiguo «⋯». «Abrir carpeta» sigue fuera: la carpeta se abre desde su insignia. Se abre y se cierra con Escape.
     name: 'Menú «+» del prompt: con «Adjuntar archivo» y «Abrir terminal», sin «Abrir carpeta»',
