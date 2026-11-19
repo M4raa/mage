@@ -9060,7 +9060,7 @@ const CHECKS = [
     },
   },
   {
-    name: 'P-038 V3: la fila de la conversación no lleva privacidad y el % de contexto va en la barra de estado',
+    name: 'Chat: la fila de la conversación no lleva privacidad y el % de contexto va a la derecha del modelo',
     async run(page) {
       await openTemporaryConversation(page);
       await page.evaluate(() => {
@@ -9071,13 +9071,20 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
       const medido = await page.evaluate(() => {
         const pane = document.querySelector(`[data-pane-tab-id="${window.__mageDev.store.getState().activeTabId}"]`);
+        const contexto = pane?.querySelector('[data-chat-context]') ?? null;
+        const modelo = pane?.querySelector('[data-model-menu]') ?? null;
+        const [c, m] = [contexto?.getBoundingClientRect(), modelo?.getBoundingClientRect()];
+        // A la derecha del modelo en su misma línea, o en una línea de debajo si la fila se partió.
+        const derechaDelModelo = c !== undefined && m !== undefined && (c.left >= m.right || c.top > m.bottom);
         return {
           sublinea: pane?.querySelector('[data-tab-subline]') !== null,
           privacidad: pane?.querySelector('[data-tab-subline-privacy]') !== null,
-          contexto: document.querySelector('[data-status-context]')?.textContent?.replace('·', '').trim() ?? null,
+          contexto: contexto?.textContent?.trim() ?? null,
+          derechaDelModelo,
+          barraSinContexto: document.querySelector('[data-status-bar] [data-chat-context], [data-status-context]') === null,
         };
       });
-      const ok = medido.sublinea && !medido.privacidad && medido.contexto === ui('tabs.subline.context', { pct: 42 });
+      const ok = medido.sublinea && !medido.privacidad && medido.contexto === ui('tabs.subline.context', { pct: 42 }) && medido.derechaDelModelo && medido.barraSinContexto;
       return { ok, detail: JSON.stringify(medido) };
     },
   },

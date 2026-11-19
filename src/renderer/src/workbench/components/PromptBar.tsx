@@ -26,6 +26,7 @@ import { useCachedCommandCatalog } from '../commandCatalogStore';
 import { resolveKeyEvent, shortcutText } from '../keybindings/resolver';
 import { isMacPlatform } from '../keybindings/platform';
 import { ChatInfoBar } from './ChatInfoBar';
+import { ChatContextIndicator } from './ChatContextIndicator';
 import { diffChip } from '../chatInfoView';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
 import { notify } from '../notificationStore';
@@ -1021,6 +1022,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
               }
             />
           )}
+          <ChatContextIndicator />
           </ChatInfoBar>
     </div>
   );
