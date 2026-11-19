@@ -760,7 +760,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   };
 
   return (
-    <div className="border-t border-mg-border p-[12px_22px]">
+    <div className="border-t border-mg-border p-[12px_22px_5px]">
       {/* Una sola linea de error para toda la barra: cada origen (mejora del prompt, adjuntos) pone su
           propio prefijo, para que el mensaje describa lo que de verdad ha fallado. */}
       {error !== null && (
@@ -826,8 +826,9 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
       )}
 
       {/* La caja del input: «+» (acciones y adjuntar) · editor · enviar. Los dos botones van pegados al FONDO
-          (`items-end`): el texto crece hacia arriba sin moverlos, y encima de enviar no hay nada. */}
-      <div ref={rowRef} className="relative flex items-end gap-[8px] rounded-[9px] border border-mg-border-ctrl bg-mg-panel p-[8px_8px_8px_6px]">
+          (`items-end`): el texto crece hacia arriba sin moverlos, y encima de enviar no hay nada.
+          Relleno de 5 px arriba y abajo: la caja vacía mide lo que el botón más su borde y poco más. */}
+      <div ref={rowRef} className="relative flex items-end gap-[8px] rounded-[9px] border border-mg-border-ctrl bg-mg-panel p-[5px_6px_5px_4px]">
         {mentions.open && <MentionPopover suggestions={mentions} anchor={mentionAnchor} />}
         {slashOpen && (
           // Popover de comandos "/" (M2.6): navegable con flechas/Enter/Tab; click completa.

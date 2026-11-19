@@ -4971,6 +4971,49 @@ const CHECKS = [
     },
   },
   {
+    // Maquetación del prompt: la caja vacía mide poco más que el botón y bajo la línea de información queda
+    // poco margen. Sin Enter: solo se miden cajas.
+    name: 'Prompt: alto de la caja vacía y hueco bajo la línea de información',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      try {
+        await page.locator(`[data-pane-tab-id="${tabId}"] [data-prompt-editor="true"] .cm-editor`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await clearPrompt(page);
+        const medido = await page.evaluate((id) => {
+          const pane = document.querySelector(`[data-pane-tab-id="${id}"]`);
+          const caja = pane?.querySelector('[data-prompt-editor="true"]')?.closest('.rounded-\\[9px\\]');
+          const barra = pane?.querySelector('[data-chat-info-bar]');
+          const contenedor = caja?.parentElement?.closest('.border-t');
+          const enviar = caja?.querySelectorAll('button');
+          if (!caja || !barra || !contenedor || !enviar || enviar.length === 0) return null;
+          const [c, b, k, e] = [caja, barra, contenedor, enviar[enviar.length - 1]].map((n) => n.getBoundingClientRect());
+          return {
+            altoCaja: c.height,
+            huecoInferior: k.y + k.height - (b.y + b.height),
+            desfase: Math.abs(e.y + e.height / 2 - (c.y + c.height / 2)),
+          };
+        }, tabId);
+        if (medido === null) return { ok: false, detail: 'no se encontraron caja, barra, contenedor o botón de enviar' };
+        const medio = (n) => Math.round(n * 2) / 2;
+        const detail = `altoCaja=${medio(medido.altoCaja)} huecoInferior=${medio(medido.huecoInferior)} desfase=${medio(medido.desfase)}`;
+        // Medidas de partida (evidencias): la caja vacía tiene que bajar ≥5 px, el hueco ≥6 px y los botones seguir centrados.
+        const ALTO_ANTES = 46;
+        const HUECO_ANTES = 12;
+        const ok = medido.altoCaja <= ALTO_ANTES - 5 && medido.huecoInferior <= HUECO_ANTES - 6 && medido.desfase <= 3;
+        return { ok, detail };
+      } finally {
+        await clearPrompt(page);
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
     // P-038: el «+» de abajo a la izquierda de la caja agrupa «Adjuntar imagen» (antes un clip suelto) y las acciones
     // del antiguo «⋯». «Abrir carpeta» sigue fuera: la carpeta se abre desde su insignia. Se abre y se cierra con Escape.
     name: 'Menú «+» del prompt: con «Adjuntar archivo» y «Abrir terminal», sin «Abrir carpeta»',
