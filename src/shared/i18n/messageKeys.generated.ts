@@ -1898,7 +1898,6 @@ export interface MessageValues {
   readonly "prompt.mentions.empty": never;
   readonly "prompt.mentions.listLabel": never;
   readonly "prompt.mentions.pathOnly": never;
-  readonly "prompt.mentions.pdf": { readonly "size": string | number };
   readonly "prompt.mentions.remove": { readonly "name": string | number };
   readonly "prompt.mentions.searching": never;
   readonly "prompt.mentions.sectionConversation": never;

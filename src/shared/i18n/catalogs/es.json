@@ -1896,7 +1896,6 @@
   "prompt.mentions.empty": "Ningún fichero coincide",
   "prompt.mentions.listLabel": "Ficheros que mencionar",
   "prompt.mentions.pathOnly": "solo ruta",
-  "prompt.mentions.pdf": "PDF · {size}",
   "prompt.mentions.remove": "Quitar {name}",
   "prompt.mentions.searching": "Buscando…",
   "prompt.mentions.sectionConversation": "En esta conversación",

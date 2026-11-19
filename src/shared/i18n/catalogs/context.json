@@ -1610,7 +1610,6 @@
   "prompt.mentions.empty": { "description": "Popover de menciones @ cuando la búsqueda no devuelve ficheros.", "usage": "src/renderer/src/workbench/components/MentionPopover.tsx:66" },
   "prompt.mentions.listLabel": { "description": "Nombre accesible de la lista del popover de menciones @.", "usage": "src/renderer/src/workbench/components/MentionPopover.tsx:55" },
   "prompt.mentions.pathOnly": { "description": "Distintivo de una ficha de mención @ cuyo fichero viajará solo como ruta con el motor de la pestaña.", "usage": "src/renderer/src/workbench/components/MentionChips.tsx:68" },
-  "prompt.mentions.pdf": { "description": "Ficha de un PDF mencionado con @: la clase y su tamaño (sin vista previa).", "usage": "src/renderer/src/workbench/components/MentionChips.tsx:66" },
   "prompt.mentions.remove": { "description": "Nombre accesible del botón ✕ de una ficha de mención @.", "usage": "src/renderer/src/workbench/components/MentionChips.tsx:73" },
   "prompt.mentions.searching": { "description": "Popover de menciones @ mientras llega la respuesta de la búsqueda y no hay filas que mostrar.", "usage": "src/renderer/src/workbench/components/MentionPopover.tsx:67" },
   "prompt.mentions.sectionConversation": { "description": "Cabecera de la primera sección del popover de menciones @: ficheros que el agente creó en esta pestaña.", "usage": "src/renderer/src/workbench/components/MentionPopover.tsx:11" },

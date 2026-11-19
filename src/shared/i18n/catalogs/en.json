@@ -1896,7 +1896,6 @@
   "prompt.mentions.empty": "No matching files",
   "prompt.mentions.listLabel": "Files to mention",
   "prompt.mentions.pathOnly": "path only",
-  "prompt.mentions.pdf": "PDF · {size}",
   "prompt.mentions.remove": "Remove {name}",
   "prompt.mentions.searching": "Searching…",
   "prompt.mentions.sectionConversation": "In this conversation",
