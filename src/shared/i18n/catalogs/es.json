@@ -617,6 +617,8 @@
   "chat.fileActions.reveal": "Abrir ubicación",
   "chat.fileActions.saveAs": "Guardar como…",
   "chat.fileActions.saved": "✓ guardado",
+  "chat.fileCard.created": "Creado {name}",
+  "chat.fileCard.edited": "Editado {name}",
   "chat.files.browser": "Navegador",
   "chat.files.cancel": "Cancelar",
   "chat.files.cited": "citado",

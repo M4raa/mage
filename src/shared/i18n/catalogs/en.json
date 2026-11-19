@@ -617,6 +617,8 @@
   "chat.fileActions.reveal": "Show in folder",
   "chat.fileActions.saveAs": "Save as…",
   "chat.fileActions.saved": "✓ saved",
+  "chat.fileCard.created": "Created {name}",
+  "chat.fileCard.edited": "Edited {name}",
   "chat.files.browser": "Browser",
   "chat.files.cancel": "Cancel",
   "chat.files.cited": "cited",

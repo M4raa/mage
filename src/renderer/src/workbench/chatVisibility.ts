@@ -1,5 +1,6 @@
 import { artifactCardFrom } from './artifactView';
 import { delegationCardFrom } from './delegationView';
+import { fileCardFrom } from './fileCardView';
 import { groupSessionResults } from './sessionResultGroups';
 import { isSubagentRunning, SUBAGENT_STATUS, subagentStatusLabel } from './engineBlocks';
 import { formatElapsed } from './thinkingStatus';
@@ -34,9 +35,9 @@ export function isChatBlock(block: Block): boolean {
   }
 }
 
-// Una herramienta con tarjeta propia en el hilo: un artifact publicado o una subsesión creada.
+// Una herramienta con tarjeta propia en el hilo: un artifact publicado, una subsesión creada o un fichero creado o editado.
 function hasChatCard(block: Block): boolean {
-  return artifactCardFrom(block) !== null || delegationCardFrom(block) !== null;
+  return artifactCardFrom(block) !== null || delegationCardFrom(block) !== null || fileCardFrom(block) !== null;
 }
 
 // Una herramienta del agente PRINCIPAL que fallo deja una linea en el chat (D22); las de un subagente

@@ -619,6 +619,8 @@ export interface MessageValues {
   readonly "chat.fileActions.reveal": never;
   readonly "chat.fileActions.saveAs": never;
   readonly "chat.fileActions.saved": never;
+  readonly "chat.fileCard.created": { readonly "name": string | number };
+  readonly "chat.fileCard.edited": { readonly "name": string | number };
   readonly "chat.files.browser": never;
   readonly "chat.files.cancel": never;
   readonly "chat.files.cited": never;

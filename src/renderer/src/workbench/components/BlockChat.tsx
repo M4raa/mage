@@ -31,6 +31,8 @@ import { ArtifactCard } from './ArtifactCard';
 import { artifactCardFrom } from '../artifactView';
 import { delegationCardFrom } from '../delegationView';
 import { DelegationCard } from './DelegationCard';
+import { fileCardFrom } from '../fileCardView';
+import { FileCard } from './FileCard';
 import { chatRows, currentTurnSummary, stickResetKey, type ChatRow } from '../chatVisibility';
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import type { Block, ImageAttachment } from '../types';
@@ -1216,7 +1218,10 @@ function ToolBlock({ block }: { readonly block: Extract<Block, { kind: 'tool' }>
   const card = artifactCardFrom(block);
   if (card !== null) return <ArtifactCard card={card} />;
   const delegation = delegationCardFrom(block);
-  return delegation === null ? null : <DelegationCard card={delegation} />;
+  if (delegation !== null) return <DelegationCard card={delegation} />;
+  const file = fileCardFrom(block);
+  if (file !== null) return <FileCard card={file} />;
+  return null;
 }
 
 function AgentBlock({
