@@ -504,7 +504,7 @@ function withoutProjection(result: RewindApplyResult): Omit<RewindApplyResult, '
   return rest;
 }
 
-function describeIssues(issues: readonly { readonly path: readonly (string | number)[]; readonly message: string }[]): string {
+function describeIssues(issues: readonly { readonly path: readonly PropertyKey[]; readonly message: string }[]): string {
   return issues.map((issue) => `${issue.path.join('.') || '(raíz)'}: ${issue.message}`).join('; ');
 }
 

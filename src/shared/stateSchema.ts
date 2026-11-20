@@ -104,9 +104,9 @@ const LEGACY_LEAF_SCHEMA = z
   .object({ kind: z.literal('leaf'), tabId: z.string() })
   .transform((raw): SplitLeafShape => ({ kind: 'leaf', tabIds: [raw.tabId], activeTabId: raw.tabId }));
 
-// `z.ZodType<Salida, Def, Entrada>`: la entrada es `unknown` porque las dos formas de hoja se
+// `z.ZodType<Salida, Entrada>`: la entrada es `unknown` porque las dos formas de hoja se
 // transforman, asi que el tipo de entrada ya no coincide con el de salida.
-export const SPLIT_LAYOUT_SCHEMA: z.ZodType<SplitLayoutShape, z.ZodTypeDef, unknown> = z.lazy(() =>
+export const SPLIT_LAYOUT_SCHEMA: z.ZodType<SplitLayoutShape, unknown> = z.lazy(() =>
   z.union([
     LEAF_GROUP_SCHEMA,
     LEGACY_LEAF_SCHEMA,

@@ -76,8 +76,8 @@ const encodedTextSchema: z.ZodType<LocalizedText> = z.lazy(() =>
   z
     .object({
       key: z.string().min(1),
-      values: z.record(z.union([z.string(), z.number()])).optional(),
-      parts: z.record(encodedTextSchema).optional(),
+      values: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
+      parts: z.record(z.string(), encodedTextSchema).optional(),
     })
     .strict() as unknown as z.ZodType<LocalizedText>,
 );

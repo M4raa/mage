@@ -63,7 +63,7 @@ export const CanUseToolSchema = z.object({
     .object({
       subtype: z.literal('can_use_tool'),
       tool_name: z.string(),
-      input: z.record(z.unknown()),
+      input: z.record(z.string(), z.unknown()),
       tool_use_id: z.string(),
       description: z.string().nullish(),
       // MEDIDO en el control_request de AskUserQuestion: marca las peticiones que esperan una

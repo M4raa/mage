@@ -108,7 +108,8 @@ export type HostAccountCreateRequest = z.infer<typeof ACCOUNTS_CREATE_SCHEMA>;
 const hostId = z.string().min(1).max(MAX_ID_CHARS);
 
 const SESSION_CREATE_SCHEMA = z.object({
-  commandId: z.string().uuid(),
+  // Lo genera el cliente del host (externo): `guid` acepta cualquier UUID con forma, como zod 3; `uuid` exigiría la variante RFC.
+  commandId: z.guid(),
   provider: z.enum(HOST_SESSION_PROVIDERS),
   accountId: z.string().min(1).max(MAX_PATH_CHARS),
   cwd: z.string().min(1).max(MAX_PATH_CHARS),
@@ -131,7 +132,7 @@ const REWIND_APPLY_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, point: REWI
 const CANCEL_QUEUED_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, queuedId: hostId }).strict();
 const UPDATE_QUEUED_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, queuedId: hostId, text: z.string().min(1).max(MAX_MESSAGE_CHARS) }).strict();
 // Un mensaje JSON-RPC de MCP dentro del túnel (1.5): lo valida el transporte del servidor MCP, no el host.
-const MCP_MESSAGE_SCHEMA = z.object({ message: z.record(z.unknown()) }).strict();
+const MCP_MESSAGE_SCHEMA = z.object({ message: z.record(z.string(), z.unknown()) }).strict();
 export const CLIENT_LANGUAGE_SCHEMA = z.object({ language: z.enum(UI_LANGUAGES) }).strict();
 // El nombre sale tal cual en el diálogo de la ventana: corto y en una línea (sin caracteres de control).
 export const MAX_CLIENT_NAME_CHARS = 64;

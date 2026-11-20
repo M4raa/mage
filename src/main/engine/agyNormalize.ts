@@ -56,7 +56,7 @@ const AgyStepUpdateSchema = z.object({
       tool_info: z
         .object({
           name: z.string().optional(),
-          parameters: z.record(z.unknown()).optional(),
+          parameters: z.record(z.string(), z.unknown()).optional(),
           // Por que fallo la herramienta. MEDIDO en 1.2.14: en una denegacion trae el COMANDO exacto
           // (`permission check failed for command "…"` o `Permission denied for command(…)`).
           error: z.object({ message: z.string().optional() }).passthrough().optional(),
