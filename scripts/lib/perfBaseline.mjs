@@ -48,7 +48,7 @@ export function topSelfTime(profile, top = PROFILE_TOP, keep = PROFILE_KEEP) {
 // captura para la siguiente entrada de `eventType`) y se CONFIRMA armada; despues `act()` la provoca y se
 // espera el resultado. «Listo» = `readyExpr` (JS evaluado en la pagina) verdadero en un frame. El plazo
 // corre desde que se arma, haya llegado el evento o no: una medida que no llega lanza, nunca cuelga.
-async function measureInteraction(page, eventType, readyExpr, act) {
+export async function measureInteraction(page, eventType, readyExpr, act) {
   await page.evaluate(({ eventType, readyExpr, timeoutMs }) => {
     const ready = new Function(`return (${readyExpr});`);
     window.__perfResult = new Promise((resolve, reject) => {
@@ -308,7 +308,7 @@ export async function withStep(name, run, page) {
 }
 
 // Ids de las pestañas visibles en la barra, por el DOM (vale tambien sin el puente de desarrollo).
-function tabIdsInBar(page) {
+export function tabIdsInBar(page) {
   return page.evaluate(() => [...document.querySelectorAll('[role="tab"][data-tab-id]')].map((el) => el.getAttribute('data-tab-id')));
 }
 

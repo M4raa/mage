@@ -26,6 +26,7 @@
 //   pnpm verify:gui --turn=real  # el turno minimo contra Claude aunque la guarda de uso avise
 //   pnpm verify:gui --slow-frames --only=Preguntas: # estresa Motion con frames de un segundo
 //   pnpm verify:gui --trace-layout # guarda geometria/animaciones antes y despues de cada caso
+//   pnpm verify:gui --perf-review [--prod] # SOLO mide: arranque, bloqueo de main, frames, memoria e IPC (perf-review.json)
 //   pnpm verify:gui --inspect-running # lee el estado de la tanda en curso, sin otra instancia
 //   pnpm verify:gui --initial-close-prompt --only=2.7: # prueba el aislamiento con la pregunta de cierre
 //   pnpm verify:gui --dump-dom-text=f.jsonl # SOLO F3 (T4): texto del DOM al final de cada caso, para compare-dom-text
@@ -57,6 +58,7 @@ import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuar
 import { withGuiState } from './lib/guiState.mjs';
 import { closeCheckOverlays, runGuiCheck } from './lib/guiCheckState.mjs';
 import { runPerfBaseline } from './lib/perfBaseline.mjs';
+import { runPerfReview, seedPerfHistory } from './lib/perfReview.mjs';
 import { writeLongTranscript } from './lib/longTranscriptFixture.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
@@ -97,8 +99,13 @@ const PROD_BUILD = process.argv.includes('--prod');
 // Por defecto la app de prueba corre en SEGUNDO PLANO: fuera de la pantalla, sin robar el foco y con el foco simulado
 // por CDP (MAGE_TEST_BACKGROUND, ver src/main/windows/backgroundTestWindow.ts). `--foreground` la deja a la vista,
 // como antes; la línea base de rendimiento también, porque mide la cadencia real de frames.
-const FOREGROUND = process.argv.includes('--foreground') || process.argv.includes('--perf-baseline') || process.argv.includes('--keep');
-if (PROD_BUILD && !process.argv.includes('--perf-baseline')) throw new Error('--prod solo se admite con --perf-baseline');
+// `--perf-review`: la revisión de rendimiento de scripts/lib/perfReview.mjs. Como la línea base, a la vista y también
+// con `--prod`. Abre el inspector de main en 127.0.0.1:MAIN_INSPECT_PORT (solo esta app sin empaquetar).
+const PERF_REVIEW = process.argv.includes('--perf-review');
+const MAIN_INSPECT_PORT = 9339;
+const PERF_MODE = PERF_REVIEW || process.argv.includes('--perf-baseline');
+const FOREGROUND = process.argv.includes('--foreground') || PERF_MODE || process.argv.includes('--keep');
+if (PROD_BUILD && !PERF_MODE) throw new Error('--prod solo se admite con --perf-baseline o --perf-review');
 
 // H3 de la devolución 17: la carpeta de locks de conversación (#55) de las instancias que lanza esta tanda. La real del
 // usuario la comparte con su Mage instalado y el harness no la toca. Se borra al salir.
@@ -17283,6 +17290,7 @@ function launchApp(userDataDir, extraEnv = {}) {
     '--',
     `--remote-debugging-port=${CONFIG.port}`,
     `--user-data-dir=${userDataDir}`,
+    ...(PERF_REVIEW ? [`--inspect=127.0.0.1:${MAIN_INSPECT_PORT}`] : []),
   ];
   const child = spawn(process.execPath, args, {
     cwd: repoRoot,
@@ -17461,6 +17469,10 @@ async function main() {
   const longTranscript = perfCwd === null ? null : writeLongTranscript(userDataDir, { cwd: perfCwd, blocks: LONG_TRANSCRIPT_BLOCKS });
 
   console.log(`[verify:gui] perfil aislado: ${userDataDir}`);
+  // --perf-review: 300 conversaciones en la cuenta principal del HOME de prueba, ANTES de arrancar (nunca en el HOME real).
+  if (PERF_REVIEW && HARNESS_HOME === os.homedir()) throw new Error('--perf-review necesita el HOME de prueba (sin --turn=real)');
+  const perfHistory = PERF_REVIEW ? seedPerfHistory(path.join(HARNESS_HOME, '.claude'), { nowMs: Date.now() }) : null;
+  const spawnAtMs = Date.now();
   const { child, log } = launchApp(userDataDir);
   let browser = null;
   const results = [];
@@ -17505,7 +17517,19 @@ async function main() {
       results.push({ name: 'Baseline de interfaz #40', ok: true, detail: redactUserData('medido', accountAliases) });
       return;
     }
-    const baselinePanels = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
+    // --perf-review: SOLO mide y deja `perf-review.json`; no corre ninguna comprobación.
+    if (PERF_REVIEW) {
+      const medido = await runPerfReview(page, {
+        openConversation: openTemporaryConversation, openRuntimeTab, startFake: startFakeOpenAiServer, userDataDir,
+        accountDir: path.join(HARNESS_HOME, '.claude'), history: perfHistory, devBridge: !PROD_BUILD,
+        inspectPort: MAIN_INSPECT_PORT, spawnAtMs, mountedMark: WORKBENCH_MOUNTED_MARK,
+      });
+      fs.writeFileSync(path.join(runDir, 'perf-review.json'), JSON.stringify(medido, null, 2), 'utf-8');
+      console.log(`[verify:gui] revisión de rendimiento: ${path.join(runDir, 'perf-review.json')}`);
+      results.push({ name: 'Revisión de rendimiento', ok: true, detail: 'medido' });
+      return;
+    }
+    const baselinePanels =await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
     if (process.argv.includes('--initial-close-prompt')) {
       await page.evaluate(() => window.mage.closeWindow());
       await page.locator(CLOSE_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
