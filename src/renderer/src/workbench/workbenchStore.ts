@@ -134,6 +134,7 @@ import type {
   AppSettings,
   ChatProject,
   CloseBehavior,
+  RunningTabCloseBehavior,
   DefaultPermissionMode,
   ImportedTheme,
   NewConversationFolder,
@@ -511,6 +512,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setScratchRetention: (retention: ScratchRetention) => void;
   // Que hace la X de la ventana principal (P-028, 17). Tambien lo escribe main desde su dialogo.
   setCloseBehavior: (behavior: CloseBehavior) => void;
+  setRunningTabClose: (behavior: RunningTabCloseBehavior) => void;
   // Carpeta con la que nace «Nuevo chat» (P-028, 16).
   setNewConversationFolder: (folder: NewConversationFolder) => void;
   setImportedContextMaxChars: (chars: number) => void;

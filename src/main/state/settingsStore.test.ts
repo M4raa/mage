@@ -30,6 +30,7 @@ const VALID: AppSettings = {
   distrustedFolders: [],
   scratchRetention: '30d',
   closeBehavior: 'background',
+  runningTabClose: 'stop',
   newConversationFolder: 'lastProject',
   importedContextMaxChars: 50_000,
   onboardingCompletedVersion: 1,
@@ -87,6 +88,25 @@ describe('SettingsStore.load', () => {
     const invalido = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, runtimeShell: 'cmd' }) })).load();
 
     expect([sinCampo.runtimeShell, invalido.runtimeShell]).toEqual(['auto', 'auto']);
+  });
+
+  it('load_sinRunningTabClose_ask', () => {
+    // Un fichero anterior al ajuste no lo trae: se pregunta, que es lo seguro.
+    const { runningTabClose: _ausente, ...previo } = VALID;
+
+    const loaded = new SettingsStore(deps({ readFile: () => JSON.stringify(previo) })).load();
+
+    expect(loaded.runningTabClose).toBe('ask');
+  });
+
+  it('load_runningTabCloseBasura_ask', () => {
+    const file = JSON.stringify({ ...VALID, runningTabClose: 'quit' });
+
+    expect(new SettingsStore(deps({ readFile: () => file })).load().runningTabClose).toBe('ask');
+  });
+
+  it('load_runningTabCloseValido_loConserva', () => {
+    expect(new SettingsStore(deps()).load().runningTabClose).toBe('stop');
   });
 
   it('load_accentByAccountFueraDeRango_caeAVacio', () => {

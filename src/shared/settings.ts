@@ -91,6 +91,13 @@ export type ScratchRetention = (typeof SCRATCH_RETENTIONS)[number];
 export const CLOSE_BEHAVIORS = ['ask', 'background', 'quit'] as const;
 export type CloseBehavior = (typeof CLOSE_BEHAVIORS)[number];
 
+// Qué hace cerrar una pestaña con trabajo vivo (turno en marcha o permiso pendiente).
+//   'ask'        — pregunta (DEFAULT) hasta que el usuario marque «No volver a preguntar».
+//   'background' — la deja en segundo plano: termina sola y sale en Conversaciones.
+//   'stop'       — la cierra y para su sesión.
+export const RUNNING_TAB_CLOSE_BEHAVIORS = ['ask', 'background', 'stop'] as const;
+export type RunningTabCloseBehavior = (typeof RUNNING_TAB_CLOSE_BEHAVIORS)[number];
+
 // Carpeta con la que nace «Nuevo chat» (P-028, punto 16).
 //   'scratch'     — una carpeta temporal propia (DEFAULT, lo de siempre).
 //   'lastProject' — la carpeta de la conversacion compartida mas reciente del historial; si no hay
@@ -175,6 +182,7 @@ export interface AppSettings {
   // Cerrar la ventana principal (P-028, 17). Lo escribe tambien MAIN (el «Recordar mi decisión» del
   // dialogo nativo) y lo difunde a todas las ventanas. Default 'ask'.
   readonly closeBehavior: CloseBehavior;
+  readonly runningTabClose: RunningTabCloseBehavior;
   // Carpeta de «Nuevo chat» (P-028, 16). Default 'scratch'.
   readonly newConversationFolder: NewConversationFolder;
   // Tope (en caracteres) del historial que arranca una conversación importada de otro proveedor.
@@ -331,6 +339,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   distrustedFolders: [],
   scratchRetention: 'never',
   closeBehavior: 'ask',
+  runningTabClose: 'ask',
   newConversationFolder: 'scratch',
   importedContextMaxChars: IMPORTED_CONTEXT_LIMITS.default,
   onboardingCompletedVersion: 0,

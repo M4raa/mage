@@ -16,6 +16,7 @@ import {
   KEEP_ALIVE_MIN_CONTEXT_MAX,
   KEEP_ALIVE_MIN_CONTEXT_MIN,
   NEW_CONVERSATION_FOLDERS,
+  RUNNING_TAB_CLOSE_BEHAVIORS,
   RUNTIME_SHELLS,
   SCRATCH_RETENTIONS,
   THEME_PREFERENCES,
@@ -171,6 +172,7 @@ const APP_SETTINGS_SCHEMA = z.object({
   scratchRetention: z.enum(SCRATCH_RETENTIONS).catch('never'),
   // Cerrar la ventana (P-028, 17). Ausente o basura -> 'ask': el lado que vuelve a preguntar.
   closeBehavior: z.enum(CLOSE_BEHAVIORS).catch('ask'),
+  runningTabClose: z.enum(RUNNING_TAB_CLOSE_BEHAVIORS).catch('ask'),
   // Carpeta de «Nuevo chat» (P-028, 16). Ausente o basura -> 'scratch', lo de siempre.
   newConversationFolder: z.enum(NEW_CONVERSATION_FOLDERS).catch('scratch'),
   // Ausente o basura -> el valor por defecto; el fichero es editable a mano, así que se acota aquí también.

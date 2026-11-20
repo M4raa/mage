@@ -2405,6 +2405,13 @@ export interface MessageValues {
   readonly "settings.storage.retention.sessionHint": never;
   readonly "settings.storage.retention.week": never;
   readonly "settings.storage.retention.weekHint": never;
+  readonly "settings.storage.runningTabClose.ask": never;
+  readonly "settings.storage.runningTabClose.askHint": never;
+  readonly "settings.storage.runningTabClose.background": never;
+  readonly "settings.storage.runningTabClose.backgroundHint": never;
+  readonly "settings.storage.runningTabClose.label": never;
+  readonly "settings.storage.runningTabClose.stop": never;
+  readonly "settings.storage.runningTabClose.stopHint": never;
   readonly "settings.storage.warningEmphasis": never;
   readonly "settings.storage.warningLabel": never;
   readonly "settings.storage.warningText": never;

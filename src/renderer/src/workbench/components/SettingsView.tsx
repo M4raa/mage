@@ -4,6 +4,7 @@ import { AvatarsPlacementControl, SeparatorContrastControl } from './AppearanceC
 import { canCheckForUpdates, updateStatusText } from '../updateStatus';
 import type {
   CloseBehavior,
+  RunningTabCloseBehavior,
   ImportedTheme,
   NewConversationFolder,
   NotificationRule,
@@ -629,6 +630,7 @@ function StorageSection({
       <NewConversationFolderControl />
       <ImportedContextControl />
       <CloseBehaviorControl />
+      <RunningTabCloseControl />
       <LinkOpeningControl />
       <GhNoticeControl />
       <KeepAliveSection />
@@ -784,6 +786,40 @@ function CloseBehaviorControl(): React.JSX.Element {
             className="mt-[3px]"
             checked={behavior === option.value}
             onChange={() => setCloseBehavior(option.value)}
+          />
+          <span>
+            <span className="font-semibold">{t(option.label)}</span>
+            <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t(option.hint)}</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+const RUNNING_TAB_CLOSE_OPTIONS = [
+  { value: 'ask', label: 'settings.storage.runningTabClose.ask', hint: 'settings.storage.runningTabClose.askHint' },
+  { value: 'background', label: 'settings.storage.runningTabClose.background', hint: 'settings.storage.runningTabClose.backgroundHint' },
+  { value: 'stop', label: 'settings.storage.runningTabClose.stop', hint: 'settings.storage.runningTabClose.stopHint' },
+] as const satisfies readonly { readonly value: RunningTabCloseBehavior; readonly label: MessageKey; readonly hint: MessageKey }[];
+
+// Qué hace cerrar una pestaña que está trabajando. Es el sitio para deshacer el «No volver a preguntar»
+// de su diálogo. Mismo patrón que CloseBehaviorControl.
+function RunningTabCloseControl(): React.JSX.Element {
+  const behavior = useWorkbenchStore((s) => s.settings.runningTabClose);
+  const setRunningTabClose = useWorkbenchStore((s) => s.setRunningTabClose);
+  const t = useT();
+  return (
+    <div data-setting="running-tab-close" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.storage.runningTabClose.label')}</span>
+      {RUNNING_TAB_CLOSE_OPTIONS.map((option) => (
+        <label key={option.value} className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
+          <input
+            type="radio"
+            name="running-tab-close"
+            className="mt-[3px]"
+            checked={behavior === option.value}
+            onChange={() => setRunningTabClose(option.value)}
           />
           <span>
             <span className="font-semibold">{t(option.label)}</span>

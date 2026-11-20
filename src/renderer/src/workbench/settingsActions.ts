@@ -57,6 +57,7 @@ export type SettingsActionName =
   | 'setOnboardingCompleted'
   | 'setScratchRetention'
   | 'setCloseBehavior'
+  | 'setRunningTabClose'
   | 'setNewConversationFolder'
   | 'setImportedContextMaxChars'
   | 'setBackgroundOpacity'
@@ -307,6 +308,11 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
 
     setCloseBehavior: (behavior) => {
       set((s) => ({ settings: { ...s.settings, closeBehavior: behavior } }));
+      deps.persistSettings();
+    },
+
+    setRunningTabClose: (behavior) => {
+      set((s) => ({ settings: { ...s.settings, runningTabClose: behavior } }));
       deps.persistSettings();
     },
 
