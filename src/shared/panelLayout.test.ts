@@ -211,6 +211,63 @@ describe('reconcileLayoutWithRegistry — paneles escondidos por defecto', () =>
   });
 });
 
+describe('reconcileLayoutWithRegistry — migración de la versión 1', () => {
+  const registry: readonly PanelPlacement[] = [
+    panel('visible1', 'right', 'a'),
+    { id: 'oculto1', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true },
+    { id: 'oculto2', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true },
+  ];
+
+  // Un perfil guardado con la zona right/a como se indica y la versión dada.
+  const saved = (version: number, panelIds: readonly string[], activePanelId: string | null): PanelLayoutState => {
+    const base = reconcileLayoutWithRegistry(null, []);
+    const right = { ...base.stripes.right, a: { panelIds, activePanelId, sizePx: 300 } };
+    return { ...base, version, stripes: { ...base.stripes, right } };
+  };
+
+  it('reconcile_version1ConEscondidosEnLaBarra_losEsconde', () => {
+    const loaded = saved(1, ['visible1', 'oculto1', 'oculto2'], 'visible1');
+
+    const result = reconcileLayoutWithRegistry(loaded, registry);
+
+    expect(result.stripes.right.a.panelIds).toEqual(['visible1']);
+    expect(result.hiddenPanelIds).toEqual(['oculto1', 'oculto2']);
+  });
+
+  it('reconcile_version1ConActivoEscondido_activaElPrimeroQueQueda', () => {
+    const loaded = saved(1, ['oculto1', 'visible1'], 'oculto1');
+
+    const result = reconcileLayoutWithRegistry(loaded, registry);
+
+    expect(result.stripes.right.a.activePanelId).toBe('visible1');
+  });
+
+  it('reconcile_version1SoloConEscondidos_zonaCerrada', () => {
+    const loaded = saved(1, ['oculto1', 'oculto2'], 'oculto1');
+
+    const result = reconcileLayoutWithRegistry(loaded, registry.filter((p) => p.defaultHidden === true));
+
+    expect(result.stripes.right.a.panelIds).toEqual([]);
+    expect(result.stripes.right.a.activePanelId).toBeNull();
+  });
+
+  it('reconcile_version2ConEscondidoPorDefectoEnLaBarra_loRespeta', () => {
+    const loaded = saved(2, ['visible1', 'oculto1'], 'oculto1');
+
+    const result = reconcileLayoutWithRegistry(loaded, registry);
+
+    expect(result.stripes.right.a.panelIds).toEqual(['visible1', 'oculto1']);
+    expect(result.stripes.right.a.activePanelId).toBe('oculto1');
+    expect(result.hiddenPanelIds).toEqual([]);
+  });
+
+  it('reconcile_version1_devuelveVersion2', () => {
+    const result = reconcileLayoutWithRegistry(saved(1, ['visible1'], 'visible1'), registry);
+
+    expect(result.version).toBe(2);
+  });
+});
+
 // Construye un `loaded` completo (las tres stripes, las dos zonas de cada una) con una sola zona
 // sobrescrita — evita repetir en cada test la forma entera de PanelLayoutState.
 function buildLoaded(registry: readonly PanelPlacement[], anchor: Anchor, zoneKey: ZoneKey, zone: ZoneState): PanelLayoutState {
