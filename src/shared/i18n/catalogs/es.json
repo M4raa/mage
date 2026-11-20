@@ -1170,6 +1170,7 @@
   "errors.git.worktreeCreateRejected": "No se crea el worktree: {detail}",
   "errors.host.bypassPermissionsBlocked": "El host de Mage no acepta modos con acceso total sin preguntar («Omitir permisos» en Claude, :danger-full-access en Codex): actívalos desde la ventana de Mage.",
   "errors.host.directoryNotPrivate": "El directorio del host no es privado (modo {mode}, dueño {owner}, se esperaba 700 y el usuario {user}): {directory}",
+  "errors.host.notPaired": "Este cliente no está emparejado: ejecuta el emparejamiento desde la terminal y autorízalo en la ventana de Mage",
   "errors.host.permissionAnswersDisabled": "Contestar permisos desde la terminal está apagado: contesta en la ventana de Mage o actívalo en Configuración › Hooks y permisos.",
   "errors.host.socketPathTooLong": "La ruta del socket del host mide {bytes} bytes y el máximo es {max}: {address}. Arranca Mage con un --user-data-dir más corto o define XDG_RUNTIME_DIR.",
   "errors.host.startFailedCleanup": "El host no arrancó ({reason}) y no se pudieron borrar sus ficheros: {detail}",

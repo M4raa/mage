@@ -39,6 +39,15 @@ export class BypassPermissionsBlockedError extends UserFacingError {
   }
 }
 
+// El cliente se presentó solo con el token de arranque (o su sesión de Mage ya no vive) y pidió algo que exige estar
+// emparejado: crear, enviar, cambiar opciones, contestar, el túnel MCP…
+export class NotPairedError extends UserFacingError {
+  constructor(readonly method: string) {
+    super(localized('errors.host.notPaired'));
+    this.name = 'NotPairedError';
+  }
+}
+
 // Revisión de seguridad, H1 (opción b): contestar permisos desde un cliente del host está apagado salvo que el usuario lo
 // encienda en Configuración. Un agente que lea el token del host no puede aprobarse sus propios permisos.
 export class PermissionAnswersDisabledError extends UserFacingError {

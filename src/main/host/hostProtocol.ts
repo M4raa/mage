@@ -8,6 +8,7 @@ import { PERMISSION_MODES } from '@shared/ipc';
 import { REWIND_POINT_SCHEMA } from '../coordination/rewindInput';
 import { ANSWER_PERMISSION_SCHEMA, SEND_MESSAGE_SCHEMA, SESSION_ID_SCHEMA, MAX_ID_CHARS, MAX_MESSAGE_CHARS, MAX_MODE_CHARS } from '@shared/sessionInput';
 import { CHALLENGE_NONCE_BYTES } from './hostToken';
+import { CLIENT_TOKEN_PATTERN } from './hostAccess';
 
 // Protocolo del host local (F2.6): JSON-RPC 2.0 sobre NDJSON.
 // Una línea = un mensaje. El primero de cada conexión tiene que ser `hello` con el token y la versión, salvo un
@@ -22,7 +23,10 @@ export const HOST_PROTOCOL_MAJOR = 1;
 // 1.5 (0.1.4): `hello.caller` y el túnel MCP `mcp.message` para los clientes `mcp` (D-M5).
 // 1.6 (0.1.4): `client.setLanguage` (el idioma del cliente para los mensajes de error) y `error.data.localized`.
 // 1.7 (0.1.4): `session.create` y `session.setOption` rechazan `bypassPermissions` con -32011 (solo se activa desde la ventana).
-export const HOST_PROTOCOL_MINOR = 7;
+// 1.8 (0.1.7): emparejamiento. El token de arranque solo deja leer (y pedir emparejar): el resto responde -32013. El
+// `hello` acepta `clientToken` (el de un cliente emparejado) y su respuesta dice `access` (`read`, `tunnel` o `full`).
+// `host.pair` pide permiso en la ventana de Mage y devuelve un token de cliente UNA vez; -32014 si no se concede.
+export const HOST_PROTOCOL_MINOR = 8;
 export const HOST_PROTOCOL = `${HOST_PROTOCOL_MAJOR}.${HOST_PROTOCOL_MINOR}`;
 
 // Códigos JSON-RPC estándar (-32700…-32603) y propios (-32001…-32099).
@@ -44,6 +48,8 @@ export const HostErrorCode = {
   UnknownAccount: -32010,
   PermissionModeBlocked: -32011,
   PermissionAnswersDisabled: -32012,
+  NotPaired: -32013,
+  PairingRefused: -32014,
 } as const;
 
 const MAX_METHOD_CHARS = 64;
@@ -65,6 +71,8 @@ export const HELLO_PARAMS_SCHEMA = z.object({
   token: z.string().min(1).max(MAX_TOKEN_CHARS),
   // Credencial MCP_CALLER de la sesion que lanzo a un cliente `mcp` (D-M6); los demas clientes no la mandan.
   caller: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  // Token de un cliente emparejado (1.8). `token` sigue siendo el de arranque: los dos van juntos.
+  clientToken: z.string().regex(CLIENT_TOKEN_PATTERN).optional(),
 }).strict();
 export type HelloParams = z.infer<typeof HELLO_PARAMS_SCHEMA>;
 

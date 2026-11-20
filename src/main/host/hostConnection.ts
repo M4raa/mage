@@ -11,7 +11,8 @@ import type { SessionLogFn } from '../engine/agentSession';
 import type { RewindCoordinator } from '../coordination/rewindCoordinator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { MAX_LINE_BYTES, NdjsonFramer } from './ndjsonFramer';
-import { BypassPermissionsBlockedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
+import { BypassPermissionsBlockedError, NotPairedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
+import { accessFor, isMethodAllowed, type HostAccess } from './hostAccess';
 import type { HostControl } from './hostControl';
 import type { HostMode } from './hostServer';
 import { decideStop, type HostStopResult } from './hostStop';
@@ -33,6 +34,7 @@ import {
   withLegacyText,
   type HostAccountCreateRequest,
   type HostCreateRequest,
+  type HelloParams,
   type HostErrorBody,
   type HostMethod,
   type HostOptionKey,
@@ -95,8 +97,17 @@ export interface HostConnectionDeps {
   readonly control: HostControl;
   // El orquestador del rewind de la ventana (1.4): mismas reglas, sin adjuntos.
   readonly rewind: Pick<RewindCoordinator, 'points' | 'plan' | 'apply'>;
-  // El servidor MCP de Mage por conexión (1.5): solo se abre para los clientes `mcp`.
+  // El servidor MCP de Mage por conexión (1.5): solo se abre para los clientes `mcp` con acceso al túnel.
   readonly mcp: McpConnector;
+  // La credencial MAGE_MCP_CALLER es de una sesión VIVA de Mage (`McpCallers.resolve`).
+  readonly isMageCaller: (credential: string) => boolean;
+  readonly clients: HostClientsPort;
+}
+
+// Los clientes emparejados, vistos por una conexión.
+export interface HostClientsPort {
+  // Id del cliente emparejado con ese token (y anota su último uso), o null si no hay ninguno.
+  authenticate(clientToken: string): string | null;
 }
 
 // Una conexión que no se identifica en este tiempo se cierra: no puede retener un socket sin dar el token.
@@ -111,6 +122,8 @@ export class HostConnection {
   private challenged = false;
   // Credencial MCP_CALLER del `hello` (D-M6): es un secreto, no se loguea ni se devuelve.
   private caller: string | null = null;
+  // Lo que deja hacer la credencial con la que se presentó (`hostAccess.ts`); se decide en el `hello`.
+  private access: HostAccess = 'read';
   private tunnel: McpTunnelHandle | null = null;
   // Idioma que pidió el cliente para los errores (1.6); null = castellano, como antes de 1.6.
   private errorTranslate: Translate | null = null;
@@ -205,9 +218,24 @@ export class HostConnection {
     }
     this.cancelHelloTimer();
     this.caller = hello.data.caller ?? null;
+    this.access = this.decideAccess(hello.data);
     this.phase = 'ready';
-    if (id !== undefined) this.transport.write(resultResponse(id, { protocol: HOST_PROTOCOL, hostVersion: this.deps.hostVersion, capabilities: HOST_CAPABILITIES }));
-    if (hello.data.client.kind === 'mcp') this.tunnel = this.deps.mcp.open({ callerCredential: this.caller, send: (message) => this.sendTunnel(message) });
+    if (id !== undefined) this.transport.write(resultResponse(id, { protocol: HOST_PROTOCOL, hostVersion: this.deps.hostVersion, capabilities: HOST_CAPABILITIES, access: this.access }));
+    this.openTunnelIfAllowed(hello.data.client.kind);
+  }
+
+  // Un token de cliente desconocido (revocado, de otro perfil) no es un error: el cliente queda en lectura y puede
+  // volver a emparejarse.
+  private decideAccess(hello: HelloParams): HostAccess {
+    const pairedClientId = hello.clientToken === undefined ? null : this.deps.clients.authenticate(hello.clientToken);
+    if (hello.clientToken !== undefined && pairedClientId === null) this.deps.log('info', 'Un cliente del host presentó un token de cliente que no está emparejado', { client: hello.client.kind });
+    const liveMageCaller = this.caller !== null && this.deps.isMageCaller(this.caller);
+    return accessFor({ clientKind: hello.client.kind, pairedClientId, liveMageCaller });
+  }
+
+  private openTunnelIfAllowed(kind: HelloParams['client']['kind']): void {
+    if (kind !== 'mcp' || !isMethodAllowed(this.access, 'mcp.message')) return;
+    this.tunnel = this.deps.mcp.open({ callerCredential: this.caller, send: (message) => this.sendTunnel(message) });
   }
 
   // Reto del cliente (F7.1): solo antes de `hello` y una vez por conexión. La fase no cambia: después hay que
@@ -233,6 +261,10 @@ export class HostConnection {
   private dispatch(id: RequestId | undefined, method: string, params: unknown): void {
     if (!isHostMethod(method)) {
       this.reply(id, { code: HostErrorCode.MethodNotFound, message: `Método desconocido: ${method}` });
+      return;
+    }
+    if (!isMethodAllowed(this.access, method)) {
+      this.reply(id, toErrorBody(new NotPairedError(method), this.errorTranslate));
       return;
     }
     const schema: ZodTypeAny = HOST_METHOD_SCHEMAS[method];
@@ -452,6 +484,7 @@ const OWN_ERROR_CODES: readonly (readonly [abstract new (...args: never[]) => Er
   [UnsupportedMethodError, HostErrorCode.Unsupported],
   [BypassPermissionsBlockedError, HostErrorCode.PermissionModeBlocked],
   [PermissionAnswersDisabledError, HostErrorCode.PermissionAnswersDisabled],
+  [NotPairedError, HostErrorCode.NotPaired],
 ];
 
 // Un UserFacingError lleva marca y JSON tras el castellano: al cliente solo le llega el texto limpio, en el idioma que pidió (1.6) o en castellano.

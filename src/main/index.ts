@@ -4863,6 +4863,9 @@ function startHost(mode: HostMode): Promise<void> {
       now: () => new Date().toISOString(),
       log: mainLog,
     }),
+    isMageCaller: (credential) => mcpCallers.resolve(credential) !== null,
+    // ponytail: sin almacén de clientes todavía, ningún token de cliente es válido.
+    clients: { authenticate: () => null },
     hostVersion: app.getVersion(),
     log: mainLog,
     newId: randomUUID,
