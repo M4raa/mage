@@ -2,6 +2,45 @@
 
 What changes from one version to the next, written for the people who use the app. The most recent version is at the top. Mage shows these same notes in its what's-new tab after an update, and in Settings › Release notes.
 
+## 0.1.7 — 2026-11-20
+
+### Added
+- **All your artifacts in Mage.** A new screen lists the artifacts you created and the ones shared with you, from all your Claude accounts, and opens them inside Mage without signing in to claude.ai. A published artifact's card says who can see it and links to change it on claude.ai.
+- **Actions that always ask.** In Claude, publishing an artifact, `git push` and creating or commenting on GitHub with `gh` ask for permission also in Auto and Accept edits; only "Bypass permissions" skips it. The list is in Settings › Hooks and permissions.
+- **Browser like Claude Desktop's.** Forward, copy the address, open it in the system browser, per-browser zoom (Ctrl + `+`/`-`/`0`) and pop it out to its own window without reloading the page.
+- **Chat links.** A click opens in Mage's browser; Ctrl or middle click, in the system one; right click offers both and copy. It can be inverted in Settings.
+- **Files in the chat.** Every file the agent creates or edits leaves a card in the thread that opens it in Files. A sent message's attachments show as cards with name and size, and open in Files › Attachments.
+- **Closing a conversation that is working** asks: keep it in the background, close and stop it, or cancel. With "Don't ask again", change it in Settings › Storage.
+- **Subsessions with confirmation.** If the agent creates a session without a model or effort, a "Launch" card shows the inherited values to review. Scheduled tasks, delegated sessions and Ultracode don't see it.
+- **Usage and resume for agents.** Mage's MCP gives each account's 5-hour and weekly usage with its reset time, and a session can "continue when the limit resets" for the 5-hour window (never the weekly one), also from the tab's "+".
+- **Subsessions close when done.** Five minutes after delivering its result, a subsession releases its process (unless created to stay alive) and reopens when you write to it; they no longer sit in memory for hours.
+- **Host pairing.** A new terminal client (`mage chat`) asks for permission in Mage's window the first time; paired clients are revoked in Settings › Hooks and permissions.
+- "Retry" on an account without a session reads again whatever the CLI wrote.
+
+### Changed
+- **Panels.** By default you see Conversations, Context, Files, Activity and Browser; the rest is in "Add panel". It applies once when updating; what you add later is kept. A hidden panel opens by itself when something asks for it.
+- **Artifact always available** in Claude: the setting is gone.
+- **Prompt.** The box is shorter, the line below it has less margin, the context % sits to the right of the model and the `/` and `@` menus open above the box.
+- Mentioned-file chips in the prompt show their size.
+
+### Fixed
+- The marked tab could differ from the one shown when restoring with the active tab from an account that was gone.
+- Ctrl+Tab (and opening from the widget, a task or a subsession) leaves the keyboard on the visible tab, also with split panes; an MCP question in the other pane no longer switches your tab.
+- The "Browser" button opens `.html` files from the CLI scratchpad.
+- An account's session state is read again after every turn.
+
+### Security
+- The local host no longer accepts, for any provider, full-access modes that never ask from the terminal.
+- The host's startup token only allows reading; writing requires a paired client.
+- MCP server secrets no longer travel in Claude's CLI environment, where the agent could read them with a command: they go to the account's MCP config file.
+- Production dependencies without high advisories (declared exception: GHSA-mrhx-c7xc-m3w5 in zod 3, until moving to zod 4); Dependabot enabled and a CycloneDX SBOM with every version.
+
+### Known limitations
+- A conversation started in "Bypass permissions" doesn't add the always-ask actions if its mode changes later without reopening it.
+- Reloading the window while a subsession waits for "Launch" loses its card.
+- The artifact viewer shows a local copy: it can reach the network, but without claude.ai cookies or access to other files.
+- Codex still receives its MCP secrets through the environment (not measured).
+
 ## 0.1.6 — 2026-11-16
 
 ### Added
