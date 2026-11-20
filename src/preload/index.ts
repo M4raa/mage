@@ -142,6 +142,7 @@ const api: MageApi = {
   openEditor: (params: OpenEditorParams) => ipcRenderer.invoke(IpcChannel.OpenEditor, params),
   listAccounts: () => ipcRenderer.invoke(IpcChannel.AccountsList),
   refreshLogin: (configDir: string) => ipcRenderer.invoke(IpcChannel.AccountsRefreshLogin, configDir),
+  reloadLogin: (configDir: string) => ipcRenderer.invoke(IpcChannel.AccountsReloadLogin, configDir),
   confirmCodexAccounts: () => ipcRenderer.invoke(IpcChannel.AccountsCodexConfirm),
   createAccount: (name: string) => ipcRenderer.invoke(IpcChannel.AccountsCreate, name),
   startLogin: (params) => ipcRenderer.invoke(IpcChannel.AccountsLoginStart, params),

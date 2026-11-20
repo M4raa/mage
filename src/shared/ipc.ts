@@ -12,7 +12,7 @@ import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResul
 import type { PrCatalogEntry, PrCatalogLinkParams, PrCatalogUnlinkParams, PrDetail, PrListParams, PrListResult, PrMigrateParams, PrReadParams, PrWriteParams, PrWriteResult } from './pr';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
 import type { DesktopScheduledTaskFile, TaskDraft, TaskRecord } from './tasks';
-import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
+import type { AccountCreateParams, AccountInfo, AccountLoginState, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
@@ -159,6 +159,8 @@ export const IpcChannel = {
   AccountsList: 'accounts:list',
   // Renueva el token caducado de una cuenta de Claude con su propio CLI (un `initialize` sin turno, P-038).
   AccountsRefreshLogin: 'accounts:refresh-login',
+  // Vuelve a leer del disco el estado de login de una cuenta de Claude por suscripción, sin renovar nada.
+  AccountsReloadLogin: 'accounts:reload-login',
   AccountsCodexConfirm: 'accounts:codex-confirm',
   AccountsCreate: 'accounts:create',
   // Login por el CLI (Fase 9.2): tres pasos, porque el usuario tiene que pegar el *code* en medio.
@@ -1121,6 +1123,8 @@ export interface MageApi {
   listAccounts(): Promise<readonly AccountInfo[]>;
   // «Refrescar sesión»: el CLI de la cuenta renueva su token de acceso con el de renovación, sin gastar un turno.
   refreshLogin(configDir: string): Promise<void>;
+  // «Reintentar»: relee del disco el estado de login de una cuenta de Claude por suscripción (no renueva nada).
+  reloadLogin(configDir: string): Promise<AccountLoginState>;
   confirmCodexAccounts(): Promise<readonly AccountInfo[]>;
   createAccount(name: string): Promise<AccountInfo>;
   // Login por el CLI (Fase 9.2). Tres pasos porque el usuario pega el *code* en medio:

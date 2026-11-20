@@ -80,6 +80,36 @@ describe('setDraft', () => {
     expect(refreshLogin).toHaveBeenCalledWith('/claude-p');
     expect(store.getState().accounts[0]?.loginStatus).toBe('logged_in');
   });
+  it('handleEvent_finDeTurnoDeCuentaClaudeSinSesion_releeSuLoginYLaFichaLoRecoge', async () => {
+    // Arrange: la ficha leyó el fichero vacío; durante el turno el CLI escribió un login válido.
+    const account = 'C:\\Users\\u\\.claude';
+    const reloadLogin = vi.fn().mockResolvedValue({ loginStatus: 'logged_in', expiresAt: 5_000 });
+    const store = createWorkbenchStore(fakeMage({ reloadLogin, notify: vi.fn().mockResolvedValue(undefined), getUsage: vi.fn().mockResolvedValue(null) }));
+    store.setState({
+      tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' }, statusByChat: { a: 'streaming' },
+      accounts: [{ id: account, providerId: 'claude', apiBilled: false, loginStatus: 'logged_out' } as Account],
+    });
+
+    // Act
+    store.getState().handleEvent('s-a', { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
+    await vi.waitFor(() => expect(store.getState().accounts[0]?.loginStatus).toBe('logged_in'));
+
+    // Assert
+    expect(reloadLogin).toHaveBeenCalledWith(account);
+  });
+  it('reloadLogin_cuentaDeApiOdeOtroProveedor_noLlamaAMain', async () => {
+    // Arrange: fakeMage LANZA ante cualquier llamada no declarada, así que basta con no declarar reloadLogin.
+    const store = createWorkbenchStore(fakeMage());
+    store.setState({ accounts: [
+      { id: '/api', providerId: 'claude', apiBilled: true, loginStatus: 'logged_in' } as Account,
+      { id: '/codex', providerId: 'codex', apiBilled: false, loginStatus: 'logged_out' } as Account,
+    ] });
+
+    // Act + Assert
+    await expect(store.getState().reloadLogin('/api')).resolves.toBeUndefined();
+    await expect(store.getState().reloadLogin('/codex')).resolves.toBeUndefined();
+    await expect(store.getState().reloadLogin('/desconocida')).resolves.toBeUndefined();
+  });
   it('setDraft_dosPestanas_cadaUnaConservaElSuyo', () => {
     // Arrange
     const store = createWorkbenchStore(fakeMage());

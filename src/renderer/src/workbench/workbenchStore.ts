@@ -447,6 +447,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   refreshAccounts: () => Promise<void>;
   // Renueva el token caducado de una cuenta de Claude con su CLI, sin turno, y relee su estado (P-038).
   refreshLogin: (accountId: string) => Promise<void>;
+  // Relee del disco el login de una cuenta de Claude por suscripción, sin renovar nada («Reintentar», fin de turno).
+  reloadLogin: (accountId: string) => Promise<void>;
   // #46/H3: guarda un acento (el menos usado) para cada cuenta que aún no tiene uno. Solo con los ajustes
   // ya cargados: antes, persistir pisaría los colores elegidos a mano.
   assignAccountAccents: () => void;
@@ -3198,6 +3200,10 @@ export function createWorkbenchStore(mage: MageClient) {
       // Al terminar un turno, refresca el uso de la cuenta de esa pestana (el consumo acaba de subir).
       // El main cachea >=180 s, asi que llamadas seguidas no golpean la red de mas.
       if (event.kind === 'result' && tab !== undefined) void get().refreshUsage(tab.accountId);
+      // Y su login: el CLI pudo renovar el token durante el turno, y la ficha seguía con la lectura anterior.
+      if (event.kind === 'result' && tab !== undefined) {
+        void get().reloadLogin(tab.accountId).catch((err: unknown) => console.warn('No se pudo releer la sesión de la cuenta:', describeError(err)));
+      }
       // Y el de git (P-026 3.5): el agente acaba de tocar ficheros, quiza de hacer commit.
       if (event.kind === 'result' && tab !== undefined) void get().refreshGit(tab.id);
       // Y el del PR (grupo D): quiza acaba de hacer push o de abrirlo.

@@ -68,6 +68,47 @@ describe('AccountService.listAccounts (descubrimiento)', () => {
   });
 });
 
+describe('AccountService.readLoginStatus («Reintentar»)', () => {
+  const CREDENTIALS = join(HOME, '.claude-p', '.credentials.json');
+  const EMPTY = { claudeAiOauth: { accessToken: '', refreshToken: '', expiresAt: 0 } };
+  const VALID = { claudeAiOauth: { accessToken: 'x', refreshToken: 'x', expiresAt: 5_000 } };
+
+  it('readLoginStatus_ficheroPasaDeVacioAValido_laSegundaLecturaDaSesion', () => {
+    // Arrange: el CLI de otra instalacion escribe un login valido entre las dos lecturas.
+    let onDisk: unknown = EMPTY;
+    const service = new AccountService(deps({ exists: (p) => p === CREDENTIALS, readJson: (p) => (p === CREDENTIALS ? onDisk : null) }));
+    const before = service.readLoginStatus(join(HOME, '.claude-p'));
+
+    // Act
+    onDisk = VALID;
+    const after = service.readLoginStatus(join(HOME, '.claude-p'));
+
+    // Assert
+    expect(before).toEqual({ status: 'logged_out', expiresAt: null });
+    expect(after).toEqual({ status: 'logged_in', expiresAt: 5_000 });
+  });
+
+  it('readLoginStatus_sinFichero_daLoggedOut', () => {
+    const service = new AccountService(deps({}));
+
+    expect(service.readLoginStatus(join(HOME, '.claude'))).toEqual({ status: 'logged_out', expiresAt: null });
+  });
+
+  it('readLoginStatus_rutaFueraDeLasCuentas_lanzaCitandoLaRuta', () => {
+    const service = new AccountService(deps({}));
+
+    for (const bad of ['', '/etc', join(HOME, 'Documents'), join('/otro', '.claude-p')]) {
+      expect(() => service.readLoginStatus(bad)).toThrow(/desconocida/);
+    }
+  });
+
+  it('readLoginStatus_dirQueYaNoExiste_lanza', () => {
+    const service = new AccountService(deps({ isDirectory: () => false }));
+
+    expect(() => service.readLoginStatus(join(HOME, '.claude-p'))).toThrow(/desconocida/);
+  });
+});
+
 // Lo que 9.1 vino a arreglar: AccountService ya no conoce ningun nombre de proveedor. Estos tests usan
 // un layout INVENTADO a proposito — si alguien vuelve a cablear `.claude` dentro del servicio, fallan.
 // Fase 9.2: quien ya usa Claude Code tiene ~/.claude logueado; su primera cuenta extra en Mage no
