@@ -114,6 +114,8 @@ export const IpcChannel = {
   SessionDiverge: 'session:diverge',
   SessionSetModel: 'session:setModel',
   SessionSetEffort: 'session:setEffort',
+  // Enciende o apaga «Continuar al restablecerse» de una sesión viva (solo Claude por suscripción).
+  SessionSetResumeOnReset: 'session:setResumeOnReset',
   SessionSetPermissionMode: 'session:setPermissionMode',
   // Parar UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
   SessionStopTask: 'session:stopTask',
@@ -450,6 +452,9 @@ export interface CreateSessionParams {
   readonly effort?: string;
   // Ultracode (solo Claude): ajuste de arranque de la sesion; ausente/false -> apagado.
   readonly ultracode?: boolean;
+  // «Continuar al restablecerse» (solo Claude por suscripción): se enciende en la sesión recién creada. Main lo ignora
+  // (y lo deja en el log) en cualquier otra cuenta.
+  readonly resumeOnReset?: boolean;
   readonly maxBudgetUsdCents?: number;
   // M2.6: modo de permiso inicial (--permission-mode). Ausente -> 'default'. Solo Claude.
   readonly permissionMode?: PermissionMode;
@@ -558,6 +563,11 @@ export interface SetModelParams {
 export interface SetEffortParams {
   readonly sessionId: string;
   readonly effort: string;
+}
+
+export interface SetResumeOnResetParams {
+  readonly sessionId: string;
+  readonly enabled: boolean;
 }
 
 // Cambio de modo de permiso en caliente (M2.6, solo Claude): control_request set_permission_mode.
@@ -1057,6 +1067,8 @@ export interface MageApi {
   // Cambia el modelo de una sesion viva (M2.4, solo Claude); aplica al siguiente turno.
   setModel(params: SetModelParams): Promise<void>;
   setEffort(params: SetEffortParams): Promise<void>;
+  // «Continuar al restablecerse» de una sesion viva (solo Claude por suscripcion; main lanza si la cuenta no vale).
+  setResumeOnReset(params: SetResumeOnResetParams): Promise<void>;
   // Cambia el modo de permiso de una sesion viva (M2.6, solo Claude): default/acceptEdits/plan.
   setPermissionMode(params: SetPermissionModeParams): Promise<void>;
   // Para UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).

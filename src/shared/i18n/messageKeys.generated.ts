@@ -1889,6 +1889,9 @@ export interface MessageValues {
   readonly "prompt.actions.openIn": { readonly "editor": string | number };
   readonly "prompt.actions.openInEditor": never;
   readonly "prompt.actions.openTerminal": never;
+  readonly "prompt.actions.resumeOnReset": never;
+  readonly "prompt.actions.resumeOnResetFailed": { readonly "error": string | number };
+  readonly "prompt.actions.resumeOnResetTip": never;
   readonly "prompt.attach.failed": { readonly "error": string | number };
   readonly "prompt.attach.noDiskPath": { readonly "name": string | number };
   readonly "prompt.attach.remove": { readonly "n": string | number };

@@ -16,6 +16,7 @@ import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
 import type { AgyUsageSnapshot, UsageInfo } from '@shared/usage';
 import type { StatusInfo } from '@shared/status';
 import { aliasFromConfigDir, applyAccountOverrides } from './accountView';
+import { offersResumeOnReset, withResumeOnReset } from './resumeOnResetTab';
 import { nextIndexForArrow } from './a11y/keyboardNav';
 import { canChangeCwd } from './cwdChange';
 import {
@@ -715,6 +716,9 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setActiveEffort: (effort: string) => void;
   // Ultracode de la pestana activa (solo Claude): de ARRANQUE como el esfuerzo.
   setActiveUltracode: (on: boolean) => void;
+  // «Continuar al restablecerse» de la pestana activa (solo Claude por suscripcion). Con sesion viva avisa a main; sin
+  // ella queda como borrador y se pasa al crearla. Si main lo rechaza, vuelve al valor anterior y el error sube.
+  setActiveResumeOnReset: (on: boolean) => Promise<void>;
   // Cambia la carpeta (cwd) de la pestana activa (F2). Solo tiene sentido ANTES de que arranque la
   // sesion: la regla vive en canChangeCwd (modulo puro), que comparten la UI y esta accion.
   // `tabId` = la pestaña del panel que lo pide (con el workspace dividido no tiene por que ser la
@@ -1336,6 +1340,7 @@ async function createSessionFor(
       ...(tab.resumeSessionId === undefined ? {} : { resumeSessionId: tab.resumeSessionId }),
       ...(tab.effort === undefined ? {} : { effort: tab.effort }),
       ...(tab.provider === 'claude' && tab.ultracode === true ? { ultracode: true } : {}),
+      ...(offersResumeOnReset(tab, get().accounts) && tab.resumeOnReset === true ? { resumeOnReset: true } : {}),
       ...(tab.maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents: tab.maxBudgetUsdCents }),
       ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
       ...(projectId === undefined ? {} : { projectId }),
@@ -3076,6 +3081,24 @@ export function createWorkbenchStore(mage: MageClient) {
       }));
       persistConversationPrefs(mage, get(), tabId);
       schedulePersist(mage, get);
+    },
+
+    // «Continuar al restablecerse»: no se persiste (main tampoco lo recuerda tras reiniciar). Con sesion viva main es
+    // quien decide si la cuenta lo admite; si lanza, la pestana vuelve a como estaba.
+    setActiveResumeOnReset: async (on) => {
+      const tabId = get().activeTabId;
+      const tab = get().tabs.find((t) => t.id === tabId);
+      if (tab === undefined || !offersResumeOnReset(tab, get().accounts) || (tab.resumeOnReset === true) === on) return;
+      const apply = (enabled: boolean): void => set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? withResumeOnReset(t, enabled) : t)) }));
+      apply(on);
+      const sessionId = get().sessionIdByChat[tabId];
+      if (sessionId === undefined) return;
+      try {
+        await mage.setResumeOnReset({ sessionId, enabled: on });
+      } catch (err) {
+        apply(!on);
+        throw err;
+      }
     },
 
     // Interrumpe el turno en curso de la pestana activa (boton "Parar"). Sin sesion viva no hay nada que

@@ -8,7 +8,7 @@ type Listener = (event: IpcMainInvokeEvent, arg: unknown) => unknown;
 function setup(over: Partial<SessionIpcDeps> = {}) {
   const handlers = new Map<string, Listener>();
   const sessions: SessionCommands = {
-    setPermissionMode: vi.fn(), setModel: vi.fn(), setEffort: vi.fn(), stopTask: vi.fn(),
+    setPermissionMode: vi.fn(), setModel: vi.fn(), setEffort: vi.fn(), stopTask: vi.fn(), setResumeOnReset: vi.fn(),
   };
   const coordinator = {
     send: vi.fn().mockReturnValue({ status: 'queued', commandId: 'c1' }),
@@ -61,7 +61,7 @@ describe('registerSessionIpc', () => {
     expect([...handlers.keys()].sort()).toEqual([
       IpcChannel.SessionAnswerElicitation, IpcChannel.SessionAnswerPermission, IpcChannel.SessionClose, IpcChannel.SessionAttach, IpcChannel.SessionCreate, IpcChannel.SessionDiverge, IpcChannel.SessionGetScratchDir,
       IpcChannel.SessionIdleState, IpcChannel.SessionInterrupt, IpcChannel.SessionQueueRemove, IpcChannel.SessionQueueTake, IpcChannel.SessionQueueUpdate, IpcChannel.SessionRewindApply, IpcChannel.SessionRewindPlan, IpcChannel.SessionSendMessage, IpcChannel.SessionSetEffort, IpcChannel.SessionSetModel,
-      IpcChannel.SessionSetPermissionMode, IpcChannel.SessionSnapshot, IpcChannel.SessionStop, IpcChannel.SessionStopTask, IpcChannel.SessionsAdoptable,
+      IpcChannel.SessionSetPermissionMode, IpcChannel.SessionSetResumeOnReset, IpcChannel.SessionSnapshot, IpcChannel.SessionStop, IpcChannel.SessionStopTask, IpcChannel.SessionsAdoptable,
     ].sort());
   });
 
@@ -144,6 +144,37 @@ describe('registerSessionIpc', () => {
     expect(sessions.setPermissionMode).toHaveBeenCalledWith('s1', 'plan');
     expect(sessions.stopTask).toHaveBeenCalledWith('s1', 't1');
     expect(coordinator.stop).toHaveBeenCalledWith('s1');
+  });
+
+  it('setResumeOnReset_enciendeYApagaLaOpcionDeLaSesion', () => {
+    const { sessions, invoke } = setup();
+
+    invoke(IpcChannel.SessionSetResumeOnReset, { sessionId: 's1', enabled: true });
+    invoke(IpcChannel.SessionSetResumeOnReset, { sessionId: 's1', enabled: false });
+
+    expect(sessions.setResumeOnReset).toHaveBeenNthCalledWith(1, 's1', true);
+    expect(sessions.setResumeOnReset).toHaveBeenNthCalledWith(2, 's1', false);
+  });
+
+  it.each([[{ sessionId: 's1' }], [{ sessionId: 's1', enabled: 'sí' }], [{ sessionId: 's1', enabled: true, extra: 1 }], [{ enabled: true }], ['s1']])('setResumeOnReset_entradaMalFormada_%j_lanzaSinTocarNada', (arg) => {
+    const { sessions, invoke } = setup();
+
+    expect(() => invoke(IpcChannel.SessionSetResumeOnReset, arg)).toThrow(new RegExp(IpcChannel.SessionSetResumeOnReset));
+    expect(sessions.setResumeOnReset).not.toHaveBeenCalled();
+  });
+
+  it('setResumeOnReset_ventanaQueNoControlaLaSesion_lanza', () => {
+    const { sessions, invoke } = setup({ canControl: vi.fn().mockReturnValue(false) });
+
+    expect(() => invoke(IpcChannel.SessionSetResumeOnReset, { sessionId: 's1', enabled: true })).toThrow('no controla la sesión');
+    expect(sessions.setResumeOnReset).not.toHaveBeenCalled();
+  });
+
+  it('setResumeOnReset_laCuentaNoLoAdmite_elErrorLlegaAlRenderer', () => {
+    const { sessions, invoke } = setup();
+    vi.mocked(sessions.setResumeOnReset).mockImplementation(() => { throw new Error('cuenta de API'); });
+
+    expect(() => invoke(IpcChannel.SessionSetResumeOnReset, { sessionId: 's1', enabled: true })).toThrow('cuenta de API');
   });
 
   it('snapshot_vaALaCoordinacion', () => {

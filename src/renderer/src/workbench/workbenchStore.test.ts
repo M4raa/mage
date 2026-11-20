@@ -440,6 +440,102 @@ describe('sesiones en segundo plano', () => {
     expect(store.getState().tabs[0]).not.toHaveProperty('ultracode');
   });
 
+  describe('setActiveResumeOnReset', () => {
+    const claudeAccount = (overrides: Partial<Account> = {}): Account => ({ id: tab('a').accountId, providerId: 'claude', apiBilled: false, loginStatus: 'logged_in', ...overrides }) as Account;
+
+    it('setActiveResumeOnReset_sinSesion_quedaComoBorradorYNoLlamaAMain', async () => {
+      const setResumeOnReset = vi.fn().mockResolvedValue(undefined);
+      const store = createWorkbenchStore(fakeMage({ setResumeOnReset }));
+      store.setState({ accounts: [claudeAccount()], tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+      await store.getState().setActiveResumeOnReset(true);
+
+      expect(store.getState().tabs[0]?.resumeOnReset).toBe(true);
+      expect(setResumeOnReset).not.toHaveBeenCalled();
+    });
+
+    it('setActiveResumeOnReset_conSesionViva_avisaAMain', async () => {
+      const setResumeOnReset = vi.fn().mockResolvedValue(undefined);
+      const store = createWorkbenchStore(fakeMage({ setResumeOnReset }));
+      store.setState({ accounts: [claudeAccount()], tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+
+      await store.getState().setActiveResumeOnReset(true);
+      await store.getState().setActiveResumeOnReset(false);
+
+      expect(setResumeOnReset).toHaveBeenNthCalledWith(1, { sessionId: 's-a', enabled: true });
+      expect(setResumeOnReset).toHaveBeenNthCalledWith(2, { sessionId: 's-a', enabled: false });
+      expect(store.getState().tabs[0]).not.toHaveProperty('resumeOnReset');
+    });
+
+    it('setActiveResumeOnReset_mainLoRechaza_vuelveAlValorAnteriorYElErrorSube', async () => {
+      const setResumeOnReset = vi.fn().mockRejectedValue(new Error('cuenta de API'));
+      const store = createWorkbenchStore(fakeMage({ setResumeOnReset }));
+      store.setState({ accounts: [claudeAccount()], tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+
+      await expect(store.getState().setActiveResumeOnReset(true)).rejects.toThrow('cuenta de API');
+
+      expect(store.getState().tabs[0]).not.toHaveProperty('resumeOnReset');
+    });
+
+    it('setActiveResumeOnReset_mismoValor_noLlamaAMain', async () => {
+      const setResumeOnReset = vi.fn().mockResolvedValue(undefined);
+      const store = createWorkbenchStore(fakeMage({ setResumeOnReset }));
+      store.setState({ accounts: [claudeAccount()], tabs: [tab('a', { resumeOnReset: true })], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+
+      await store.getState().setActiveResumeOnReset(true);
+
+      expect(setResumeOnReset).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['cuenta de API', { provider: 'claude' }, { apiBilled: true }],
+      ['codex', { provider: 'codex', model: 'gpt-6-luna' }, {}],
+    ])('setActiveResumeOnReset_%s_noHaceNada', async (_name, tabOverrides, accountOverrides) => {
+      const setResumeOnReset = vi.fn().mockResolvedValue(undefined);
+      const store = createWorkbenchStore(fakeMage({ setResumeOnReset }));
+      store.setState({ accounts: [claudeAccount(accountOverrides)], tabs: [tab('a', tabOverrides)], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+
+      await store.getState().setActiveResumeOnReset(true);
+
+      expect(store.getState().tabs[0]).not.toHaveProperty('resumeOnReset');
+      expect(setResumeOnReset).not.toHaveBeenCalled();
+    });
+
+    // Lo que `ensureSession` toca al arrancar (la carpeta autorizada, sin worktree).
+    const creating = () => {
+      const createSession = vi.fn().mockResolvedValue({ sessionId: 's-new', configDir: '/cfg' });
+      const mage = fakeMage({ createSession, isFolderTrusted: vi.fn().mockResolvedValue(true), saveWorkspace: vi.fn().mockResolvedValue(undefined), saveConversationPrefs: vi.fn().mockResolvedValue(undefined) });
+      return { createSession, store: createWorkbenchStore(mage) };
+    };
+
+    it('createSession_conLaOpcionPuesta_laPasaAMainAlCrearLaSesion', async () => {
+      const { createSession, store } = creating();
+      store.setState({ accounts: [claudeAccount()], tabs: [tab('a', { resumeOnReset: true, worktreeOff: true })], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+      await store.getState().ensureSession('a');
+
+      expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ resumeOnReset: true }));
+    });
+
+    it('createSession_sinLaOpcion_noMandaElCampo', async () => {
+      const { createSession, store } = creating();
+      store.setState({ accounts: [claudeAccount()], tabs: [tab('a', { worktreeOff: true })], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+      await store.getState().ensureSession('a');
+
+      expect(createSession.mock.calls[0]?.[0]).not.toHaveProperty('resumeOnReset');
+    });
+
+    it('createSession_laCuentaPasoAApi_noMandaLaOpcionQueQuedoEnLaPestana', async () => {
+      const { createSession, store } = creating();
+      store.setState({ accounts: [claudeAccount({ apiBilled: true })], tabs: [tab('a', { resumeOnReset: true, worktreeOff: true })], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+      await store.getState().ensureSession('a');
+
+      expect(createSession.mock.calls[0]?.[0]).not.toHaveProperty('resumeOnReset');
+    });
+  });
+
   it('setActiveModel_codexSinHilo_noGuardaPreferenciasBajoElUuidDeMage', () => {
     const saveConversationPrefs = vi.fn().mockResolvedValue(undefined);
     const store = createWorkbenchStore(fakeMage({ saveConversationPrefs, setModel: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined) }));

@@ -57,6 +57,7 @@ export const SET_PERMISSION_MODE_SCHEMA = z.object({ sessionId: id, mode: label 
 export const SET_MODEL_SCHEMA = z.object({ sessionId: id, model: label }).strict();
 // El esfuerzo vacío es «el del modelo por defecto»: único campo de modo que admite cadena vacía.
 export const SET_EFFORT_SCHEMA = z.object({ sessionId: id, effort: z.string().max(MAX_MODE_CHARS) }).strict();
+export const SET_RESUME_ON_RESET_SCHEMA = z.object({ sessionId: id, enabled: z.boolean() }).strict();
 export const STOP_TASK_SCHEMA = z.object({ sessionId: id, taskId: id }).strict();
 
 // Valida `value` con `schema` o lanza un Error que nombra el canal y qué campo falla (con el tipo recibido que

@@ -130,7 +130,8 @@ import type { MenuItemConstructorOptions } from 'electron';
 import { BACKGROUND_TEST_SWITCHES, isBackgroundTestRun, offScreenPosition } from './windows/backgroundTestWindow';
 import { DebugChannel } from '@shared/debug';
 import type { RendererLogInput } from '@shared/debug';
-import type { AccountCreateParams, AccountInfo, AccountLoginState, AccountProviderId, AgyLoginStart, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
+import { supportsResumeOnReset } from '@shared/resumeOnReset';
+import type { AccountAuthKind, AccountCreateParams, AccountInfo, AccountLoginState, AccountProviderId, AgyLoginStart, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
 import { BASE_ARGS as CLAUDE_BASE_ARGS, ClaudeAdapter } from './engine/claudeAdapter';
 import { probeModelCatalog, probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
 import { registerMcpIpc } from './config/mcpIpc';
@@ -3142,7 +3143,33 @@ function recordClaudeFork(childId: string, parentId: string): void {
 }
 
 function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: CreateSessionParams): CreateSessionResult {
-  return launchSession(params, event.sender);
+  const result = launchSession(params, event.sender);
+  if (params.resumeOnReset === true) enableResumeOnResetOnCreate(result.sessionId);
+  return result;
+}
+
+// Facturación de una cuenta de Claude: las de API están en el registro de cuentas; la principal y las de login, no.
+function claudeBillingOf(accountDir: string): AccountAuthKind {
+  return getProviderAccounts().find('claude', accountDir)?.authKind === 'api-key' ? 'api-key' : 'subscription';
+}
+
+// «Continuar al restablecerse» solo existe en Claude por suscripción: en cualquier otra sesión se rechaza con el motivo.
+function setResumeOnResetChecked(sessionId: string, enabled: boolean): void {
+  if (enabled) {
+    const { provider, accountDir } = sessionCoordinator.rewindContext(sessionId);
+    const billing = provider === 'claude' ? claudeBillingOf(accountDir) : undefined;
+    if (!supportsResumeOnReset(provider, billing)) throw new Error(`«Continuar al restablecerse» solo existe en Claude por suscripción (recibido: ${provider}/${billing ?? 'sin cuenta de Claude'})`);
+  }
+  resumeOnReset.set(sessionId, enabled);
+}
+
+// Al crear una pestaña con la opción encendida: si la cuenta no la admite se ignora, y queda dicho en el log.
+function enableResumeOnResetOnCreate(sessionId: string): void {
+  try {
+    setResumeOnResetChecked(sessionId, true);
+  } catch (error) {
+    mainLog('warn', 'Se ignora «Continuar al restablecerse» al crear la sesión', { sessionId, error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 function registerIpcHandlers(): void {
@@ -3341,6 +3368,7 @@ function trackedSessionCommands(): SessionCommands {
     setEffort: (id, effort) => { sessionManager.setEffort(id, effort); sessionSettings.apply(id, 'effort', effort); },
     setPermissionMode: (id, mode) => { sessionManager.setPermissionMode(id, mode); sessionSettings.apply(id, 'permissionMode', mode); },
     stopTask: (id, taskId) => sessionManager.stopTask(id, taskId),
+    setResumeOnReset: setResumeOnResetChecked,
   };
 }
 

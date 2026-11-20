@@ -75,6 +75,7 @@ import type {
   AdoptableSession,
   SetModelParams,
   SetEffortParams,
+  SetResumeOnResetParams,
   StopTaskParams,
   SetPermissionModeParams,
   TranscriptBatchPayload,
@@ -113,6 +114,7 @@ const api: MageApi = {
   takeQueuedMessages: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionQueueTake, sessionId),
   setModel: (params: SetModelParams) => ipcRenderer.invoke(IpcChannel.SessionSetModel, params),
   setEffort: (params: SetEffortParams) => ipcRenderer.invoke(IpcChannel.SessionSetEffort, params),
+  setResumeOnReset: (params: SetResumeOnResetParams) => ipcRenderer.invoke(IpcChannel.SessionSetResumeOnReset, params),
   setPermissionMode: (params: SetPermissionModeParams) =>
     ipcRenderer.invoke(IpcChannel.SessionSetPermissionMode, params),
   stopTask: (params: StopTaskParams) => ipcRenderer.invoke(IpcChannel.SessionStopTask, params),

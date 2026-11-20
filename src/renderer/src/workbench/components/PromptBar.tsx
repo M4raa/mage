@@ -19,6 +19,7 @@ import { Icon, type IconName } from './Icon';
 import { SendControls } from './SendControls';
 import { sendNowAvailability } from '../sendNow';
 import { providerLabel } from '../accountView';
+import { offersResumeOnReset } from '../resumeOnResetTab';
 import type { SendMode } from '@shared/coordination';
 import type { ImageAttachment, PendingAttachment, PromptDraft } from '../types';
 import { buildSlashCatalog, insertSlashCommand, slashQueryAt, slashSuggestionsAt, type SlashCommand } from '../slashCommands';
@@ -215,6 +216,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   const compactActiveSession = useWorkbenchStore((s) => s.compactActiveSession);
   const setActiveEffort = useWorkbenchStore((s) => s.setActiveEffort);
   const setActiveUltracode = useWorkbenchStore((s) => s.setActiveUltracode);
+  const setActiveResumeOnReset = useWorkbenchStore((s) => s.setActiveResumeOnReset);
   const interruptActiveSession = useWorkbenchStore((s) => s.interruptActiveSession);
   const keybindingOverrides = useWorkbenchStore((s) => s.settings.keybindingOverrides);
   // Estado del turno de la pestana activa: con el turno en marcha se ofrece "Parar" en vez de ⏎.
@@ -267,6 +269,8 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   const customProviders = useWorkbenchStore((s) => s.settings.customProviders);
   const modelOptions = useMemo(() => modelOptionsForProvider(providerId, activeModel, customProviders, claudeCatalog), [providerId, activeModel, customProviders, claudeCatalog]);
   const isClaude = activeTab?.provider === 'claude';
+  // «Continuar al restablecerse» solo en Claude por suscripcion (con las de API no hay ventana de 5 h).
+  const canResumeOnReset = offersResumeOnReset(activeTab, accounts);
   // Proveedor sin puente de permisos (E3, `agy`): auto-aprueba las tools y la UI tiene que decirlo.
   const autoApproved = activeTab !== undefined && isAutoApprovedProvider(activeTab.provider);
   const isCodex = activeTab?.provider === CODEX_PROVIDER_ID;
@@ -478,6 +482,12 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   const changeUltracode = (on: boolean): void => {
     notifyCostAdvice({ severity: 'info', message: t('prompt.ultracode.changed', { state: on ? 'on' : 'off' }) }, activeTabId);
     setActiveUltracode(on);
+  };
+
+  // «Continuar al restablecerse»: con sesion viva lo decide main (si lo rechaza, el error se enseña aqui).
+  const toggleResumeOnReset = (): void => {
+    setError(null);
+    setActiveResumeOnReset(activeTab?.resumeOnReset !== true).catch((err: unknown) => setError(t('prompt.actions.resumeOnResetFailed', { error: describeError(err) })));
   };
 
   // Pide una mejora del borrador actual y la deja como preview. `redo` distingue el boton Rehacer
@@ -888,6 +898,15 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
                   hidden: !isClaude,
                   title: canHandoff ? t('prompt.actions.compactTip') : t('prompt.actions.compactDisabled'),
                 },
+                {
+                  icon: 'clock',
+                  label: t('prompt.actions.resumeOnReset'),
+                  onClick: toggleResumeOnReset,
+                  hidden: !canResumeOnReset,
+                  checked: activeTab.resumeOnReset === true,
+                  title: t('prompt.actions.resumeOnResetTip'),
+                  action: 'resume-on-reset',
+                },
                 { icon: 'monitor', label: t('prompt.actions.openTerminal'), onClick: () => void window.mage.openTerminal(activeTab.cwd).catch(() => undefined) },
                 { icon: 'branch', label: t('chat.git.askCommit'), onClick: () => insertCommitPrompt(activeTabId), hidden: !canAskCommit, title: t('chat.git.askCommitTip'), action: 'git-commit' },
                 // "Abrir en <editor>": un item por editor detectado; si no hay ninguno, un unico
@@ -1101,6 +1120,7 @@ interface ActionItem {
   readonly hidden?: boolean; // no aplica al proveedor/estado actual -> ni se lista
   readonly title?: string; // motivo cuando esta deshabilitado
   readonly action?: string; // marca estable (`data-action`) para medir la entrada desde verify:gui
+  readonly checked?: boolean; // presente = es una casilla (`menuitemcheckbox`) y dice si esta marcada
 }
 
 // Menu «+» que agrupa las acciones de la barra (adjuntar, mejorar, handoff, compactar, terminal, editor) en un
@@ -1126,11 +1146,12 @@ function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; r
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div role="menu" className="absolute bottom-full left-0 z-20 mb-[6px] w-[200px] overflow-hidden rounded-[8px] border border-mg-border-pop bg-mg-panel py-[4px] mg-shadow-pop">
+          <div role="menu" className="absolute bottom-full left-0 z-20 mb-[6px] w-max min-w-[200px] max-w-[300px] overflow-hidden rounded-[8px] border border-mg-border-pop bg-mg-panel py-[4px] mg-shadow-pop">
             {visible.map((item) => (
               <button
                 key={item.label}
-                role="menuitem"
+                role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+                aria-checked={item.checked}
                 data-action={item.action}
                 onClick={() => run(item)}
                 disabled={item.disabled === true}
@@ -1139,6 +1160,7 @@ function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; r
               >
                 <Icon name={item.icon} className="text-mg-ter" />
                 {item.label}
+                {item.checked === true && <Icon name="check" size={12} className="ml-auto text-mg-body2" />}
               </button>
             ))}
           </div>
