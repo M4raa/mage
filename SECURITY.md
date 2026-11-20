@@ -73,3 +73,6 @@ No cuenta que Mage ejecute comandos: **es lo que hace**. El agente pide permiso 
 permiso a algo destructivo, se ejecuta. Lo mismo con abrir una carpeta ajena: lanzar un agente dentro
 de un repositorio ejecuta lo que ese repositorio traiga (sus *hooks*, su configuración, sus servidores
 MCP). Por eso Mage pregunta antes la primera vez que trabaja en una carpeta nueva.
+
+En Claude, publicar un artifact, `git push` y crear o comentar en GitHub con `gh` piden permiso siempre, también en
+Auto y Aceptar ediciones; solo «Omitir permisos» se lo salta.
