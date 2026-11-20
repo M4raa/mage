@@ -41,6 +41,10 @@ las carpetas que autorices. Además toca cosas sensibles por diseño:
   (qué sesiones puede ver o crear, profundidad, cuentas); no da acceso a los demás métodos de escritura. En Windows,
   Node no permite restringir el descriptor de seguridad del pipe, así que la barrera real son estos tokens.
 
+- Las dependencias de producción pasan `pnpm audit` en cada integración.
+- Dependabot propone actualizaciones de las dependencias y de las acciones de GitHub.
+- Cada release lleva su SBOM CycloneDX (`mage-<versión>-sbom.cdx.json`).
+
 Mage **no envía telemetría** ni tiene servidor propio: no hay ningún sitio al que tu contenido viaje
 por parte del proyecto. Las peticiones que hace Mage por su cuenta están todas en la sección siguiente.
 
