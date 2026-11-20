@@ -86,7 +86,7 @@ describe('Mage MCP server', () => {
     const tool = (await client.listTools()).tools.find((item) => item.name === 'mage_create_session');
     expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['onDone', 'resumeOnReset']));
     expect(tool?.inputSchema.required ?? []).not.toContain('onDone');
-    expect(tool?.description).toContain('onDone: "keepAlive"');
+    expect(tool?.description).toContain('Por defecto una sesión creada se cierra 5 minutos después de entregar su resultado; pasa onDone: "keepAlive" si vas a seguir trabajando con ella, y usa mage_close_session para cerrarla antes.');
   });
   it('initialize_instrucciones_pidenModeloYEsfuerzoSinElUsuario', async () => {
     const { client } = await connect();
