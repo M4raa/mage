@@ -16815,6 +16815,8 @@ async function measurePairDialog(page, rpc, runDir) {
     titulo: (await page.locator('#host-pair-title').textContent()) ?? '',
     foco: await page.evaluate(() => document.activeElement?.getAttribute('data-dialog-action') ?? null),
   };
+  // La captura, con la animación de entrada acabada (opacidad 1 en el panel), no a mitad.
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-host-pair-dialog]')).opacity === '1', null, { timeout: CONFIG.actionTimeoutMs });
   await page.screenshot({ path: path.join(runDir, 'host-pair.png') });
   await page.locator('[data-dialog-action="host-pair-approve"]').click();
   const { clientId, clientToken } = await pairing;
