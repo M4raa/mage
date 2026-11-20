@@ -70,7 +70,7 @@ export class IsolatedBrowser {
   private closed = false;
 
   /**
-   * `fileRoot`: carpeta de trabajo de la conversación; sus .html se pueden abrir (P-040). null: ningún fichero.
+   * `fileRoot`: carpeta de trabajo de la conversación; sus .html se pueden abrir. null: ningún fichero.
    * `onExternalLink`: solo el visor de artifacts; los enlaces http(s) de la página salen por ahí en vez de navegar aquí.
    */
   constructor(
