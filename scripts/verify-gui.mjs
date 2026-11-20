@@ -13427,6 +13427,33 @@ const CHECKS = [
     },
   },
   {
+    // La elicitation se inyecta por el reducer real en el panel NO enfocado y se cierra por el mismo camino que main.
+    name: 'Pestañas: una elicitation en el panel no enfocado no se lleva la pestaña activa',
+    async run(page) {
+      const previo = await snapshotTabsState(page);
+      try {
+        const { tabA, tabB } = await openFocusedSplitPair(page);
+        const antes = await medirPestanaDescuadrada(page);
+        const request = { requestId: 'vg-foco-elic', server: 'vg_server', message: 'Foco', mode: 'form', schema: { type: 'object', properties: { nota: { type: 'string', title: 'Nota' } } } };
+        await page.evaluate(({ id, req }) => {
+          const dev = window.__mageDev;
+          dev.store.setState((state) => dev.reduceEvent(state, id, { kind: 'elicitation_request', request: req }));
+        }, { id: tabA, req: request });
+        await waitForDockReady(page, `[data-pane-tab-id="${tabA}"] [data-elicitation-dock="true"]`);
+        const tras = await medirPestanaDescuadrada(page);
+        await page.evaluate((id) => {
+          const dev = window.__mageDev;
+          dev.store.setState((state) => dev.reduceEvent(state, id, { kind: 'elicitation_resolved', requestId: 'vg-foco-elic', action: 'cancel' }));
+        }, tabA);
+        await page.locator('[data-elicitation-dock="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const ok = !pestanaDescuadrada(tras) && antes.activa === tras.activa;
+        return { ok, detail: JSON.stringify({ tabA, tabB, antes, tras }) };
+      } finally {
+        await restoreTabsState(page, previo);
+      }
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
@@ -15289,6 +15316,23 @@ async function medirRestaurarActivaSinCuenta(page) {
   await page.waitForTimeout(CONFIG.settleMs);
   const trasClic = await medirPestanaDescuadrada(page);
   return { ok: !pestanaDescuadrada(tras) && !pestanaDescuadrada(trasClic), detail: JSON.stringify({ tras, trasClic }) };
+}
+
+// Dos temporales divididas: A sola a la izquierda, B a la derecha y enfocada con un clic real en su input.
+async function openFocusedSplitPair(page) {
+  await openTemporaryConversation(page);
+  const tabA = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+  await openTemporaryConversation(page);
+  const tabB = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+  await page.evaluate((a) => window.__mageDev.store.getState().movePaneTab(a, [], 'left'), tabA);
+  await page.waitForTimeout(CONFIG.settleMs);
+  await page.locator(`[data-pane-tab-id="${tabB}"] [data-prompt-editor="true"]`).click();
+  await page.waitForTimeout(CONFIG.settleMs);
+  return { tabA, tabB };
+}
+
+function editorTextOf(page, tabId) {
+  return page.evaluate((id) => document.querySelector(`[data-pane-tab-id="${id}"] [data-prompt-editor="true"]`)?.textContent ?? null, tabId);
 }
 
 async function openTemporaryConversation(page) {

@@ -7,6 +7,7 @@ import { DISCLOSURE_VARIANTS } from '../motionPresets';
 import { formErrors, initialValues, toContent, type FormValues } from '../elicitationForm';
 import { useT } from '../../i18n/uiLanguage';
 import { describeError } from '../describeError';
+import { isActivePane } from './QuestionDock';
 
 // Formulario de un servidor MCP (elicitation) anclado encima del input, como la pregunta del agente.
 // Se genera del esquema acotado de `@shared/elicitation`; los valores solo viajan por IPC a main.
@@ -35,10 +36,11 @@ function ElicitationBody({ request, tabId }: { readonly request: ElicitationRequ
   const errors = request.mode === 'form' ? formErrors(request.schema, values) : {};
   const blocked = Object.keys(errors).length > 0;
 
-  // Toma el foco al aparecer solo con el input vacío: si el usuario escribía, no se le roba.
+  // Toma el foco al aparecer solo en el panel donde está el usuario y con el input vacío: si escribía, o está
+  // en el otro panel, no se le roba (el foco en un panel no activo lo convertiría en cambio de pestaña).
   useEffect(() => {
     const draft = useWorkbenchStore.getState().draftByChat[tabId]?.text ?? '';
-    if (draft.trim().length === 0) ref.current?.focus();
+    if (isActivePane(tabId) && draft.trim().length === 0) ref.current?.focus();
   }, [tabId]);
 
   const send = (action: 'accept' | 'decline' | 'cancel'): void => {
