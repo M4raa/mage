@@ -168,6 +168,8 @@ import { isWindowsPlatform } from './keybindings/platform';
 import { describeError } from './describeError';
 import { localized, renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
+import { applyLaunchEvent, launchCardIpc, launchParamsOf, patchLaunchCard } from './launchCards';
+import type { LaunchCards } from './launchCards';
 import { mergeBackgroundTasks, type BackgroundTaskRow } from './backgroundTasks';
 import { formatClockTime } from '../i18n/format';
 
@@ -355,6 +357,9 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // trabajo), por sessionId. NO se persiste: al cerrar Mage mueren todos los CLI, asi que un mapa
   // restaurado del arranque anterior solo prometeria procesos que ya no existen.
   readonly backgroundSessions: Readonly<Record<string, BackgroundSession>>;
+  // Tarjetas «Lanzar» de las delegadas que esperan a que el usuario confirme modelo y esfuerzo, por el id que recibió la
+  // creadora. NO se persiste: tras reiniciar Mage la pendiente está interrumpida en main.
+  readonly launchCards: LaunchCards;
 
   // Grupo B: main pidio a esta ventana el dialogo «¿Cerrar Mage?» y espera la respuesta.
   closePromptOpen: boolean;
@@ -397,6 +402,9 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // Decisión 13-11: abre como pestaña ACTIVA una subsesión del MCP que seguía sin pestaña, enganchada a su sesión
   // viva. Lanza si main ya no la sigue.
   openDelegatedSession: (sessionId: string) => Promise<void>;
+  // Tarjeta «Lanzar»: arranca la delegada con lo elegido («» = el de la cuenta) o la descarta. Un fallo queda en la tarjeta.
+  launchDelegated: (childId: string, choice: { readonly model: string; readonly effort: string }) => Promise<void>;
+  cancelDelegatedLaunch: (childId: string) => Promise<void>;
   // La transcripción de la conversación de una pestaña de Codex o agy no existe en su cuenta: la pestaña deja de
   // reanudar ese id (su primer turno abre un hilo nuevo) y el chat lo dice. Ver `missingConversationPatch`.
   forgetMissingConversation: (tabId: string, conversationId: string) => void;
@@ -1545,6 +1553,17 @@ async function trackDelegatedSession(mage: MageClient, get: () => WorkbenchState
 
 // Decisión 13-11: una subsesión sin pestaña pasa a pestaña ACTIVA enganchada a su sesión viva. La instantánea
 // repone permisos y preguntas pendientes. Nunca crea otra sesión ni corta la que hay.
+// Contesta una tarjeta «Lanzar»: la deja ocupada mientras main responde y, si falla, guarda el motivo en ella.
+async function answerLaunchCard(set: SetFn, childId: string, call: () => Promise<void>): Promise<void> {
+  set((s) => ({ launchCards: patchLaunchCard(s.launchCards, childId, { busy: true, error: null }) }));
+  try {
+    await call();
+    set((s) => ({ launchCards: patchLaunchCard(s.launchCards, childId, { busy: false }) }));
+  } catch (err: unknown) {
+    set((s) => ({ launchCards: patchLaunchCard(s.launchCards, childId, { busy: false, error: t('chat.launchCard.failed', { reason: describeError(err) }) }) }));
+  }
+}
+
 async function openDelegatedSessionInto(mage: MageClient, get: () => WorkbenchState, set: SetFn, sessionId: string): Promise<void> {
   const entry = get().backgroundSessions[sessionId];
   if (entry?.hostSession === undefined) throw new Error(`No hay ninguna subsesión sin pestaña con la sesión ${JSON.stringify(sessionId)}`);
@@ -1655,6 +1674,7 @@ export function createWorkbenchStore(mage: MageClient) {
     allConversationHistory: [],
     elicitationsByChat: {},
     backgroundSessions: {},
+    launchCards: {},
     sidebarFilter: EMPTY_SIDEBAR_FILTER,
     settingsLoaded: false,
     setSidebarFilter: (filter) => set({ sidebarFilter: filter }),
@@ -1962,6 +1982,12 @@ export function createWorkbenchStore(mage: MageClient) {
     },
 
     openDelegatedSession: (sessionId) => openDelegatedSessionInto(mage, get, set, sessionId),
+    launchDelegated: (childId, choice) => answerLaunchCard(set, childId, () => launchCardIpc.launch(launchParamsOf(childId, choice))),
+    // Descartar no espera al aviso de main: la línea «No lanzada» sale en cuanto main lo acepta.
+    cancelDelegatedLaunch: (childId) => answerLaunchCard(set, childId, async () => {
+      await launchCardIpc.cancel(childId);
+      set((s) => ({ launchCards: patchLaunchCard(s.launchCards, childId, { outcome: { launched: false } }) }));
+    }),
 
     movePaneTab: (draggedTabId, targetPath, zone) => {
       set((s) => ({ activeTabId: draggedTabId, splitLayout: applyDrop(s.splitLayout, draggedTabId, targetPath, zone) }));
@@ -3681,6 +3707,9 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     case 'permission_mode':
       return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, permissionMode: event.mode } : t)) };
     // U26: la delegada espera (o ya no) la respuesta de su creadora; lo pinta el chip de ChatInfoBar.
+    case 'delegation_launch':
+    case 'delegation_launch_settled':
+      return { launchCards: applyLaunchEvent(state.launchCards, event) };
     case 'delegation_waiting':
       return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, awaitingCreator: event.waiting } : t)) };
     case 'error': {

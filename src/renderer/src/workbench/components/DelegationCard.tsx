@@ -1,11 +1,20 @@
 import { Icon } from './Icon';
+import { LaunchCard } from './LaunchCard';
+import { useWorkbenchStore } from '../workbenchStore';
 import type { DelegationCardView } from '../delegationView';
 import { useOpenSubsession } from '../useOpenSubsession';
 import { useT } from '../../i18n/uiLanguage';
 
 // Tarjeta de una subsesión creada con `mage_create_session`: su nombre y «›», que la abre (su pestaña, o desde el
 // historial si ya no está abierta).
+// Si la subsesión espera a que el usuario la lance, en su lugar va la tarjeta «Lanzar» (y luego su línea).
 export function DelegationCard({ card }: { readonly card: DelegationCardView }): React.JSX.Element {
+  const launch = useWorkbenchStore((s) => s.launchCards[card.conversationId]);
+  if (launch !== undefined) return <LaunchCard card={launch} />;
+  return <SubsessionCard card={card} />;
+}
+
+function SubsessionCard({ card }: { readonly card: DelegationCardView }): React.JSX.Element {
   const open = useOpenSubsession();
   const t = useT();
   const title = card.title.length > 0 ? card.title : t('chat.sessionResult.unnamed');

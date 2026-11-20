@@ -13,6 +13,7 @@ import { usageHistorySource } from './usageHistorySource';
 import { sweepIdleSessions } from './idleSessionCloser';
 import { linkOpener } from './linkOpener';
 import { artifactsSource } from './artifactsSource';
+import { launchCardIpc } from './launchCards';
 
 // Asidero SOLO de desarrollo para `pnpm verify:gui`: deja medir el DOM del chat sin gastar un turno
 // real ni spawnear el CLI. Sin el, el harness no puede hidratar una conversacion (el store de Zustand
@@ -61,6 +62,8 @@ export interface MageDevBridge {
   readonly linkOpener: typeof linkOpener;
   // El harness siembra la lista de artifacts y la visibilidad de una tarjeta (y lo devuelve al acabar).
   readonly artifactsSource: typeof artifactsSource;
+  // El harness espía «Lanzar» y «Cancelar» de la tarjeta de una delegada (y así no llega nada a main).
+  readonly launchCardIpc: typeof launchCardIpc;
 }
 
 (window as unknown as { __mageDev?: MageDevBridge }).__mageDev = {
@@ -86,4 +89,5 @@ export interface MageDevBridge {
   sweepIdleSessions,
   linkOpener,
   artifactsSource,
+  launchCardIpc,
 };

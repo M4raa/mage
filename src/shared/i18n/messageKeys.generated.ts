@@ -718,6 +718,15 @@ export interface MessageValues {
   readonly "chat.instructions.scopeUser": never;
   readonly "chat.jumpToEnd": never;
   readonly "chat.keepAlive.rewindFailed": never;
+  readonly "chat.launchCard.cancel": never;
+  readonly "chat.launchCard.default": never;
+  readonly "chat.launchCard.effort": never;
+  readonly "chat.launchCard.failed": { readonly "reason": string | number };
+  readonly "chat.launchCard.heading": never;
+  readonly "chat.launchCard.launch": never;
+  readonly "chat.launchCard.launched": { readonly "effort": string | number; readonly "model": string | number };
+  readonly "chat.launchCard.model": never;
+  readonly "chat.launchCard.notLaunched": never;
   readonly "chat.link.copy": never;
   readonly "chat.link.openExternal": never;
   readonly "chat.link.openInternal": never;
