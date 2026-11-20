@@ -9,6 +9,14 @@ las carpetas que autorices. Además toca cosas sensibles por diseño:
   credenciales de tu sesión.
 - Variables de entorno del proceso hijo, que se sanean antes de lanzarlo (`scrubAgentEnv`) para que
   una credencial del entorno no se cuele en el agente.
+- Los valores de los **servidores MCP** que reparte Mage a Claude (variables de entorno y cabeceras, también las
+  claves que guardas en la bóveda) se escriben en el fichero de configuración MCP de cada cuenta,
+  `<datos de Mage>/shared-config/generated/claude-<huella>.mcp.json`, que se reescribe en cada arranque: en Linux y
+  macOS con permisos `0600`, en Windows dentro de la carpeta de datos de tu perfil. No van en el entorno del CLI
+  porque, medido con Claude Code 2.1.319, el CLI pasa su entorno entero a los comandos que ejecuta el agente (un
+  `env` los habría enseñado), mientras que el `env` de un servidor del fichero solo le llega a ese servidor. Es un
+  fichero tuyo más: un agente con permiso para leer fuera de su carpeta podría abrirlo. A Codex se le siguen
+  pasando por el entorno de su proceso.
 - Un **proxy local** en `127.0.0.1` para los proveedores compatibles con la API de OpenAI.
 - Un **host local** para otros clientes de la misma máquina (terminal, widget, MCP): un *named pipe* en Windows o
   un socket Unix en Linux y macOS (directorio `0700`, socket `0600`), nunca un puerto de red. Hay dos credenciales:

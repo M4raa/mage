@@ -353,12 +353,11 @@ describe('ClaudeAdapter', () => {
       expect(plan.args.slice(-4, -1)).toEqual(['--mcp-config', '/gen/claude-p.mcp.json', '--settings']);
       expect(JSON.parse(plan.args.at(-1)!)).toEqual({ hooks: {}, permissions: { ask: [...EXTERNAL_ACTION_ASK_RULES] } });
       expect(written[0]![0]).toBe(launch.accountDir);
-      // Ni en el fichero ni en la linea de comandos: el valor viaja en el entorno del hijo y el CLI
-      // expande la referencia (medido en 2.1.286).
-      expect(JSON.parse(written[0]![1]).mcpServers.db.env.K).toBe('${MAGE_MCP_SECRET_DB_ENV_K}');
-      expect(written[0]![1]).not.toContain('secreto');
+      // El valor va al `env` del servidor en el fichero, nunca a la linea de comandos ni al entorno del hijo,
+      // que hereda el Bash del agente (medido en 2.1.319).
+      expect(JSON.parse(written[0]![1]).mcpServers.db.env.K).toBe('secreto');
       expect(plan.args.join(' ')).not.toContain('secreto');
-      expect(plan.env.MAGE_MCP_SECRET_DB_ENV_K).toBe('secreto');
+      expect(Object.values(plan.env)).not.toContain('secreto');
       expect(plan.env.ENABLE_CLAUDEAI_MCP_SERVERS).toBeUndefined();
     });
 

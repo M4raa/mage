@@ -67,11 +67,12 @@ describe('mageMcpServer', () => {
     expect(server).toMatchObject({ name: 'mage', transport: 'stdio', command: launch.command, args: launch.args, env: { ELECTRON_RUN_AS_NODE: '1', MAGE_MCP_CALLER: 'cred-123' } });
   });
 
+  // El fichero es de la cuenta y la credencial de cada sesion: va como referencia, que el adapter llena.
   it('mageMcpServer_claude_elFicheroNoLlevaLaCredencial', () => {
     const translated = toClaudeMcpConfig([mageMcpServer(launch, 'cred-123')]);
 
     expect(JSON.stringify(translated.config)).not.toContain('cred-123');
-    expect(Object.values(translated.env)).toContain('cred-123');
+    expect(JSON.stringify(translated.config)).toContain('${MAGE_MCP_CALLER}');
   });
 
   it('mageMcpServer_codex_laCredencialSoloEnElEntorno', () => {

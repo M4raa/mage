@@ -49,6 +49,7 @@ export interface McpServices {
 
 const GENERATED_DIR = join('shared-config', 'generated');
 const STATUS_CACHE_FILE = 'mcp-status-cache.json';
+const SECRET_FILE_MODE = 0o600;
 
 export function createMcpServices(ctx: McpServicesContext): McpServices {
   const atomic = atomicDeps();
@@ -92,13 +93,17 @@ export function createMcpServices(ctx: McpServicesContext): McpServices {
 }
 
 // Un fichero por cuenta (lo que carga depende de su «Solo en…»), nombrado por la huella de su config
-// dir. Lleva los valores de env/cabeceras: vive en la carpeta de Mage, como mcp-common.json.
+// dir y reescrito en cada arranque. Lleva los valores de env/cabeceras, tambien los de la boveda (asi no
+// van al entorno del CLI, que hereda el Bash del agente): vive en la carpeta de Mage y en POSIX se crea
+// `0600`, aplicado al temporal antes del rename. En Windows, la carpeta de datos del perfil ya es solo
+// del usuario.
 function claudeConfigWriter(userDataDir: string, atomic: AtomicWriteDeps): ClaudeMcpConfigWriter {
+  const privateAtomic: AtomicWriteDeps = { ...atomic, writeFile: (path, data) => writeFileSync(path, data, { encoding: 'utf8', mode: SECRET_FILE_MODE }) };
   return (accountDir, text) => {
     const dir = join(userDataDir, GENERATED_DIR);
     mkdirSync(dir, { recursive: true });
     const path = join(dir, `claude-${createHash('sha256').update(accountDir).digest('hex').slice(0, 16)}.mcp.json`);
-    writeAtomic(atomic, path, text);
+    writeAtomic(privateAtomic, path, text);
     return path;
   };
 }
