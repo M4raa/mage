@@ -2370,8 +2370,6 @@ export interface MessageValues {
   readonly "settings.sharedConfig.staleCheckFailed": { readonly "detail": string | number; readonly "path": string | number };
   readonly "settings.sharedConfig.staleKeepEditing": { readonly "stale": string | number };
   readonly "settings.sharedConfig.unknownContent": never;
-  readonly "settings.storage.artifact.hint": never;
-  readonly "settings.storage.artifact.toggle": never;
   readonly "settings.storage.cliSettingPrefix": never;
   readonly "settings.storage.cliSettingSuffix": never;
   readonly "settings.storage.closeBehavior.ask": never;

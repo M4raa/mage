@@ -2368,8 +2368,6 @@
   "settings.sharedConfig.staleCheckFailed": "No se pudo comprobar si \"{path}\" había cambiado, no se ha guardado nada: {detail}",
   "settings.sharedConfig.staleKeepEditing": "{stale} Tu texto sigue en el editor sin guardar: revisa el contenido nuevo antes de volver a pulsar Guardar, porque el segundo intento SÍ lo sobrescribirá.",
   "settings.sharedConfig.unknownContent": "contenido desconocido",
-  "settings.storage.artifact.hint": "El modelo podrá crear artifacts en tu cuenta de claude.ai; con «Omitir permisos», sin preguntarte. Se aplica la próxima vez que arranque o se reabra cada conversación.",
-  "settings.storage.artifact.toggle": "Permitir Artifact (publica en claude.ai)",
   "settings.storage.cliSettingPrefix": "(su ajuste",
   "settings.storage.cliSettingSuffix": "). Son dos limpiezas distintas.",
   "settings.storage.closeBehavior.ask": "Preguntar",

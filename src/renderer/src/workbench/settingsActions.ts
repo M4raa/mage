@@ -46,7 +46,6 @@ export type SettingsActionName =
   | 'setAgyCommandVerdict'
   | 'setAgyLinkedPaths'
   | 'setDefaultProvider'
-  | 'setArtifactEnabled'
   | 'setHostPermissionAnswers'
   | 'setLinksOpenExternally'
   | 'setKeepAlive'
@@ -236,11 +235,6 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
 
     setDefaultProvider: (providerId) => {
       set((s) => ({ settings: { ...s.settings, defaultProvider: providerId } }));
-      deps.persistSettings();
-    },
-
-    setArtifactEnabled: (enabled) => {
-      set((s) => ({ settings: { ...s.settings, artifactEnabled: enabled } }));
       deps.persistSettings();
     },
 

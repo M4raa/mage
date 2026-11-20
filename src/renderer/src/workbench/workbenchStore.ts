@@ -538,7 +538,6 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6); '' = el de la cuenta.
   setDefaultPermissionMode: (mode: DefaultPermissionMode) => void;
   // D5 (#53): permitir Artifact en las sesiones de Claude Code (publica en claude.ai). Siguiente arranque.
-  setArtifactEnabled: (enabled: boolean) => void;
   // D3: `mage chat` puede contestar permisos (apagado por defecto).
   setHostPermissionAnswers: (enabled: boolean) => void;
   // Enlaces del chat: el clic normal abre fuera (true) o en el navegador de Mage (false).

@@ -8992,28 +8992,23 @@ const CHECKS = [
     },
   },
   {
-    // F1.12 H1 (D5, #53): «Permitir Artifact» es una opción apagada por defecto que main recibe guardada.
-    // Abre Configuración y la cierra; deja el ajuste como lo encontró.
-    name: 'F1.12 D5: Permitir Artifact está apagado por defecto y se guarda en main',
+    // Un perfil nuevo enseña solo cinco paneles; abrir uno de los escondidos lo coloca en su sitio y lo abre.
+    // Sin Enter. Deja `usage` escondido como lo encontró.
+    name: 'Paneles: un perfil nuevo enseña solo cinco paneles y abrir uno escondido lo coloca',
     async run(page) {
-      await openSettingsDialog(page);
-      await openSection(page, uiRegExp('settings.sections.storage.nav'));
-      const casilla = page.locator('[data-setting="artifact"] input[type="checkbox"]');
-      const porDefecto = await casilla.isChecked();
-      // El guardado lleva debounce: se sondea main hasta que el valor llega (o se agota el plazo).
-      const enMain = (esperado) => page.evaluate(async ({ esperado, plazo }) => {
-        const fin = Date.now() + plazo;
-        let valor = (await window.mage.loadSettings()).artifactEnabled;
-        while (valor !== esperado && Date.now() < fin) { await new Promise((r) => setTimeout(r, 100)); valor = (await window.mage.loadSettings()).artifactEnabled; }
-        return valor;
-      }, { esperado, plazo: CONFIG.actionTimeoutMs });
-      await casilla.check();
-      const encendido = await enMain(true);
-      await casilla.uncheck();
-      const apagado = await enMain(false);
-      await page.keyboard.press('Escape');
-      await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-      return { ok: porDefecto === false && encendido === true && apagado === false, detail: JSON.stringify({ porDefecto, encendido, apagado }) };
+      const visibleIds = () => page.evaluate(() => [...document.querySelectorAll('button[data-stripe-btn="true"][data-panel-id]')].map((b) => b.getAttribute('data-panel-id')).sort());
+      const esperados = ['activity', 'browser', 'context', 'conversations', 'files'];
+      const inicial = await visibleIds();
+      try {
+        await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('usage'));
+        await page.locator('button[data-stripe-btn="true"][data-panel-id="usage"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const tras = await visibleIds();
+        const abierto = await page.evaluate(() => window.__mageDev.panelStore.getState().isPanelOpen('usage'));
+        const ok = JSON.stringify(inicial) === JSON.stringify(esperados) && tras.includes('usage') && abierto === true;
+        return { ok, detail: JSON.stringify({ inicial, tras, usageAbierto: abierto }) };
+      } finally {
+        await page.evaluate(() => window.__mageDev.panelStore.getState().hidePanel('usage'));
+      }
     },
   },
   {

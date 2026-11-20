@@ -631,7 +631,6 @@ function StorageSection({
       <CloseBehaviorControl />
       <LinkOpeningControl />
       <GhNoticeControl />
-      <ArtifactControl />
       <KeepAliveSection />
       <IdleCloseSection />
     </div>
@@ -735,26 +734,6 @@ function GhNoticeControl(): React.JSX.Element {
         <span>
           <span className="font-semibold">{t('settings.storage.pullRequests.autoArchive')}</span>
           <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t('settings.storage.pullRequests.autoArchiveHint')}</span>
-        </span>
-      </label>
-    </div>
-  );
-}
-
-// D5 (#53): Artifact publica contenido en claude.ai y, con «Omitir permisos», el modelo podría hacerlo sin
-// preguntar. Por eso es una elección explícita, apagada por defecto.
-function ArtifactControl(): React.JSX.Element {
-  const enabled = useWorkbenchStore((s) => s.settings.artifactEnabled);
-  const setEnabled = useWorkbenchStore((s) => s.setArtifactEnabled);
-  const t = useT();
-  return (
-    <div data-setting="artifact" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
-      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">CLAUDE CODE</span>
-      <label className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
-        <input type="checkbox" className="mt-[3px]" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-        <span>
-          <span className="font-semibold">{t('settings.storage.artifact.toggle')}</span>
-          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t('settings.storage.artifact.hint')}</span>
         </span>
       </label>
     </div>

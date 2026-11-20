@@ -42,7 +42,6 @@ const VALID: AppSettings = {
   adminMode: true,
   hiddenAccounts: ['C:/cuentas/.claude-x'],
   claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
-  artifactEnabled: true,
   hostPermissionAnswers: false,
   linksOpenExternally: false,
   ghNoticeDismissed: true,
@@ -502,24 +501,11 @@ describe('SettingsStore.save', () => {
   });
 });
 
-describe('SettingsStore — Artifact (D5)', () => {
-  it('load_sinCampoArtifact_apagado', () => {
-    const { artifactEnabled: _omitted, ...withoutArtifact } = VALID;
-    const store = new SettingsStore(deps({ readFile: () => JSON.stringify(withoutArtifact) }));
+describe('SettingsStore — ajuste de Artifact retirado', () => {
+  it('load_campoArtifactViejo_seIgnoraSinError', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, artifactEnabled: true }) }));
 
-    expect(store.load().artifactEnabled).toBe(false);
-  });
-
-  it('load_artifactBasura_apagado', () => {
-    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, artifactEnabled: 'sí' }) }));
-
-    expect(store.load().artifactEnabled).toBe(false);
-  });
-
-  it('load_artifactEncendido_seConserva', () => {
-    const store = new SettingsStore(deps({ readFile: () => JSON.stringify(VALID) }));
-
-    expect(store.load().artifactEnabled).toBe(true);
+    expect('artifactEnabled' in store.load()).toBe(false);
   });
 });
 

@@ -198,8 +198,6 @@ const APP_SETTINGS_SCHEMA = z.object({
   hiddenAccounts: z.array(z.string().min(1)).catch([]),
   // Conectores de claude.ai apagados por cuenta. Ausente o basura -> [] (encendidos, como antes de existir).
   claudeAiConnectorsOff: z.array(z.string().min(1)).catch([]),
-  // D5: Artifact. Ausente o basura -> false: el lado que no publica nada.
-  artifactEnabled: z.boolean().catch(false),
   // D3: contestar permisos desde la terminal. Ausente o basura -> false: el lado que no deja contestar.
   hostPermissionAnswers: z.boolean().catch(false),
   // Enlaces del chat. Ausente o basura -> false: el clic normal abre en el navegador de Mage.

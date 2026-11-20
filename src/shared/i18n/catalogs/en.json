@@ -2368,8 +2368,6 @@
   "settings.sharedConfig.staleCheckFailed": "Could not check whether “{path}” had changed, nothing was saved: {detail}",
   "settings.sharedConfig.staleKeepEditing": "{stale} Your text is still in the editor, unsaved: review the new content before pressing Save again, because the second attempt WILL overwrite it.",
   "settings.sharedConfig.unknownContent": "unknown content",
-  "settings.storage.artifact.hint": "The model will be able to create artifacts in your claude.ai account; with “Bypass permissions”, without asking you. It applies the next time each conversation starts or is reopened.",
-  "settings.storage.artifact.toggle": "Allow Artifact (publishes to claude.ai)",
   "settings.storage.cliSettingPrefix": "(its setting",
   "settings.storage.cliSettingSuffix": "). They are two separate cleanups.",
   "settings.storage.closeBehavior.ask": "Ask",

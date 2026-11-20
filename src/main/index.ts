@@ -878,7 +878,6 @@ function buildAdapter(provider: string): ProviderAdapter {
     return new ClaudeAdapter({
       writeMcpConfig,
       resolveApiKey: claudeApiKeyFor,
-      artifactEnabled: () => getSettingsStore().load().artifactEnabled,
       testBaseUrl: () => process.env[TEST_ANTHROPIC_BASE_URL_ENV],
       isPackaged: () => app.isPackaged,
       log: mainLog,

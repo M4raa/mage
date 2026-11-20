@@ -246,8 +246,7 @@ describe('ClaudeAdapter', () => {
       }
     });
 
-    // D5 (#53): Artifact es una opción del usuario, apagada por defecto. El ajuste manda sobre lo que el
-    // usuario exportara en su entorno: apagado es `0` explícito (el CLI lo enciende con cualquier valor verdadero).
+    // Artifact va siempre activado: manda sobre lo que el usuario exportara en su entorno.
     const withExportedArtifact = (value: string | undefined, run: () => void): void => {
       const original = process.env.CLAUDE_CODE_ARTIFACT;
       if (value === undefined) delete process.env.CLAUDE_CODE_ARTIFACT;
@@ -258,18 +257,8 @@ describe('ClaudeAdapter', () => {
       }
     };
 
-    it('buildSpawnPlan_ajustePorDefecto_apagaArtifact', () => {
-      withExportedArtifact(undefined, () => expect(adapter.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('0'));
-    });
-
-    it('buildSpawnPlan_ajusteApagadoYUsuarioExportaUno_sigueApagado', () => {
-      withExportedArtifact('1', () => expect(adapter.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('0'));
-    });
-
-    it('buildSpawnPlan_ajusteEncendido_activaArtifact', () => {
-      const enabled = new ClaudeAdapter({ resolveBinary: () => 'claude', artifactEnabled: () => true });
-
-      withExportedArtifact('0', () => expect(enabled.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('1'));
+    it('buildSpawnPlan_siempre_artifactActivado', () => {
+      withExportedArtifact('0', () => expect(adapter.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('1'));
     });
 
     it('buildSpawnPlan_testBaseUrlIgnored_logsReasonWithoutKey', () => {

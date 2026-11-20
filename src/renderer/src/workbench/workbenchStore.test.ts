@@ -3102,7 +3102,7 @@ describe('guardado de ajustes con debounce', () => {
   it('createWorkbenchStore_conGuardadoDeAjustesPendiente_loCancela', async () => {
     vi.useFakeTimers();
     const oldSave = vi.fn().mockResolvedValue(undefined);
-    createWorkbenchStore(fakeMage({ saveSettings: oldSave })).getState().setArtifactEnabled(true);
+    createWorkbenchStore(fakeMage({ saveSettings: oldSave })).getState().setHostPermissionAnswers(true);
 
     createWorkbenchStore(fakeMage());
     await vi.runAllTimersAsync();
@@ -3114,7 +3114,7 @@ describe('guardado de ajustes con debounce', () => {
     vi.useFakeTimers();
     const saveSettings = vi.fn(() => undefined as unknown as Promise<void>);
     const store = createWorkbenchStore(fakeMage({ saveSettings }));
-    store.getState().setArtifactEnabled(true);
+    store.getState().setHostPermissionAnswers(true);
 
     await vi.runAllTimersAsync();
 
