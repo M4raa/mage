@@ -12613,6 +12613,39 @@ const CHECKS = [
     },
   },
   {
+    // La barra del navegador (Adelante, zoom) y la ventana propia, con una sesión del RUNTIME PROPIO (servidor falso, sin
+    // CLI y sin Enter) y un servidor local de dos páginas que cuenta peticiones: sacar la vista a su ventana y traerla no
+    // puede pedir la página otra vez (el spike midió que `did-start-loading` no sirve para contar recargas). Cierra la
+    // ventana propia, la pestaña, el proveedor y los servidores.
+    name: 'Navegador: adelante, zoom y ventana propia sin recargar',
+    async run(page, { userDataDir, runDir }) {
+      const pages = await startCountingPageServer();
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      let sessionId = null;
+      try {
+        ({ tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: BROWSER_TURN_PROVIDER, model: QUEUE_TURN_MODEL }));
+        sessionId = await page.evaluate((id) => window.__mageDev.store.getState().ensureSession(id), tabId);
+        await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('browser'));
+        await page.locator('[data-browser-panel]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const barra = await measureBrowserForwardAndZoom(page, sessionId, pages);
+        await page.locator('[data-browser-panel]').screenshot({ path: path.join(runDir, 'navegador-barra.png') });
+        const ventana = await measureBrowserPopout(page, sessionId, pages, runDir);
+        const ok = Object.values(barra).every((value) => value === true) && ventana.ok;
+        return { ok, detail: JSON.stringify({ barra, ventana }) };
+      } finally {
+        // Si la medida se cortó con el navegador fuera, se trae de vuelta (cierra su ventana) antes de cerrar la pestaña.
+        if (sessionId !== null) {
+          await page.evaluate(async (sid) => { if (window.__mageBrowserDev.getState().states[sid]?.poppedOut === true) await window.mage.browserPopIn(sid); }, sessionId);
+        }
+        if (tabId !== null) await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), BROWSER_TURN_PROVIDER.id);
+        await fake.close();
+        await pages.close();
+      }
+    },
+  },
+  {
     // Enlaces del chat: el botón derecho abre un menú con tres elementos y Ctrl+clic va al navegador EXTERNO (`linkOpener.external`
     // sustituido por un espía vía __mageDev: no se abre nada). Sin Enter ni CLI. No se prueba el clic normal: abriría el integrado con red.
     name: 'Chat: menú de enlace y Ctrl+clic al navegador externo',
@@ -16039,6 +16072,136 @@ async function startBrowserPageServer() {
     // Chromium mantiene conexiones abiertas: sin cerrarlas, `close` no terminaría.
     close: () => new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }),
   };
+}
+
+// Dos páginas locales (`/a` y `/b`) sin caché que cuentan sus peticiones: una recarga se ve como una petición más.
+async function startCountingPageServer() {
+  const { createServer } = await import('node:http');
+  const hits = new Map();
+  const server = createServer((req, res) => {
+    if (req.url !== '/a' && req.url !== '/b') {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    hits.set(req.url, (hits.get(req.url) ?? 0) + 1);
+    const name = req.url.slice(1);
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Página ${name}</title></head><body><h1>Página ${name}</h1></body></html>`);
+  });
+  const port = await listenLoopback(server);
+  return {
+    url: (route) => `http://127.0.0.1:${port}${route}`,
+    hits: (route) => hits.get(route) ?? 0,
+    close: () => new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }),
+  };
+}
+
+// Espera a que el estado del navegador de la sesión (el que manda main) tenga esos valores y no esté cargando.
+// `urlEndsWith` compara el final de la URL; el resto de claves, el campo del mismo nombre. false si no llega a tiempo.
+async function waitBrowserState(page, sessionId, expected) {
+  return page.waitForFunction(({ sid, expected }) => {
+    const state = window.__mageBrowserDev.getState().states[sid];
+    if (state === undefined || state.loading) return false;
+    return Object.entries(expected).every(([key, value]) => (key === 'urlEndsWith' ? state.url.endsWith(value) : state[key] === value));
+  }, { sid: sessionId, expected }, { polling: 100, timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+}
+
+// Abre /a y /b por la barra de direcciones, vuelve Atrás y mide que Adelante se habilita y lleva a /b; luego zoom + dos veces.
+async function measureBrowserForwardAndZoom(page, sessionId, pages) {
+  const address = page.locator('[data-browser-address]');
+  const go = async (route) => {
+    await address.fill(pages.url(route));
+    await address.press('Enter');
+    return waitBrowserState(page, sessionId, { urlEndsWith: route });
+  };
+  const medido = { abreA: await go('/a'), abreB: await go('/b') };
+  await page.locator('[data-browser-back]').click();
+  medido.atras = await waitBrowserState(page, sessionId, { urlEndsWith: '/a', canGoForward: true });
+  medido.adelanteHabilitado = await page.locator('[data-browser-forward]').isEnabled();
+  await page.locator('[data-browser-forward]').click();
+  medido.adelanteLlevaAB = await waitBrowserState(page, sessionId, { urlEndsWith: '/b' });
+  await page.locator('[data-browser-zoom-in]').click();
+  medido.zoom110 = await waitBrowserState(page, sessionId, { zoomPercent: 110 });
+  await page.locator('[data-browser-zoom-in]').click();
+  medido.zoom125 = await waitBrowserState(page, sessionId, { zoomPercent: 125 });
+  medido.etiquetaZoom125 = (await page.locator('[data-browser-zoom-reset]').getAttribute('data-browser-zoom-reset')) === '125';
+  return medido;
+}
+
+// La ventana propia del navegador de esa sesión (el renderer con `?browserWindow=`), o null si no aparece.
+async function browserPopoutPageOf(page, sessionId) {
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  while (Date.now() < deadline) {
+    const found = page.context().browser().contexts().flatMap((context) => context.pages()).find((candidate) => candidate.url().includes(`browserWindow=${encodeURIComponent(sessionId)}`));
+    if (found !== undefined) {
+      await found.waitForLoadState('domcontentloaded');
+      return found;
+    }
+    await page.waitForTimeout(200);
+  }
+  return null;
+}
+
+// Lo que tarda la vista en llegar a su ventana (el primer hueco que esta informa) o en volver al panel.
+const BROWSER_POPOUT_SETTLE_MS = 1000;
+
+// Saca el navegador a su ventana propia y lo trae: el panel enseña «Traer aquí», la URL sigue en /b, la página no se
+// vuelve a pedir ni pasa por `loading`, y al traerla la vista vuelve al panel y la ventana se cierra.
+async function measureBrowserPopout(page, sessionId, pages, runDir) {
+  const peticionesB = pages.hits('/b');
+  await page.evaluate((sid) => {
+    window.__vgLoadingSeen = false;
+    window.__vgLoadingOff = window.__mageBrowserDev.subscribe((s) => { if (s.states[sid]?.loading === true) window.__vgLoadingSeen = true; });
+  }, sessionId);
+  // La propia página de la vista, si CDP la lista: una marca en su `window` sobrevive solo si no se recarga, y su ancho
+  // dice en qué hueco está (el del panel o el de la ventana propia).
+  const vista = page.context().browser().contexts().flatMap((context) => context.pages()).find((candidate) => candidate.url() === pages.url('/b')) ?? null;
+  const anchoEnPanel = vista === null ? null : await vista.evaluate(() => { window.__vgMark = 42; return window.innerWidth; });
+  try {
+    const medido = await popOutAndMeasure(page, sessionId, runDir);
+    medido.vistaExpuesta = vista !== null;
+    medido.anchoEnPanel = anchoEnPanel;
+    medido.vistaFuera = vista === null ? null : await vista.evaluate(() => ({ marca: window.__vgMark ?? null, ancho: window.innerWidth }));
+    medido.recargasAlSacar = pages.hits('/b') - peticionesB;
+    await page.locator('[data-browser-pop-in]').click();
+    medido.vuelveAlPanel = await page.locator('[data-browser-host]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+    medido.dentroEnEstado = await waitBrowserState(page, sessionId, { poppedOut: false, urlEndsWith: '/b' });
+    medido.ventanaCerrada = medido.ventana === null ? false : await medido.ventana.waitForEvent('close', { timeout: CONFIG.actionTimeoutMs }).then(() => true, () => medido.ventana.isClosed());
+    await page.waitForTimeout(BROWSER_POPOUT_SETTLE_MS);
+    medido.recargasTotal = pages.hits('/b') - peticionesB;
+    medido.pasoPorLoading = await page.evaluate(() => window.__vgLoadingSeen);
+    medido.vistaDentro = vista === null ? null : await vista.evaluate(() => ({ marca: window.__vgMark ?? null, ancho: window.innerWidth }));
+    delete medido.ventana;
+    // Sin la página expuesta por CDP, mandan las peticiones al servidor y el `loading` del estado.
+    const vistaConservada = vista === null || (medido.vistaFuera.marca === 42 && medido.vistaDentro.marca === 42
+      && medido.vistaFuera.ancho > anchoEnPanel && medido.vistaDentro.ancho === anchoEnPanel);
+    const ok = medido.panelTraerAqui && medido.ventanaAbierta && medido.tituloVentana.includes(' · ') && medido.fueraEnEstado
+      && medido.recargasAlSacar === 0 && medido.vuelveAlPanel && medido.dentroEnEstado && medido.ventanaCerrada
+      && medido.recargasTotal === 0 && !medido.pasoPorLoading && vistaConservada;
+    return { ok, ...medido };
+  } finally {
+    await page.evaluate(() => { window.__vgLoadingOff?.(); delete window.__vgLoadingOff; delete window.__vgLoadingSeen; });
+  }
+}
+
+async function popOutAndMeasure(page, sessionId, runDir) {
+  await page.locator('[data-browser-pop-out]').click();
+  const medido = {};
+  medido.panelTraerAqui = await page.locator('[data-browser-pop-in]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+  medido.ventana = await browserPopoutPageOf(page, sessionId);
+  medido.ventanaAbierta = medido.ventana !== null;
+  medido.tituloVentana = '';
+  if (medido.ventana !== null) {
+    await medido.ventana.locator('[data-browser-host]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+    await medido.ventana.waitForFunction(() => document.title.includes(' · '), null, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+    medido.tituloVentana = await medido.ventana.title();
+    await medido.ventana.screenshot({ path: path.join(runDir, 'navegador-ventana-propia.png') });
+  }
+  medido.fueraEnEstado = await waitBrowserState(page, sessionId, { poppedOut: true, urlEndsWith: '/b' });
+  medido.urlFuera = await page.evaluate((sid) => window.__mageBrowserDev.getState().states[sid]?.url ?? null, sessionId);
+  await page.waitForTimeout(BROWSER_POPOUT_SETTLE_MS);
+  return medido;
 }
 
 // Lo que va antes del `{url}` de la cabecera de la captura de la pluma, en cada idioma del catálogo.
