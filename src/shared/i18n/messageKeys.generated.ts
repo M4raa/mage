@@ -908,6 +908,13 @@ export interface MessageValues {
   readonly "dialogs.closeNative.quit": never;
   readonly "dialogs.closeNative.remember": never;
   readonly "dialogs.closeNative.title": never;
+  readonly "dialogs.closeTab.background": never;
+  readonly "dialogs.closeTab.body": { readonly "title": string | number };
+  readonly "dialogs.closeTab.cancel": never;
+  readonly "dialogs.closeTab.changeLater": never;
+  readonly "dialogs.closeTab.remember": never;
+  readonly "dialogs.closeTab.stop": never;
+  readonly "dialogs.closeTab.title": never;
   readonly "dialogs.mcpExtensionFilter": never;
   readonly "dialogs.newTab.accountLabel": never;
   readonly "dialogs.newTab.agyMissingEmphasis": never;
