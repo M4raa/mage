@@ -5233,6 +5233,68 @@ const CHECKS = [
     },
   },
   {
+    // «Continuar al restablecerse» (solo Claude por suscripción): la casilla del «+» sale con su marca estable, se enciende
+    // como borrador cuando la pestaña aún no tiene sesión (no toca main ni el CLI), no se pinta en una cuenta de API, y el
+    // aviso con la hora que emite main (`notice`) se lee en el hilo. Sin Enter: la sesión del aviso es sintética.
+    name: 'Prompt: «Continuar al restablecerse» sale en Claude y anuncia la hora de reanudar',
+    state: { tabs: 1 },
+    async run(page) {
+      const SELECTOR = '[data-action="resume-on-reset"]';
+      const abrirMenu = async () => {
+        await page.locator('[data-prompt-actions="true"] [aria-haspopup="menu"]').first().click();
+        await page.locator('[role="menu"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      };
+      const esperarMenuCerrado = () => page.locator('[role="menu"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const medir = () => page.evaluate((selector) => {
+        const nodos = [...document.querySelectorAll(selector)];
+        return { cuenta: nodos.length, rol: nodos[0]?.getAttribute('role') ?? null, marcada: nodos[0]?.getAttribute('aria-checked') ?? null, texto: (nodos[0]?.textContent ?? '').trim() };
+      }, SELECTOR);
+      const borrador = (tabId) => page.evaluate((id) => window.__mageDev.store.getState().tabs.find((t) => t.id === id)?.resumeOnReset ?? null, tabId);
+      const facturacion = (apiBilled) => page.evaluate((api) => {
+        const store = window.__mageDev.store;
+        const { tabs, activeTabId, accounts } = store.getState();
+        const tab = tabs.find((t) => t.id === activeTabId);
+        const base = accounts.find((a) => a.id === tab.accountId) ?? { id: tab.accountId, alias: 'vg', provider: 'Claude', loginStatus: 'logged_in' };
+        store.setState({ accounts: [...accounts.filter((a) => a.id !== tab.accountId), { ...base, providerId: 'claude', apiBilled: api }] });
+        return { id: tab.id, provider: tab.provider };
+      }, apiBilled);
+      const tab = await facturacion(false);
+      // 1) Sale, como casilla y sin marcar; 2) un clic la marca como borrador (sin sesión no hay IPC); 3) otro la quita.
+      await abrirMenu();
+      const inicial = await medir();
+      await page.locator(SELECTOR).click();
+      await esperarMenuCerrado();
+      const trasEncender = await borrador(tab.id);
+      await abrirMenu();
+      const marcada = await medir();
+      await page.locator(SELECTOR).click();
+      await esperarMenuCerrado();
+      const trasApagar = await borrador(tab.id);
+      // 4) Con una cuenta que factura la API no se pinta.
+      await facturacion(true);
+      await abrirMenu();
+      const enApi = await medir();
+      await page.keyboard.press('Escape');
+      await esperarMenuCerrado();
+      await facturacion(false);
+      // 5) El aviso de main («Se reanudará a las 15:02») llega como un `notice` de la sesión de la pestaña.
+      await page.evaluate((id) => {
+        const dev = window.__mageDev;
+        const sessionId = 'vg-resume-session';
+        dev.store.setState((s) => ({ sessionIdByChat: { ...s.sessionIdByChat, [id]: sessionId } }));
+        dev.store.getState().handleEvent(sessionId, { kind: 'notice', localized: { key: 'chat.resumeOnReset.scheduled', values: { time: '15:02' } } });
+      }, tab.id);
+      const aviso = ui('chat.resumeOnReset.scheduled', { time: '15:02' });
+      const enElHilo = await page.locator(`[data-pane-tab-id="${tab.id}"]`).getByText(aviso).first()
+        .waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const ok = tab.provider === 'claude'
+        && inicial.cuenta === 1 && inicial.rol === 'menuitemcheckbox' && inicial.marcada === 'false' && inicial.texto.includes(ui('prompt.actions.resumeOnReset'))
+        && trasEncender === true && marcada.marcada === 'true' && trasApagar === null
+        && enApi.cuenta === 0 && enElHilo;
+      return { ok, detail: JSON.stringify({ provider: tab.provider, inicial, trasEncender, marcada: marcada.marcada, trasApagar, enApi: enApi.cuenta, aviso, enElHilo }) };
+    },
+  },
+  {
     // P-026, 1.7 (D19): la fila de una pestaña ABIERTA dice lo mismo que la de una cerrada —cuando y
     // cuanto pesa—, no `claude · opus[1m]`. Pestaña propia con un `resumeSessionId` falso y su fila de
     // historial inyectada; nada se spawnea.
