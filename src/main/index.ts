@@ -3037,7 +3037,9 @@ function hostClientsFile(): string {
 // quien pide emparejar está en la terminal y el diálogo tiene que verse.
 function showWindowForPairing(): boolean {
   if (runsHeadless) return false;
-  focusMainWindow();
+  // `verify:gui` en segundo plano: la ventana existe fuera de la pantalla y no se activa.
+  if (backgroundTestRun) windowManager.ensureMain();
+  else focusMainWindow();
   return true;
 }
 // Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel o, sin panel, en la de aparcamiento (D-S3, Z01).

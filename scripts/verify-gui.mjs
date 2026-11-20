@@ -12092,6 +12092,29 @@ const CHECKS = [
     },
   },
   {
+    // Emparejamiento del host (1.8). Un cliente de prueba por el endpoint del perfil aislado, sin CLI ni Enter: con el
+    // token de arranque lee y no escribe; `host.pair` saca el diálogo en la ventana y «Autorizar» (un clic) le da un
+    // token; con él, la escritura de menos efecto (cambiar el modelo de una sesión que no existe) llega al coordinador y
+    // responde «sesión inexistente»; «Revocar» en Configuración corta la conexión y, con el mismo token, vuelve «no
+    // emparejado». Abre y cierra su diálogo de Configuración; el cliente queda revocado al acabar.
+    name: 'Host: un cliente sin emparejar solo lee; emparejado y revocado',
+    state: { tabs: 1 },
+    async run(page, { userDataDir, runDir }) {
+      const clients = [];
+      const connect = async (clientToken) => {
+        const link = await connectProbeClient(userDataDir, clientToken);
+        clients.push(link);
+        return link;
+      };
+      try {
+        const medido = await measureHostPairing(page, { connect, runDir });
+        return { ok: hostPairingPassed(medido), detail: JSON.stringify(medido) };
+      } finally {
+        for (const link of clients) link.socket.destroy();
+      }
+    },
+  },
+  {
     // F2.4: con la pestaña CERRADA, main sigue decidiendo los permisos. Turno del runtime propio contra el servidor
     // falso (escenario `pr-barrera`, modo Manual), sin CLI ni cuota: se envía el prompt de «Crear PR»; el agente
     // pide un `git push --force` (la barrera lo deniega) y un `mkdir` que SÍ pregunta. Ya no se crean reglas por conversación desde la interfaz (0.1.4), pero main sigue respetando las guardadas: se siembra
@@ -16721,10 +16744,9 @@ function helloWithWrongToken(userDataDir) {
 
 const HOST_TAB_MODEL = 'gpt-6-luna';
 
-// Cliente del host con el enlace verificado de la terminal (`hostLink.mjs`): reto HMAC, `hello` como `terminal` y los
-// eventos del host recogidos en `events`. Nunca guarda ni imprime el token.
-async function connectHostTabClient(userDataDir) {
-  const deps = {
+// E/S real del enlace verificado de la terminal (`hostLink.mjs`).
+function hostLinkDeps() {
+  return {
     platform: process.platform,
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     lstat: fs.lstatSync,
@@ -16736,7 +16758,103 @@ async function connectHostTabClient(userDataDir) {
     }),
     randomBytes,
   };
-  const { rpc } = await connectVerified({ userDataDir, clientVersion: 'verify-host-tab', deps });
+}
+
+// Cliente de prueba del host como `terminal`, con el token de un cliente emparejado o sin él. Nunca imprime tokens.
+function connectProbeClient(userDataDir, clientToken) {
+  return connectVerified({ userDataDir, clientVersion: 'verify-pair', deps: hostLinkDeps(), clientToken });
+}
+
+// Host 1.8: escribir exige estar emparejado. Pide `host.pair` y pulsa «Autorizar» en el diálogo de la ventana (un clic);
+// la misma conexión pasa a emparejada. Espera al desmontaje del diálogo (no a un tiempo fijo).
+async function pairByClick(page, rpc, clientName) {
+  const pairing = rpc.call('host.pair', { clientName, clientKind: 'terminal' });
+  const approve = page.locator('[data-dialog-action="host-pair-approve"]');
+  await approve.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await approve.click();
+  const paired = await pairing;
+  await page.locator('[data-host-pair-dialog]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  return paired;
+}
+
+const HOST_NOT_PAIRED = -32013;
+const HOST_UNKNOWN_SESSION = -32004;
+// La escritura de menos efecto: cambiar el modelo de una sesión que no existe.
+const HARMLESS_WRITE = { sessionId: 'verify-pair-no-existe', key: 'model', value: 'x' };
+const rpcOutcome = (promise) => promise.then((result) => ({ result }), (err) => ({ code: err.code ?? null, message: err.message }));
+
+// Pasos del emparejamiento; cada medida por nombre y sin tokens.
+async function measureHostPairing(page, { connect, runDir }) {
+  const medido = {};
+  const first = await connect(undefined);
+  medido.accesoArranque = first.hello.access;
+  medido.lista = Array.isArray((await first.rpc.call('sessions.list')).sessions);
+  medido.crear = await rpcOutcome(first.rpc.call('session.create', { commandId: randomUUID(), provider: 'claude', accountId: 'x', cwd: path.resolve('x'), trust: { acknowledged: true } }));
+  const pairing = await measurePairDialog(page, first.rpc, runDir);
+  Object.assign(medido, pairing.medido);
+  medido.escrituraEmparejada = await rpcOutcome(first.rpc.call('session.setOption', HARMLESS_WRITE));
+  const second = await connect(pairing.clientToken);
+  medido.accesoConToken = second.hello.access;
+  medido.cortadas = await revokeInSettings(page, pairing.clientId, [first.socket, second.socket]);
+  const third = await connect(pairing.clientToken);
+  medido.accesoTrasRevocar = third.hello.access;
+  medido.escrituraRevocada = await rpcOutcome(third.rpc.call('session.setOption', HARMLESS_WRITE));
+  return medido;
+}
+
+// El diálogo: uno solo, con el nombre del cliente, el foco en «Rechazar»; «Autorizar» devuelve un token.
+async function measurePairDialog(page, rpc, runDir) {
+  const pairing = rpc.call('host.pair', { clientName: 'verify-gui', clientKind: 'terminal' });
+  const dialog = page.locator('[data-host-pair-dialog]');
+  await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  // El foco inicial lo pone un efecto tras montar: se espera a él, y si no llega se mide lo que haya.
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-dialog-action') === 'host-pair-reject', null, { timeout: CONFIG.actionTimeoutMs })
+    .catch((err) => console.warn(`[verify] el foco no llegó a «Rechazar»: ${err.message}`));
+  const medido = {
+    dialogos: await dialog.count(),
+    titulo: (await page.locator('#host-pair-title').textContent()) ?? '',
+    foco: await page.evaluate(() => document.activeElement?.getAttribute('data-dialog-action') ?? null),
+  };
+  await page.screenshot({ path: path.join(runDir, 'host-pair.png') });
+  await page.locator('[data-dialog-action="host-pair-approve"]').click();
+  const { clientId, clientToken } = await pairing;
+  await dialog.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  medido.tokenValido = /^[0-9a-f]{64}$/.test(clientToken);
+  return { medido, clientId, clientToken };
+}
+
+// «Revocar» en Configuración › Hooks y permisos. Abre y cierra su diálogo. Devuelve cuántas conexiones se cortaron.
+async function revokeInSettings(page, clientId, sockets) {
+  const closed = sockets.map((socket) => new Promise((resolve) => socket.once('close', resolve)));
+  await page.keyboard.press('Control+Comma');
+  await page.locator(MODAL).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await openSection(page, uiRegExp('settings.sections.hooksPermissions.nav'));
+  const row = page.locator(`[data-host-client="${clientId}"]`);
+  await row.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await row.scrollIntoViewIfNeeded();
+  await page.locator(`[data-host-client-revoke="${clientId}"]`).click();
+  await row.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  const cortadas = await Promise.race([
+    Promise.all(closed).then(() => sockets.length),
+    new Promise((resolve) => setTimeout(() => resolve(0), CONFIG.actionTimeoutMs)),
+  ]);
+  await closeDialog(page);
+  return cortadas;
+}
+
+function hostPairingPassed(m) {
+  return m.accesoArranque === 'read' && m.lista && m.crear.code === HOST_NOT_PAIRED && m.dialogos === 1
+    && m.titulo.includes('verify-gui') && m.foco === 'host-pair-reject' && m.tokenValido
+    && m.escrituraEmparejada.code === HOST_UNKNOWN_SESSION && m.accesoConToken === 'full' && m.cortadas === 2
+    && m.accesoTrasRevocar === 'read' && m.escrituraRevocada.code === HOST_NOT_PAIRED;
+}
+
+// Cliente del host con el enlace verificado de la terminal (`hostLink.mjs`): reto HMAC, `hello` como `terminal`,
+// emparejado con un clic en la ventana (host 1.8) y los eventos del host recogidos en `events`. Nunca guarda ni imprime
+// el token.
+async function connectHostTabClient(page, userDataDir) {
+  const { rpc } = await connectVerified({ userDataDir, clientVersion: 'verify-host-tab', deps: hostLinkDeps() });
+  await pairByClick(page, rpc, 'verify-host-tab');
   const events = [];
   rpc.onNotification((method, params) => { if (method === 'event') events.push(params.event); });
   const call = (method, params) => Promise.race([
@@ -16775,7 +16893,7 @@ async function measureHostTab(instance, { profile, codexHome, runDir, setClient 
   const cwd = await page.evaluate(() => window.mage.getScratchDir());
   await page.evaluate((folder) => window.__mageDev.store.getState().answerTrustRequest(folder, true), cwd);
   const activaAntes = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
-  const client = await connectHostTabClient(profile);
+  const client = await connectHostTabClient(page, profile);
   setClient(client);
   const created = await client.call('session.create', { commandId: randomUUID(), provider: 'codex', accountId: codexHome, cwd, model: HOST_TAB_MODEL, trust: { acknowledged: true } });
   const { sessionId } = created;
