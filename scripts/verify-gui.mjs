@@ -5295,6 +5295,42 @@ const CHECKS = [
     },
   },
   {
+    // Una subsesión que main cierra (al acabar o por `mage_close_session`) con su pestaña abierta: el aviso `closed_by_mage`
+    // llega por el mismo `handleEvent` que usa el producto para los eventos de sesión. La pestaña suelta su sesión de motor,
+    // queda apuntando a su conversación (`resumeSessionId`) y el hilo lo dice, conservando lo que ya tenía. Sin Enter ni CLI:
+    // la sesión es sintética y el aviso lo entrega el puente.
+    name: 'Subsesiones: cerrada por Mage, la pestaña queda reanudable y lo dice',
+    state: { tabs: 1 },
+    async run(page) {
+      const SESSION = 'vg-closed-session';
+      const PREVIA = 'vg: línea previa del hilo';
+      const tab = await page.evaluate(({ session, previa }) => {
+        const store = window.__mageDev.store;
+        const { tabs, activeTabId } = store.getState();
+        const activa = tabs.find((t) => t.id === activeTabId);
+        store.setState((s) => ({
+          tabs: s.tabs.map((t) => (t.id === activa.id ? { ...t, resumeSessionId: undefined } : t)),
+          sessionIdByChat: { ...s.sessionIdByChat, [activa.id]: session },
+          blocksByChat: { ...s.blocksByChat, [activa.id]: [{ kind: 'system', id: 'vg-previa', text: previa }] },
+        }));
+        return { id: activa.id, provider: activa.provider };
+      }, { session: SESSION, previa: PREVIA });
+      const antes = await page.evaluate((id) => window.__mageDev.store.getState().sessionIdByChat[id] ?? null, tab.id);
+      await page.evaluate((session) => window.__mageDev.store.getState().handleEvent(session, { kind: 'closed_by_mage' }), SESSION);
+      const aviso = ui('chat.system.closedByMage');
+      const pane = page.locator(`[data-pane-tab-id="${tab.id}"]`);
+      const enElHilo = await pane.getByText(aviso).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const conservaLaPrevia = await pane.getByText(PREVIA).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const despues = await page.evaluate((id) => {
+        const s = window.__mageDev.store.getState();
+        return { sesion: s.sessionIdByChat[id] ?? null, estado: s.statusByChat[id] ?? null, reanuda: s.tabs.find((t) => t.id === id)?.resumeSessionId ?? null };
+      }, tab.id);
+      const ok = tab.provider === 'claude' && antes === SESSION
+        && despues.sesion === null && despues.reanuda === SESSION && enElHilo && conservaLaPrevia;
+      return { ok, detail: JSON.stringify({ provider: tab.provider, antes, despues, aviso, enElHilo, conservaLaPrevia }) };
+    },
+  },
+  {
     // P-026, 1.7 (D19): la fila de una pestaña ABIERTA dice lo mismo que la de una cerrada —cuando y
     // cuanto pesa—, no `claude · opus[1m]`. Pestaña propia con un `resumeSessionId` falso y su fila de
     // historial inyectada; nada se spawnea.
