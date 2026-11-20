@@ -3,7 +3,7 @@
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
 import type { UsageHistory } from './usageHistory';
-import type { BrowserBounds, BrowserEntryState, BrowserPenCapture, BrowserPenResult, BrowserPenStroke } from './browser';
+import type { BrowserBounds, BrowserEntryState, BrowserPenCapture, BrowserPenResult, BrowserPenStroke, BrowserZoomStep } from './browser';
 import type { ConversationLockParams, ConversationLockRef, ConversationLockStatus } from './conversationLock';
 import type { ResolvedUiLanguage } from './i18n/language';
 import type { LocalizedText } from './i18n/localizedText';
@@ -377,7 +377,11 @@ export const IpcChannel = {
   BrowserOpen: 'browser:open',
   BrowserNavigate: 'browser:navigate',
   BrowserBack: 'browser:back',
+  BrowserForward: 'browser:forward',
   BrowserReload: 'browser:reload',
+  BrowserZoom: 'browser:zoom',
+  BrowserOpenExternal: 'browser:open-external',
+  BrowserDevTools: 'browser:devtools',
   BrowserClose: 'browser:close',
   BrowserSetBounds: 'browser:set-bounds',
   BrowserTakeControl: 'browser:take-control',
@@ -1409,7 +1413,13 @@ export interface MageApi {
   browserOpen(sessionId: string): Promise<readonly BrowserEntryState[]>;
   browserNavigate(params: { readonly sessionId: string; readonly url: string }): Promise<void>;
   browserBack(sessionId: string): Promise<void>;
+  browserForward(sessionId: string): Promise<void>;
   browserReload(sessionId: string): Promise<void>;
+  browserZoom(params: { readonly sessionId: string; readonly step: BrowserZoomStep }): Promise<void>;
+  // Abre en el navegador del usuario la URL ACTUAL del navegador de esa sesión (la lee main; solo https).
+  browserOpenExternal(sessionId: string): Promise<void>;
+  // Solo sin empaquetar (`isDevelopment`); empaquetada, main lo rechaza.
+  browserDevTools(sessionId: string): Promise<void>;
   browserClose(sessionId: string): Promise<void>;
   browserSetBounds(params: { readonly sessionId: string; readonly bounds: BrowserBounds | null }): Promise<void>;
   browserTakeControl(sessionId: string): Promise<void>;

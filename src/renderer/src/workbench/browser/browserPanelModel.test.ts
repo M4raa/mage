@@ -7,6 +7,8 @@ const stateOf = (sessionId: string, control: BrowserEntryState['control'] = 'idl
   url: 'http://localhost:3000/',
   title: '',
   canGoBack: false,
+  canGoForward: false,
+  zoomPercent: 100,
   loading: false,
   control,
   lastAction: null,

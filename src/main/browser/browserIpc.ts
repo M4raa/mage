@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { IpcChannel } from '@shared/ipc';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { describeIssues } from '../capabilities/capabilityPackage';
-import { BrowserControlError, type BrowserRegistry } from './browserRegistry';
+import { BrowserControlError, type BrowserHandle, type BrowserRegistry } from './browserRegistry';
 import { parseStrokes } from './captureAnnotation';
 import { PenCaptureExpiredError, type PenSessions } from './penSession';
 import type { PlacementWindow, ViewPlacement } from './viewPlacement';
@@ -17,6 +17,10 @@ export interface BrowserIpcDeps {
   readonly placement: ViewPlacement;
   readonly pens: PenSessions;
   readonly windowOf: (webContentsId: number) => PlacementWindow | null;
+  // `openWithService.openExternal`: su guarda https manda (un `file:` o `http:` da su error de siempre).
+  readonly openExternal: (url: string) => Promise<void>;
+  // `app.isPackaged`: empaquetada no hay herramientas de desarrollo del navegador.
+  readonly isPackaged: boolean;
 }
 
 const MAX_SESSION_ID_CHARS = 200;
@@ -36,6 +40,9 @@ const boundsSchema = z
       .strict()
       .nullable(),
   })
+  .strict();
+const zoomSchema = z
+  .object({ sessionId: sessionIdSchema, step: z.union([z.literal(-1), z.literal(0), z.literal(1)]) })
   .strict();
 // Los trazos se validan aparte con `parseStrokes` (S01), que ya conoce sus límites.
 const composeSchema = z
@@ -80,6 +87,24 @@ async function navigateAsUser(deps: BrowserIpcDeps, sessionId: string, url: stri
   }
 }
 
+function requireBrowser(deps: BrowserIpcDeps, sessionId: string): BrowserHandle {
+  const handle = deps.registry.get(sessionId);
+  if (handle === null) throw new BrowserControlError('browser_not_open', `No hay navegador abierto en la sesión ${sessionId}`);
+  return handle;
+}
+
+// La URL la pone main (la actual del navegador), nunca el renderer.
+function openExternally(deps: BrowserIpcDeps, sessionId: string): Promise<void> {
+  return deps.openExternal(requireBrowser(deps, sessionId).state().url);
+}
+
+function openDevTools(deps: BrowserIpcDeps, sessionId: string): void {
+  if (deps.isPackaged) {
+    throw new Error(`Las herramientas de desarrollo del navegador solo existen sin empaquetar (sesión ${sessionId})`);
+  }
+  requireBrowser(deps, sessionId).openDevTools();
+}
+
 function setBounds(deps: BrowserIpcDeps, window: PlacementWindow, raw: unknown): void {
   const { sessionId, bounds } = parseWith(boundsSchema, raw);
   // El panel puede informar de su hueco antes de que exista el navegador.
@@ -113,7 +138,14 @@ export function registerBrowserIpc(deps: BrowserIpcDeps): void {
     return navigateAsUser(deps, sessionId, url);
   });
   bySession(IpcChannel.BrowserBack, (sessionId) => void registry.beginUserAction(sessionId).back());
+  bySession(IpcChannel.BrowserForward, (sessionId) => void registry.beginUserAction(sessionId).forward());
   bySession(IpcChannel.BrowserReload, (sessionId) => registry.beginUserAction(sessionId).reload());
+  route(IpcChannel.BrowserZoom, (arg) => {
+    const { sessionId, step } = parseWith(zoomSchema, arg);
+    return void registry.beginUserAction(sessionId).zoom(step);
+  });
+  bySession(IpcChannel.BrowserOpenExternal, (sessionId) => openExternally(deps, sessionId));
+  bySession(IpcChannel.BrowserDevTools, (sessionId) => openDevTools(deps, sessionId));
   bySession(IpcChannel.BrowserClose, async (sessionId) => void (await registry.close(sessionId)));
   route(IpcChannel.BrowserSetBounds, (arg, window) => setBounds(deps, window, arg));
   bySession(IpcChannel.BrowserTakeControl, (sessionId) => registry.takeControl(sessionId));

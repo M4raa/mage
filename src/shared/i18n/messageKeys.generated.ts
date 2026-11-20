@@ -532,7 +532,11 @@ export interface MessageValues {
   readonly "chat.browser.back": never;
   readonly "chat.browser.close": never;
   readonly "chat.browser.closedHint": never;
+  readonly "chat.browser.copyAddress": never;
+  readonly "chat.browser.devTools": never;
+  readonly "chat.browser.forward": never;
   readonly "chat.browser.noSession": never;
+  readonly "chat.browser.openExternal": never;
   readonly "chat.browser.pen": never;
   readonly "chat.browser.penAttach": never;
   readonly "chat.browser.penCancel": never;
@@ -549,6 +553,9 @@ export interface MessageValues {
   readonly "chat.browser.returnControl": never;
   readonly "chat.browser.stop": never;
   readonly "chat.browser.userControlling": never;
+  readonly "chat.browser.zoomIn": never;
+  readonly "chat.browser.zoomOut": never;
+  readonly "chat.browser.zoomReset": { readonly "percent": string | number };
   readonly "chat.code.copy": never;
   readonly "chat.collapsible.showFullMessage": never;
   readonly "chat.collapsible.showFullResult": never;

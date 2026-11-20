@@ -4240,6 +4240,8 @@ function registerBrowserIpcFromMain(): void {
     placement: viewPlacement,
     pens: penSessions,
     windowOf: (id) => { const windowId = windowManager.windowIdOf(id); return windowId === null ? null : windowManager.get(windowId); },
+    openExternal: (url) => openWithService.openExternal(url),
+    isPackaged: app.isPackaged,
   });
 }
 
