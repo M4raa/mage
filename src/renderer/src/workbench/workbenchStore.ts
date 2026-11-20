@@ -202,6 +202,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   settingsOpen: boolean; // pantalla de Configuracion de la app (M2.3) abierta
   accountsUsageOpen: boolean; // pantalla «Cuentas y consumo» (P-038 V11) abierta
   scheduledTasksOpen: boolean; // pantalla «Tareas programadas» abierta
+  artifactsLibraryOpen: boolean; // pantalla «Artifacts» (todos los de todas las cuentas) abierta
   // el espacio de trabajo terminó de restaurarse (bien o mal): a partir de aquí se pueden abrir conversaciones de tareas programadas
   workspaceReady: boolean;
   // Seccion con la que se abre Configuracion (P-028, 41: «Añadir cuenta» del gateway lleva a
@@ -486,6 +487,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   closeAccountsUsage: () => void;
   openScheduledTasks: () => void;
   closeScheduledTasks: () => void;
+  openArtifactsLibrary: () => void;
+  closeArtifactsLibrary: () => void;
   closeSettings: () => void;
   // Abre (o enfoca) la pseudo-pestaña de novedades en `version`, o en la instalada sin argumento.
   openReleaseNotes: (version?: string) => void;
@@ -1596,6 +1599,7 @@ export function createWorkbenchStore(mage: MageClient) {
     settingsOpen: false,
     accountsUsageOpen: false,
     scheduledTasksOpen: false,
+    artifactsLibraryOpen: false,
     workspaceReady: false,
     settingsSection: null,
     releaseNotesVersion: null,
@@ -2726,6 +2730,8 @@ export function createWorkbenchStore(mage: MageClient) {
     closeAccountsUsage: () => set({ accountsUsageOpen: false }),
     openScheduledTasks: () => set({ scheduledTasksOpen: true }),
     closeScheduledTasks: () => set({ scheduledTasksOpen: false }),
+    openArtifactsLibrary: () => set({ artifactsLibraryOpen: true }),
+    closeArtifactsLibrary: () => set({ artifactsLibraryOpen: false }),
 
     openReleaseNotes: (version) => {
       set({ releaseNotesVersion: version ?? null });

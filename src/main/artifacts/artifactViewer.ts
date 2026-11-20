@@ -23,6 +23,8 @@ export interface OpenedArtifact {
 
 export class ArtifactViewer {
   private root: string | null = null;
+  // Cada apertura saca un numero; si mientras se descarga llega otra, la vieja no toca el visor (gana la ultima).
+  private latest = 0;
 
   constructor(private readonly deps: ArtifactViewerDeps) {}
 
@@ -38,7 +40,9 @@ export class ArtifactViewer {
   }
 
   async open(accountId: string, id: string): Promise<OpenedArtifact> {
+    const ticket = ++this.latest;
     const cached = await this.deps.reader.ensureCached(accountId, id);
+    if (ticket !== this.latest) return { title: cached.title };
     await this.deps.registry().close(ARTIFACT_VIEWER_SESSION_ID);
     this.root = cached.root;
     const handle = this.deps.registry().open(ARTIFACT_VIEWER_SESSION_ID);

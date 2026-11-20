@@ -91,6 +91,11 @@ describe('placesView', () => {
     expect(placesView(null, 'window')).toBe(false);
   });
 
+  it('placesView_visor_siempreQueHayaNavegador', () => {
+    expect(placesView(stateOf('A'), 'viewer')).toBe(true);
+    expect(placesView(null, 'viewer')).toBe(false);
+  });
+
   it('placesView_dentro_soloElPanel', () => {
     expect(placesView(stateOf('A'), 'panel')).toBe(true);
     expect(placesView(stateOf('A'), 'window')).toBe(false);

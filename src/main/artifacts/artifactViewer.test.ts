@@ -68,6 +68,29 @@ describe('ArtifactViewer', () => {
     expect(viewer.isOpen()).toBe(false);
   });
 
+  it('open_twiceWhileDownloading_onlyTheLatestReachesTheView', async () => {
+    // Arrange
+    let releaseFirst: () => void = () => undefined;
+    const first = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const ensureCached = vi.fn(async (_accountId: string, id: string) => {
+      if (id === 'slow') await first;
+      return { root: `/cache/${id}`, entryPath: `/cache/${id}/index.html`, title: id };
+    });
+    const { viewer, handle } = setup({ reader: { ensureCached } });
+
+    // Act
+    const slow = viewer.open('/home/u/.claude', 'slow');
+    await viewer.open('/home/u/.claude', 'fast');
+    releaseFirst();
+    await slow;
+
+    // Assert
+    expect(handle.navigate).toHaveBeenCalledTimes(1);
+    expect(handle.navigate).toHaveBeenCalledWith('file:///cache/fast/index.html');
+  });
+
   it('forget_afterOpen_isClosed', async () => {
     // Arrange
     const { viewer } = setup();
