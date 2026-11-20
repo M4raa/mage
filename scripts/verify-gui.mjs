@@ -13415,6 +13415,18 @@ const CHECKS = [
     },
   },
   {
+    // Sin Enter ni CLI: pestañas inventadas sin sesión; todo se restaura en `finally`.
+    name: 'Pestañas: restaurar con la activa de una cuenta que ya no está deja marcada la pestaña que se pinta',
+    async run(page) {
+      const previo = await snapshotTabsState(page);
+      try {
+        return await medirRestaurarActivaSinCuenta(page);
+      } finally {
+        await restoreTabsState(page, previo);
+      }
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
@@ -15205,6 +15217,78 @@ async function medirCerrarPestanaQueTrabaja(page) {
   const dialogAfterRemembered = await dialog.count();
   const ok = tabSurvivesEscape && afterBackground.stopCalls === 0 && afterBackground.stored === 'background' && dialogAfterRemembered === 0;
   return { ok, detail: JSON.stringify({ tabSurvivesEscape, ...afterBackground, dialogAfterRemembered }) };
+}
+
+// Pestaña descuadrada. `marcada`: la seleccionada que la barra NO atenúa; `pintada`: el panel con el marco de enfocado
+// (o el único); `foco`: el panel con el foco del DOM; `subrayadas`: las seleccionadas con el subrayado visible.
+function medirPestanaDescuadrada(page) {
+  return page.evaluate(() => {
+    const s = window.__mageDev.store.getState();
+    const idDe = (el) => el?.getAttribute('data-tab-id') ?? null;
+    const seleccionadas = [...document.querySelectorAll('[role="tab"][aria-selected="true"]')];
+    const paneles = [...document.querySelectorAll('[data-pane-tab-id]')];
+    const enmarcado = paneles.find((el) => getComputedStyle(el).outlineStyle !== 'none') ?? (paneles.length === 1 ? paneles[0] : undefined);
+    const subrayada = (el) => {
+      const raya = el.querySelector(':scope > span[class~="h-[2px]"]');
+      return raya !== null && Number(getComputedStyle(raya).opacity) > 0.5;
+    };
+    return {
+      marcada: idDe(seleccionadas.find((el) => el.classList.contains('text-mg-text'))),
+      pintada: enmarcado?.getAttribute('data-pane-tab-id') ?? null,
+      activa: s.activeTabId,
+      cuenta: s.activeAccountId,
+      foco: document.activeElement?.closest('[data-pane-tab-id]')?.getAttribute('data-pane-tab-id') ?? null,
+      seleccionadas: seleccionadas.map(idDe),
+      subrayadas: seleccionadas.filter(subrayada).map(idDe),
+      paneles: paneles.length,
+    };
+  });
+}
+
+function pestanaDescuadrada(m) {
+  return m.marcada !== m.pintada || m.activa !== m.pintada;
+}
+
+function snapshotTabsState(page) {
+  return page.evaluate(() => {
+    const s = window.__mageDev.store.getState();
+    return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, activeAccountId: s.activeAccountId, draftByChat: s.draftByChat };
+  });
+}
+
+async function restoreTabsState(page, previo) {
+  await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// `window.mage` no se puede sustituir (no escribible ni configurable), así que `restoreWorkspace` no se puede alimentar
+// desde aquí: se pasa por el `restoreTabs` real un workspace guardado con la activa de una cuenta que ya no está (la
+// hoja ordena las demás distinto que `tabs`) y su resultado entra en el store igual que en `restoreWorkspace`.
+async function medirRestaurarActivaSinCuenta(page) {
+  await openTemporaryConversation(page);
+  await page.evaluate(() => {
+    const dev = window.__mageDev;
+    const s = dev.store.getState();
+    const base = s.tabs.find((t) => t.id === s.activeTabId);
+    const tab = (id, accountId) => ({ id, accountId, accountAlias: base.accountAlias, cwd: base.cwd, model: base.model, provider: base.provider, title: id });
+    const persisted = {
+      version: 1,
+      activeTabId: 'vg-desc-1',
+      tabs: [tab('vg-desc-2', base.accountId), tab('vg-desc-3', base.accountId), tab('vg-desc-1', 'vg-cuenta-que-no-existe')],
+      splitLayout: { kind: 'leaf', tabIds: ['vg-desc-3', 'vg-desc-1', 'vg-desc-2'], activeTabId: 'vg-desc-1' },
+    };
+    const { tabs, activeTabId, splitLayout } = dev.restoreTabs(persisted, new Set(s.accounts.map((a) => a.id)));
+    dev.store.setState({ tabs, activeTabId, splitLayout });
+  });
+  await page.waitForTimeout(CONFIG.settleMs);
+  const tras = await medirPestanaDescuadrada(page);
+  // Clic real en la pestaña que el store cree activa: si la barra no la marca, el clic tendría que arreglarlo.
+  const enBarra = page.locator(`[role="tab"][data-tab-id="${tras.activa}"]`);
+  if ((await enBarra.count()) !== 1) return { ok: false, detail: JSON.stringify({ tras, activaEnLaBarra: false, store: await page.evaluate(() => window.__mageDev.store.getState().splitLayout) }) };
+  await enBarra.click();
+  await page.waitForTimeout(CONFIG.settleMs);
+  const trasClic = await medirPestanaDescuadrada(page);
+  return { ok: !pestanaDescuadrada(tras) && !pestanaDescuadrada(trasClic), detail: JSON.stringify({ tras, trasClic }) };
 }
 
 async function openTemporaryConversation(page) {

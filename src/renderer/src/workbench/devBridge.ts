@@ -7,7 +7,7 @@ import { PANEL_REGISTRY } from './panels/panelRegistry';
 import { notify, useNotificationStore } from './notificationStore';
 import { useCodexAppsStore } from './codexAppsStore';
 import { useTaskStore } from './tasks/taskStore';
-import { toPersistedWorkspace } from './workspaceView';
+import { restoreTabs, toPersistedWorkspace } from './workspaceView';
 import { t } from '../i18n/uiLanguage';
 import { usageHistorySource } from './usageHistorySource';
 import { sweepIdleSessions } from './idleSessionCloser';
@@ -33,6 +33,8 @@ export interface MageDevBridge {
   // La restauracion del harness libera tambien los listeners de las pestañas ficticias que retiro.
   readonly disposeTranscriptStore: typeof disposeTranscriptStore;
   readonly toPersistedWorkspace: typeof toPersistedWorkspace;
+  // `window.mage` no se puede sustituir, así que el harness restaura un workspace inventado por el mapeo real.
+  readonly restoreTabs: typeof restoreTabs;
   readonly transcriptToBlocks: typeof transcriptToBlocks;
   // El reducer REAL de eventos del motor. Con el, el harness puede inyectar un evento (p.ej. un
   // `permission_request` de AskUserQuestion) sin sesion viva: `handleEvent` no vale, porque resuelve la
@@ -68,6 +70,7 @@ export interface MageDevBridge {
   transcriptStoreFor: transcriptStoreForTab,
   disposeTranscriptStore,
   toPersistedWorkspace,
+  restoreTabs,
   transcriptToBlocks,
   reduceEvent,
   panelStore: usePanelLayoutStore,

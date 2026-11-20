@@ -254,6 +254,35 @@ describe('restoreTabs', () => {
     expect(restoreTabs(ws, new Set(['.claude'])).activeTabId).toBe('tab1');
   });
 
+  const row = (id: string, accountId: string): PersistedWorkspace['tabs'][number] => ({ id, accountId, accountAlias: 'main', cwd: '/p', model: 'opus', provider: 'claude', title: id });
+
+  it('restoreTabs_activaDeUnaCuentaQueYaNoEsta_laNuevaActivaEsLaQueEnsenaSuHoja', () => {
+    // La hoja enseñaba la pestaña perdida y ordena las demás distinto que `tabs`: la barra marcaba una y el store otra.
+    const ws = persisted({
+      activeTabId: 't1',
+      tabs: [row('t2', '.claude'), row('t3', '.claude'), row('t1', '.otra')],
+      splitLayout: { kind: 'leaf', tabIds: ['t3', 't1', 't2'], activeTabId: 't1' },
+    });
+
+    const restored = restoreTabs(ws, new Set(['.claude']));
+
+    expect(restored.activeTabId).toBe('t2');
+    expect(restored.splitLayout).toEqual({ kind: 'leaf', tabIds: ['t3', 't2'], activeTabId: 't2' });
+  });
+
+  it('restoreTabs_activaDeUnaCuentaQueYaNoEstaEnUnaDivision_laNuevaActivaSeEnsenaEnSuPanel', () => {
+    const ws = persisted({
+      activeTabId: 't1',
+      tabs: [row('t1', '.otra'), row('t2', '.claude'), row('t3', '.claude'), row('t4', '.claude')],
+      splitLayout: split({ kind: 'leaf', tabIds: ['t1', 't4'], activeTabId: 't1' }, { kind: 'leaf', tabIds: ['t2', 't3'], activeTabId: 't3' }),
+    });
+
+    const restored = restoreTabs(ws, new Set(['.claude']));
+
+    expect(restored.activeTabId).toBe('t2');
+    expect(restored.splitLayout).toEqual(split({ kind: 'leaf', tabIds: ['t4'], activeTabId: 't4' }, { kind: 'leaf', tabIds: ['t2', 't3'], activeTabId: 't2' }));
+  });
+
   it('restaurarWorkspace_de012ConMarcadores_titulosVacios', () => {
     const base = persisted().tabs[0]!;
     const ws = persisted({
