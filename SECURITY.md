@@ -28,7 +28,8 @@ principal de Mage hace estas peticiones:
 | Para qué | A dónde | Qué envía | Cuándo |
 |---|---|---|---|
 | Panel de uso de las cuentas de Claude por suscripción | `GET https://api.anthropic.com/api/oauth/usage` | El token de acceso de esa cuenta, leído de su `.credentials.json`; `anthropic-beta: oauth-2025-04-20`; `User-Agent: claude-code/<versión>` | Al consultar el uso; como mucho una vez cada 3 minutos por cuenta |
-| Renovar la sesión de esa cuenta | `POST https://platform.claude.com/v1/oauth/token` | El *refresh token* de la cuenta y el identificador de cliente público de Claude Code | Solo si la consulta de uso responde 401. El token nuevo se escribe en el `.credentials.json` de esa cuenta |
+| Renovar la sesión de esa cuenta | `POST https://platform.claude.com/v1/oauth/token` | El *refresh token* de la cuenta y el identificador de cliente público de Claude Code | Solo si la consulta de uso o la de artifacts responde 401. El token nuevo se escribe en el `.credentials.json` de esa cuenta |
+| Lista y lectura de artifacts de las cuentas de Claude por suscripción | `GET https://api.anthropic.com/api/frame/artifacts`, `GET https://api.anthropic.com/api/frame/<id>` y `GET https://<id>.frame.claudeusercontent.com/_f/…` | El token de acceso de esa cuenta, leído de su `.credentials.json`; `anthropic-beta: oauth-2025-04-20`; `User-Agent: claude-code/<versión>`; cabeceras `X-Frame-*` del CLI. Al host del contenido solo el token de lectura de ese artifact que devuelve la anterior | Al abrir el panel de artifacts y al abrir uno |
 | Estado del servicio de Claude | `GET https://status.claude.com/api/v2/summary.json` | Nada tuyo | Cuando la interfaz enseña el estado |
 | Buscar e importar temas | `https://open-vsx.org` | El texto que buscas | Solo al buscar o importar un tema |
 | Actualizaciones | Releases de GitHub de `M4raa/mage` | Nada tuyo | Al arrancar y al pedirlo en Configuración |
@@ -39,6 +40,11 @@ que Mage manda el del CLI, con la versión del `claude` que tienes instalado: la
 en tu máquina, sin red, y si no puede usa una fija. La renovación usa el cliente OAuth público de Claude Code
 porque es el que emitió ese token. Son tus credenciales y no salen de tu máquina hacia ningún otro sitio. No es
 una integración oficial: Anthropic puede cambiar esos endpoints, y entonces el panel de uso deja de funcionar.
+
+El token OAuth de la cuenta se usa también para listar y leer sus artifacts, siempre desde el proceso principal; el
+token de lectura de un artifact (y el resto de lo que devuelve su lectura) no sale de ese proceso ni va a un log. Lo
+que se descarga de un artifact se guarda en una carpeta de caché dentro de los datos de Mage y se enseña en un
+navegador aislado, sin cookies de claude.ai ni acceso a otros ficheros.
 
 ## Cómo informar de una vulnerabilidad
 
