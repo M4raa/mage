@@ -41,7 +41,7 @@ las carpetas que autorices. Además toca cosas sensibles por diseño:
   (qué sesiones puede ver o crear, profundidad, cuentas); no da acceso a los demás métodos de escritura. En Windows,
   Node no permite restringir el descriptor de seguridad del pipe, así que la barrera real son estos tokens.
 
-- Las dependencias de producción pasan `pnpm audit` en cada integración.
+- Las dependencias de producción pasan `pnpm audit` en cada integración. Excepción conocida: GHSA-mrhx-c7xc-m3w5 de zod 3 (consumo de memoria al validar entradas enormes de procesos locales), hasta pasar a zod 4.
 - Dependabot propone actualizaciones de las dependencias y de las acciones de GitHub.
 - Cada release lleva su SBOM CycloneDX (`mage-<versión>-sbom.cdx.json`).
 
