@@ -16,6 +16,8 @@ import { measureInteraction, measureTabSwitch, profileWhile, summarize, tabIdsIn
 import { ui } from './uiText.mjs';
 
 export const PERF_HISTORY_CONVERSATIONS = 300;
+// Versión del índice de conversaciones que lee main (CONVERSATION_INDEX_VERSION): otra versión se lee como vacío.
+const CONVERSATION_INDEX_VERSION = 2;
 const PERF_HISTORY_BLOCKS = 40;
 const PERF_HISTORY_PROJECTS = 10;
 const HISTORY_SPREAD_DAYS = 7;
@@ -97,6 +99,16 @@ export function seedPerfHistory(accountDir, { conversations = PERF_HISTORY_CONVE
     bytes += written.bytes;
   }
   return { files, bytes };
+}
+
+// Atribuye las conversaciones sembradas a la cuenta `accountDir`: el historial de consumo solo suma a una cuenta si el índice
+// de conversaciones (`<userData>/conversation-index.json`, versión 2) le da su `accountId`; sin él van a «sin atribuir», que
+// la pantalla no enseña. Se escribe ANTES de arrancar la app.
+export function seedPerfConversationIndex(indexFile, accountDir, files) {
+  if (typeof accountDir !== 'string' || !path.isAbsolute(accountDir)) throw new Error(`accountDir no absoluto: ${JSON.stringify(accountDir)}`);
+  const conversations = Object.fromEntries(files.map((file) => [path.basename(file, '.jsonl'), { accountId: accountDir }]));
+  fs.mkdirSync(path.dirname(indexFile), { recursive: true });
+  fs.writeFileSync(indexFile, JSON.stringify({ version: CONVERSATION_INDEX_VERSION, conversations, artifacts: {} }), 'utf-8');
 }
 
 // --- Resúmenes (puros) ---

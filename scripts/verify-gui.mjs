@@ -58,7 +58,7 @@ import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuar
 import { withGuiState } from './lib/guiState.mjs';
 import { closeCheckOverlays, runGuiCheck } from './lib/guiCheckState.mjs';
 import { runPerfBaseline } from './lib/perfBaseline.mjs';
-import { runPerfReview, seedPerfHistory } from './lib/perfReview.mjs';
+import { runPerfReview, seedPerfConversationIndex, seedPerfHistory } from './lib/perfReview.mjs';
 import { writeLongTranscript } from './lib/longTranscriptFixture.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
@@ -17285,8 +17285,9 @@ function launchApp(userDataDir, extraEnv = {}) {
   // hay ni shell ni .cmd, y ademas funciona igual en los tres SO.
   const args = [
     path.join(repoRoot, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js'),
-    // `--prod` (solo con --perf-baseline): el build ya hecho (`pnpm build`), con React de produccion.
-    PROD_BUILD ? 'preview' : 'dev',
+    // `--prod` (solo con --perf-baseline o --perf-review): el build ya hecho (`pnpm build`), con React de produccion. Sin
+    // `--skipBuild`, `preview` vuelve a construir y «desde el lanzamiento» incluiria esa reconstruccion.
+    ...(PROD_BUILD ? ['preview', '--skipBuild'] : ['dev']),
     '--',
     `--remote-debugging-port=${CONFIG.port}`,
     `--user-data-dir=${userDataDir}`,
@@ -17472,6 +17473,7 @@ async function main() {
   // --perf-review: 300 conversaciones en la cuenta principal del HOME de prueba, ANTES de arrancar (nunca en el HOME real).
   if (PERF_REVIEW && HARNESS_HOME === os.homedir()) throw new Error('--perf-review necesita el HOME de prueba (sin --turn=real)');
   const perfHistory = PERF_REVIEW ? seedPerfHistory(path.join(HARNESS_HOME, '.claude'), { nowMs: Date.now() }) : null;
+  if (perfHistory !== null) seedPerfConversationIndex(path.join(userDataDir, 'conversation-index.json'), path.join(HARNESS_HOME, '.claude'), perfHistory.files);
   const spawnAtMs = Date.now();
   const { child, log } = launchApp(userDataDir);
   let browser = null;
