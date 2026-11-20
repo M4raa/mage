@@ -2,7 +2,8 @@ import { EFFORT_LEVELS } from '@shared/ipc';
 import { z } from 'zod';
 
 // 2: `awaiting_launch` (la sesión espera a que el usuario la lance desde su tarjeta).
-export const MAGE_MCP_CONTRACT_VERSION = 2;
+// 3: `mage_get_usage` (uso de 5 h y semanal por cuenta).
+export const MAGE_MCP_CONTRACT_VERSION = 3;
 export const DEFAULT_MAX_RESULT_BYTES = 65_536;
 // Largo máximo del nombre de una sesión delegada (el `title` de mage_create_session y el que se deriva del prompt).
 export const MAX_SESSION_TITLE_CHARS = 80;
@@ -58,5 +59,12 @@ export const readOutputSchema = z.object({
 export const sendOutputSchema = z.object({ receipt: z.enum(['accepted', 'queued', 'rejected']), reason: text.optional() }).strict();
 export const cancelOutputSchema = z.object({ cancelled: z.boolean() }).strict();
 export const askCreatorOutputSchema = z.object({ receipt: z.literal('accepted') }).strict();
+export const usageInputSchema = z.object({ accountId: id('accountId').optional() }).strict();
+export const usageWindowSchema = z.object({ percent: z.number().int().min(0).max(100), resetsAt: utcSchema.nullable() }).strict();
+export const usageAccountSchema = z.object({
+  accountId: id('accountId'), provider: id('provider'), name: text, billing: z.enum(['subscription', 'api-key']),
+  fiveHour: usageWindowSchema.nullable(), weekly: usageWindowSchema.nullable(), error: text.optional(),
+}).strict();
+export const usageOutputSchema = z.object({ accounts: z.array(usageAccountSchema) }).strict();
 
 export const creationTargetSchema = z.object({ projectId: id('projectId'), accountId: id('accountId'), provider, cwd: id('cwd') }).strict();

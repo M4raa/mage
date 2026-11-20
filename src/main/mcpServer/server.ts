@@ -20,6 +20,7 @@ export const SESSIONS_INSTRUCTIONS = [
   'Cuando el usuario pida sesiones, conversaciones o chats NUEVOS (o «subsesiones»), créalos con mage_create_session: cada uno es una conversación independiente que el usuario ve como pestaña en Mage. Dale a cada una un title corto y distinto. Para eso no uses subagentes (Agent/Task) ni lances el CLI desde la consola (claude -p, codex exec).',
   'Una sesión creada trabaja sola. Cuando acaba un turno, Mage te entrega su respuesta como un mensaje <mage-session-result name="…" id="…">: no consultes en bucle; termina tu turno y sigue cuando llegue (si lanzaste varias, espera a tener todas las que necesitas). Si te pregunta algo con mage_ask_creator, contesta con mage_send. mage_get_status y mage_read_result sirven para mirar una en cualquier momento; mage_cancel para su turno y mage_list_sessions lista las que hay.',
   'Si trabajas sin el usuario (tarea programada, sesión delegada o Ultracode), pasa siempre model y effort en mage_create_session; si no, el usuario verá una tarjeta para confirmarlos antes de que la sesión arranque.',
+  'Antes de lanzar trabajo largo mira el uso con mage_get_usage; si una sesión puede chocar con la ventana de 5 h, créala con resumeOnReset: true para que siga sola al restablecerse.',
 ].join('\n');
 
 export const BROWSER_INSTRUCTIONS = 'Cuando el usuario hable del navegador de Mage (el navegador integrado o el panel Navegador), usa las herramientas mage_browser_* (navigate, read_dom, click, type, screenshot, back, close): la página se ve en el panel Navegador de esta conversación. No uses otros navegadores (Playwright, Chrome) para eso. Un .html de la carpeta de trabajo de la conversación se abre directamente con su ruta absoluta: no hace falta servirlo.';
@@ -29,6 +30,7 @@ export const GET_STATUS_DESCRIPTION = 'Estado de una sesión creada con mage_cre
 export const READ_RESULT_DESCRIPTION = 'Lee los mensajes de una sesión (su respuesta incluida). Para leer solo lo nuevo, pasa en afterSeq el nextSeq de la lectura anterior.';
 export const SEND_DESCRIPTION = 'Manda otro mensaje a una sesión creada: mode direct entra en el turno en marcha; queue espera a que acabe.';
 export const CANCEL_DESCRIPTION = 'Para el turno en marcha de una sesión creada (scope: turn). La sesión sigue existiendo.';
+export const GET_USAGE_DESCRIPTION = 'Uso de tus cuentas: % de la ventana de 5 h y de la semanal y cuándo se restablece cada una. Úsalo antes de lanzar trabajo largo.';
 
 export interface MageMcpServerOptions extends Omit<HandlerContext, 'scope'> {
   readonly scope: ConnectionScope;
@@ -54,4 +56,5 @@ function registerTools(server: McpServer, handlers: MageToolHandlers): void {
   server.registerTool('mage_send', { description: SEND_DESCRIPTION, inputSchema: schemas.sendInputSchema, outputSchema: schemas.sendOutputSchema }, (input) => safeToolResult(() => handlers.send(input)));
   server.registerTool('mage_cancel', { description: CANCEL_DESCRIPTION, inputSchema: schemas.cancelInputSchema, outputSchema: schemas.cancelOutputSchema }, (input) => safeToolResult(() => handlers.cancel(input)));
   server.registerTool('mage_ask_creator', { description: ASK_CREATOR_DESCRIPTION, inputSchema: schemas.askCreatorInputSchema, outputSchema: schemas.askCreatorOutputSchema }, (input) => safeToolResult(() => handlers.askCreator(input)));
+  server.registerTool('mage_get_usage', { description: GET_USAGE_DESCRIPTION, inputSchema: schemas.usageInputSchema, outputSchema: schemas.usageOutputSchema }, (input) => safeToolResult(() => handlers.usage(input)));
 }

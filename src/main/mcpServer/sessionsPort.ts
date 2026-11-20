@@ -1,4 +1,4 @@
-import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreatedBy, CreateInput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, SessionState, StatusOutput } from './types';
+import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreatedBy, CreateInput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, SessionState, StatusOutput, UsageAccountEntry } from './types';
 
 export type CreationRequest = Pick<CreateInput, 'provider' | 'accountId' | 'cwd'>;
 export interface CreationTarget {
@@ -44,4 +44,7 @@ export interface MageSessionsPort {
   cancel(input: CancelInput): Promise<CancelOutput>;
   // U26: la sesión que llama (una delegada) pregunta a su creadora; resuelve al registrar, no espera la respuesta.
   askCreator(input: AskCreatorInput): Promise<AskCreatorOutput>;
+  // Solo lectura: el uso de cada cuenta pedida que el puerto conoce (las desconocidas no salen), con el error de una
+  // que falle dentro de su entrada. El alcance (`scope`) ya lo aplicó quien llama.
+  getUsage(input: { readonly accountIds: readonly string[] }): Promise<readonly UsageAccountEntry[]>;
 }

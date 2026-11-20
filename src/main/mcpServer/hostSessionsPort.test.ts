@@ -49,7 +49,7 @@ const view = (overrides: Partial<DelegationView> & { child?: DelegatedSession } 
 function setup(options: {
   views?: DelegationView[]; snapshot?: ConversationSnapshot; launch?: HostSessionsPortDeps['launch']; accounts?: HostSessionsPortDeps['accounts'];
   log?: Partial<HostSessionsPortDeps['log']>; creator?: SessionSettings | null; catalog?: readonly ProviderModel[];
-  facts?: CreatorFacts | null; pending?: PendingLaunches; index?: ReturnType<typeof fakeIndex>; ownerAlive?: boolean;
+  facts?: CreatorFacts | null; pending?: PendingLaunches; index?: ReturnType<typeof fakeIndex>; ownerAlive?: boolean; usage?: HostSessionsPortDeps['usage'];
 } = {}) {
   const views = options.views ?? [view()];
   const listeners: SessionListener[] = [];
@@ -85,6 +85,7 @@ function setup(options: {
     creatorFacts: vi.fn(() => options.facts ?? null),
     pending: options.pending ?? new PendingLaunches(),
     newId: vi.fn(() => 'pend-1'),
+    usage: options.usage ?? { accounts: () => [], read: vi.fn(async () => null) },
   };
   return { port: new HostSessionsPort(deps), deps, listeners, announced, answers, timers, cancelTimer };
 }
@@ -105,6 +106,40 @@ const command = (overrides: Partial<CreateSessionCommand> = {}): CreateSessionCo
   createdBy: { conversationId: 'caller-c', requestId: REQUEST, at: AT }, creatorChain: ['caller-c'], ...overrides,
 });
 const sendInput = (mode: 'direct' | 'queue' = 'queue') => ({ requestId: REQUEST, conversationId: 'child-c', text: 'sí', mode });
+
+describe('HostSessionsPort.getUsage', () => {
+  const info = (fiveHour: number) => ({ fiveHour: { utilization: fiveHour, resetsAt: Date.UTC(2026, 10, 19, 15) }, sevenDay: { utilization: 3, resetsAt: null }, limits: [], apiCreditsMinor: null, fetchedAt: 0 });
+  const accounts = [
+    { id: 'acc1', provider: 'claude', name: '.claude', billing: 'subscription' as const },
+    { id: 'api1', provider: 'claude', name: 'api', billing: 'api-key' as const },
+    { id: 'acc2', provider: 'codex', name: '.codex', billing: 'subscription' as const },
+  ];
+  it('getUsage_unaCuentaFalla_noTumbaLasDemas', async () => {
+    const read = vi.fn(async (id: string) => { if (id === 'acc1') throw new Error('HTTP 401'); return info(12.4); });
+    const { port } = setup({ usage: { accounts: () => accounts, read } });
+    const entries = await port.getUsage({ accountIds: ['acc1', 'acc2'] });
+    expect(entries[0]).toMatchObject({ accountId: 'acc1', fiveHour: null, weekly: null, error: 'usage_unavailable: HTTP 401' });
+    expect(entries[1]).toMatchObject({ accountId: 'acc2', fiveHour: { percent: 12 }, weekly: { percent: 3 } });
+    expect(entries[1]).not.toHaveProperty('error');
+  });
+  it('getUsage_cuentaDeApi_ventanasNull', async () => {
+    const { port } = setup({ usage: { accounts: () => accounts, read: async () => info(0) } });
+    expect(await port.getUsage({ accountIds: ['api1'] })).toEqual([{ accountId: 'api1', provider: 'claude', name: 'api', billing: 'api-key', fiveHour: null, weekly: null }]);
+  });
+  it('getUsage_cuentaDesconocida_noSale', async () => {
+    const read = vi.fn(async () => info(1));
+    const { port } = setup({ usage: { accounts: () => accounts, read } });
+    expect(await port.getUsage({ accountIds: ['nope'] })).toEqual([]);
+    expect(read).not.toHaveBeenCalled();
+  });
+  it('getUsage_sinCuentas_vacio', async () => {
+    expect(await setup().port.getUsage({ accountIds: [] })).toEqual([]);
+  });
+  it('getUsage_resetsAtEnIso', async () => {
+    const { port } = setup({ usage: { accounts: () => accounts, read: async () => info(10) } });
+    expect((await port.getUsage({ accountIds: ['acc1'] }))[0]?.fiveHour?.resetsAt).toBe('2026-11-19T15:00:00.000Z');
+  });
+});
 
 describe('HostSessionsPort.resolveCreationTarget', () => {
   it('resolveCreationTarget_relativeCwd_invalidCwd', async () => {

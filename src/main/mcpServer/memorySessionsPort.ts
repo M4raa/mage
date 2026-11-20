@@ -1,5 +1,5 @@
 import type { CreationRequest, CreationTarget, CreateSessionCommand, MageSessionsPort, SessionMetadata } from './sessionsPort';
-import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput } from './types';
+import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput, UsageAccountEntry } from './types';
 import { createdBySchema, publicMessageSchema, statusOutputSchema, utcSchema } from './schemas';
 
 export interface MemorySessionSeed {
@@ -12,6 +12,7 @@ export interface MemorySessionsOptions {
   readonly sessions?: readonly MemorySessionSeed[];
   readonly newConversationId: () => string;
   readonly now: () => string;
+  readonly usage?: readonly UsageAccountEntry[];
 }
 interface MemorySession { metadata: SessionMetadata; status: StatusOutput; messages: PublicMessage[] }
 // Fixtures deterministas sin FS, procesos, red ni simulación de un proveedor real.
@@ -82,6 +83,10 @@ export class MemorySessionsPort implements MageSessionsPort {
   async askCreator(input: AskCreatorInput): Promise<AskCreatorOutput> {
     this.questions.push({ ...input });
     return { receipt: 'accepted' };
+  }
+  async getUsage(input: { readonly accountIds: readonly string[] }): Promise<readonly UsageAccountEntry[]> {
+    const wanted = new Set(input.accountIds);
+    return (this.options.usage ?? []).filter((entry) => wanted.has(entry.accountId)).map((entry) => structuredClone(entry));
   }
   private findSession(conversationId: string): MemorySession {
     const session = this.sessions.get(conversationId);

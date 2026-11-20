@@ -13,12 +13,15 @@ import { resolveDelegatedSettings } from './delegatedSettings';
 import type { DelegatedSettings, SessionSettings } from './delegatedSettings';
 import type { DelegationLog, DelegationView } from './delegationLog';
 import { sessionResultMessage } from '@shared/systemWrappers';
+import type { UsageInfo } from '@shared/usage';
+import { failedUsageEntry, usageEntryOf } from './accountUsage';
+import type { UsageAccount } from './accountUsage';
 import { MagePolicyError, MageValidationError } from './errors';
 import { needsLaunchCard } from './launchCard';
 import type { CreatorFacts } from './launchCard';
 import type { LaunchChoice, PendingLaunches } from './pendingLaunches';
 import { MAX_SESSION_TITLE_CHARS } from './schemas';
-import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreatedBy, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput } from './types';
+import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreatedBy, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput, UsageAccountEntry } from './types';
 import type { CreateSessionCommand, CreationRequest, CreationTarget, MageSessionsPort, SessionMetadata } from './sessionsPort';
 
 // El puerto REAL del MCP en main: UNO por conexión, con la sesión que llama ya resuelta. Solo ve a sus
@@ -51,6 +54,13 @@ export interface HostSessionsPortDeps {
   // Las sesiones que esperan a que el usuario las lance (una para todas las conexiones).
   readonly pending: PendingLaunches;
   readonly newId: () => string;
+  // Cuentas con su forma de pago y el uso de cada una (`usageOfAccount` de main: lanza si no se puede leer).
+  readonly usage: UsageSource;
+}
+
+export interface UsageSource {
+  readonly accounts: () => readonly UsageAccount[];
+  readonly read: (accountId: string) => Promise<UsageInfo | null>;
 }
 
 // Lo que recibe la creadora cuando el usuario descarta la tarjeta (lo lee el modelo: castellano, como el resto).
@@ -135,6 +145,21 @@ export class HostSessionsPort implements MageSessionsPort {
     if (view === null) throw new MagePolicyError(`not_delegated: ${caller.conversationId}`);
     if (log.recordQuestion(view.child.sessionId, input.text) === 'creator_closed') throw new MagePolicyError(`creator_closed: ${view.child.creatorConversationId}`);
     return { receipt: 'accepted' };
+  }
+
+  // Una cuenta que falla al leerse sale con su error y sin ventanas; las demás no se enteran. Orden: el pedido.
+  async getUsage(input: { readonly accountIds: readonly string[] }): Promise<readonly UsageAccountEntry[]> {
+    const known = new Map(this.deps.usage.accounts().map((account) => [account.id, account]));
+    const wanted = input.accountIds.flatMap((accountId) => known.get(accountId) ?? []);
+    return Promise.all(wanted.map((account) => this.usageOf(account)));
+  }
+
+  private async usageOf(account: UsageAccount): Promise<UsageAccountEntry> {
+    try {
+      return usageEntryOf(account, await this.deps.usage.read(account.id));
+    } catch (error) {
+      return failedUsageEntry(account, error);
+    }
   }
 
   // Modelo, esfuerzo y modo con que nacería: lo pedido (o lo elegido en la tarjeta) validado contra el catálogo de la cuenta.
@@ -329,6 +354,7 @@ export class ExternalSessionsPort implements MageSessionsPort {
   send(): Promise<never> { return reject(); }
   cancel(): Promise<never> { return reject(); }
   askCreator(): Promise<never> { return reject(); }
+  getUsage(): Promise<never> { return reject(); }
 }
 function reject(): Promise<never> {
   return Promise.reject(new MagePolicyError('mage_external_caller: las herramientas de Mage solo funcionan desde una sesión lanzada por Mage'));

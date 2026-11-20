@@ -60,16 +60,22 @@ afterEach(async () => {
 });
 
 describe('Mage MCP server', () => {
-  it('listTools_conexionReal_sieteHerramientasConAmbosEsquemas', async () => {
+  it('listTools_conexionReal_ochoHerramientasConAmbosEsquemas', async () => {
     const { client } = await connect();
     const result = await client.listTools();
-    expect(result.tools.map((tool) => tool.name).sort()).toEqual(['mage_ask_creator', 'mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_list_sessions', 'mage_read_result', 'mage_send']);
+    expect(result.tools.map((tool) => tool.name).sort()).toEqual(['mage_ask_creator', 'mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_get_usage', 'mage_list_sessions', 'mage_read_result', 'mage_send']);
     for (const tool of result.tools) {
       expect(tool.inputSchema.type).toBe('object');
       expect(tool.inputSchema.additionalProperties).toBe(false);
       expect(tool.outputSchema?.type).toBe('object');
     }
-    expect(client.getServerVersion()).toEqual({ name: 'mage', version: '2' });
+    expect(client.getServerVersion()).toEqual({ name: 'mage', version: '3' });
+  });
+  it('initialize_instrucciones_recomiendanMirarElUsoYReanudar', async () => {
+    const { client } = await connect();
+    const instructions = client.getInstructions() ?? '';
+    expect(instructions).toContain('mage_get_usage');
+    expect(instructions).toContain('resumeOnReset: true');
   });
   it('initialize_instrucciones_pidenModeloYEsfuerzoSinElUsuario', async () => {
     const { client } = await connect();
@@ -141,6 +147,38 @@ describe('Mage MCP server', () => {
     const result = await call('ask_creator', { requestId: REQUEST, text: '' });
     expect(result.isError).toBe(true);
     expect(port.questions).toEqual([]);
+  });
+  describe('mage_get_usage', () => {
+    const window5h = { percent: 42, resetsAt: '2026-11-19T15:00:00.000Z' };
+    const entry = (accountId: string) => ({ accountId, provider: 'claude', name: accountId, billing: 'subscription' as const, fiveHour: window5h, weekly: { percent: 7, resetsAt: null } });
+    const withUsage = () => new MemorySessionsPort({ targets: [], now: () => NOW, newConversationId: () => 'x', usage: [entry('a'), entry('b')] });
+    it('getUsage_sinAccountId_devuelveLasCuentasDelAlcance', async () => {
+      const { call } = await connect({ port: withUsage(), scope: { accountIds: ['a'] } });
+      const result = await call('get_usage');
+      expect(result.structuredContent).toEqual({ accounts: [entry('a')] });
+    });
+    it('getUsage_cuentaFueraDelAlcance_scopeDenied', async () => {
+      const { call } = await connect({ port: withUsage(), scope: { accountIds: ['a'] } });
+      expect(JSON.stringify(await call('get_usage', { accountId: 'b' }))).toContain('scope_denied');
+    });
+    it('getUsage_cuentaDelAlcance_soloEsa', async () => {
+      const { call } = await connect({ port: withUsage(), scope: { accountIds: ['a', 'b'] } });
+      expect((await call('get_usage', { accountId: 'b' })).structuredContent).toEqual({ accounts: [entry('b')] });
+    });
+    it('getUsage_cuentaDelAlcanceQueElPuertoNoConoce_unknownAccount', async () => {
+      const { call } = await connect({ port: withUsage(), scope: { accountIds: ['a', 'zzz'] } });
+      expect(JSON.stringify(await call('get_usage', { accountId: 'zzz' }))).toContain('unknown_account: zzz');
+    });
+    it('getUsage_porcentajeNoEntero_noPasaElContrato', async () => {
+      const port = new MemorySessionsPort({ targets: [], now: () => NOW, newConversationId: () => 'x', usage: [{ ...entry('a'), fiveHour: { percent: 42.5, resetsAt: null } }] });
+      const { call } = await connect({ port, scope: { accountIds: ['a'] } });
+      expect((await call('get_usage')).isError).toBe(true);
+    });
+    it('getUsage_esSoloLectura_noGastaIdempotencia', async () => {
+      const { call } = await connect({ port: withUsage(), scope: { accountIds: ['a'] } });
+      const first = await call('get_usage');
+      expect(await call('get_usage')).toEqual(first);
+    });
   });
   it('callTool_requestIdTexto_createAceptado', async () => {
     const { call } = await connect();

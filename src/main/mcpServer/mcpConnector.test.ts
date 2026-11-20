@@ -11,7 +11,7 @@ import { MemorySessionsPort } from './memorySessionsPort';
 const NOW = '2026-11-03T12:00:00.000Z';
 const REQUEST = '11111111-1111-4111-8111-111111111111';
 const CREDENTIAL = 'ab'.repeat(32);
-const TOOLS = ['mage_ask_creator', 'mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_list_sessions', 'mage_read_result', 'mage_send'];
+const TOOLS = ['mage_ask_creator', 'mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_get_usage', 'mage_list_sessions', 'mage_read_result', 'mage_send'];
 
 // El lado cliente: lo que el cliente envía entra por `receive` del túnel y lo que el túnel emite llega al cliente.
 class BridgeTransport implements Transport {
@@ -114,7 +114,7 @@ describe('createMcpConnector', () => {
     expect(browserFor).toHaveBeenCalledTimes(1);
   });
 
-  it('open_unknownCallerWithBrowser_sevenToolsNoBrowserFor', async () => {
+  it('open_unknownCallerWithBrowser_sessionToolsNoBrowserFor', async () => {
     const browserFor = vi.fn(() => ({}) as BrowserToolsPort);
     const client = await connect(makeDeps({ browserFor }), 'ff'.repeat(32));
 

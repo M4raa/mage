@@ -7,7 +7,7 @@ import type { ScopeSnapshot } from './scope';
 import type { MageSessionsPort, SessionMetadata } from './sessionsPort';
 import { createResultPage } from './resultPage';
 import * as schemas from './schemas';
-import type { AskCreatorInput, CancelInput, CreateInput, ListInput, ReadInput, SendInput, StatusInput } from './types';
+import type { AskCreatorInput, CancelInput, CreateInput, ListInput, ReadInput, SendInput, StatusInput, UsageInput } from './types';
 
 export interface HandlerContext {
   readonly port: MageSessionsPort;
@@ -80,6 +80,15 @@ export class MageToolHandlers {
       const result = await callPort('askCreator', () => this.context.port.askCreator(input));
       return schemas.askCreatorOutputSchema.parse({ receipt: result.receipt });
     });
+  }
+  // Solo lectura: sin idempotencia. La cuenta se valida contra el alcance igual que al crear una sesión.
+  async usage(input: UsageInput) {
+    const { port, scope } = this.context;
+    if (input.accountId !== undefined && !scope.accountIds.has(input.accountId)) scopeDenied();
+    const accountIds = input.accountId === undefined ? [...scope.accountIds] : [input.accountId];
+    const accounts = await callPort('getUsage', () => port.getUsage({ accountIds }));
+    if (input.accountId !== undefined && accounts.length === 0) throw new MagePolicyError(`unknown_account: ${input.accountId}`);
+    return schemas.usageOutputSchema.parse({ accounts });
   }
   private async authorize(conversationId: string): Promise<void> {
     const session = await callPort('getSession', () => this.context.port.getSession(conversationId));

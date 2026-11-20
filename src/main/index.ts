@@ -4758,6 +4758,10 @@ export function createHostSessionsPort(callerSessionId: string): HostSessionsPor
     creatorFacts: () => creatorFactsOf(callerSessionId, conversationId),
     pending: pendingLaunches,
     newId: randomUUID,
+    usage: {
+      accounts: () => listAllAccounts().map((account) => ({ id: account.configDir, provider: account.providerId, name: account.name, billing: account.authKind })),
+      read: usageOfAccount,
+    },
   });
 }
 
