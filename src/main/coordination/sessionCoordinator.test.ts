@@ -760,6 +760,16 @@ describe('SessionCoordinator — cierre y segundo plano en main (F2.4)', () => {
     expect(h.sessions.stop).toHaveBeenCalledWith(id);
   });
 
+  it('closeByMage_avisaAntesDeParar', () => {
+    const h = harness();
+    const id = h.create();
+
+    h.coordinator.closeByMage(id);
+
+    expect(h.received.at(-1)!.event).toEqual({ kind: 'closed_by_mage' });
+    expect(h.sessions.stop).toHaveBeenCalledWith(id);
+  });
+
   it('stop_enSegundoPlano_cancelaLaCaducidad', () => {
     const h = harness();
     const id = h.create();

@@ -3074,9 +3074,8 @@ const delegatedCloser = new DelegatedCloser({
     return () => clearTimeout(timer);
   },
   retire: (sessionId) => delegationLog.retire(sessionId),
-  close: (sessionId) => { sessionCoordinator.stop(sessionId); adoptableSessions.remove(sessionId); },
+  close: (sessionId) => { sessionCoordinator.closeByMage(sessionId); adoptableSessions.remove(sessionId); },
   excludeFromKeepAlive: (sessionId) => sessionCoordinator.excludeFromKeepAlive(sessionId),
-  hasWindowClient: (sessionId) => windowAttachments.isAttachedAnywhere(sessionId),
   log: logBus.loggerFor('engine'),
 });
 // «Continuar al restablecerse» (solo Claude por suscripción): el booleano vive en el coordinador; esto programa el «continúa».

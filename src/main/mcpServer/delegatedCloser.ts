@@ -27,11 +27,10 @@ export interface DelegatedCloserDeps {
   readonly setTimer: (fn: () => void, ms: number) => () => void;
   // Marca la sesión como cerrada a propósito (antes de pararla) para que cuente como terminada y un envío la reabra.
   readonly retire: (sessionId: string) => void;
+  // Para la sesión y avisa a sus clientes (la pestaña que la tenga abierta se entera y queda lista para reabrirla).
   readonly close: (sessionId: string) => void;
   // Una sesión que se cierra sola no gasta peticiones en mantener caliente su caché.
   readonly excludeFromKeepAlive: (sessionId: string) => void;
-  // Una ventana la tiene abierta: la está usando el usuario, no se le cierra por debajo.
-  readonly hasWindowClient: (sessionId: string) => boolean;
   readonly log: SessionLogFn;
 }
 
@@ -82,8 +81,7 @@ export class DelegatedCloser {
   private fire(sessionId: string, turn: { readonly onDone: OnDone; readonly finishedAtMs: number }): void {
     this.timers.delete(sessionId);
     if (!closeAfterDone({ ...turn, resultDelivered: true, now: this.deps.now() })) return;
-    // Con una ventana encima no se cierra; se vuelve a mirar dentro de otro plazo.
-    if (this.deps.hasWindowClient(sessionId)) return this.arm(sessionId, turn);
+    // Se cierra aunque una pestaña la tenga abierta (las subsesiones se abren en pestaña al crearse): la pestaña se entera.
     try {
       this.deps.retire(sessionId);
       this.deps.close(sessionId);

@@ -25,7 +25,7 @@ describe('closeAfterDone', () => {
   });
 });
 
-function setup(options: { windowClient?: boolean } = {}) {
+function setup() {
   let now = T0;
   const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
   const calls: string[] = [];
@@ -36,7 +36,6 @@ function setup(options: { windowClient?: boolean } = {}) {
     retire: vi.fn((id: string) => { calls.push(`retire:${id}`); }),
     close: vi.fn((id: string) => { calls.push(`close:${id}`); }),
     excludeFromKeepAlive: vi.fn(),
-    hasWindowClient: vi.fn(() => options.windowClient === true),
     log: vi.fn(),
   };
   const closer = new DelegatedCloser(deps);
@@ -128,18 +127,16 @@ describe('DelegatedCloser', () => {
     closer.closeNow('s1');
     expect(calls).toEqual(['retire:s1', 'close:s1']);
   });
-  it('fire_conUnaVentanaAbierta_noCierraYVuelveAMirarALos5Min', () => {
-    const { closer, deps, calls, live, advance } = setup({ windowClient: true });
+  it('fire_cumplidoElPlazo_cierraYNoVuelveAProgramarNada', () => {
+    const { closer, deps, calls, live, advance } = setup();
     closer.register('s1', 'close');
     closer.turnDone('s1', true);
     advance(CLOSE_AFTER_DONE_MS);
     live()[0]?.fn();
-    expect(calls).toEqual([]);
-    expect(live()).toHaveLength(1);
-    deps.hasWindowClient.mockReturnValue(false);
-    advance(CLOSE_AFTER_DONE_MS);
-    live()[0]?.fn();
     expect(calls).toEqual(['retire:s1', 'close:s1']);
+    // Ya no hay reintento cada 5 min por una pestaña abierta: el único temporizador fue el del cierre.
+    expect(live()).toHaveLength(0);
+    expect(deps.setTimer).toHaveBeenCalledTimes(1);
   });
   it('fire_elCierreFalla_quedaEnElLogYNoLanza', () => {
     const { closer, deps, live, advance } = setup();

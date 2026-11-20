@@ -91,29 +91,6 @@ describe('WindowAttachments', () => {
     expect(attachments.isAttached(7, 's1')).toBe(false);
   });
 
-  it('isAttachedAnywhere_cualquierVentana_true', () => {
-    const { attachments } = setup();
-    attachments.attach(makeTarget(8).target, 's1');
-
-    expect(attachments.isAttachedAnywhere('s1')).toBe(true);
-  });
-
-  it('isAttachedAnywhere_otraSesionOSinVentanas_false', () => {
-    const { attachments } = setup();
-    attachments.attach(makeTarget(8).target, 's1');
-
-    expect(attachments.isAttachedAnywhere('s2')).toBe(false);
-    expect(attachments.isAttachedAnywhere('1')).toBe(false);
-  });
-
-  it('isAttachedAnywhere_tras_soltarLaVentana_false', () => {
-    const { attachments } = setup();
-    attachments.attach(makeTarget(8).target, 's1');
-    attachments.detach(8, 's1');
-
-    expect(attachments.isAttachedAnywhere('s1')).toBe(false);
-  });
-
   it('detach_doesNotStopSession', () => {
     const { attachments, coordinator, unsubscribe } = setup();
     attachments.attach(makeTarget().target, 's1');

@@ -368,6 +368,9 @@ export type MageEvent =
   // (`blocked`: el comando denegado; null si lo permitió una regla). Ese permiso NO se anunció a los clientes.
   // Una sesion en segundo plano que nadie reclamo caduca (F2.4): main la para justo despues de este evento.
   | { readonly kind: 'background_expired' }
+  // Main cierra una subsesion terminada (o a peticion de su creadora) y la para justo despues de este evento: la pestaña
+  // que la tenga abierta suelta su estado de motor y queda lista para reabrirla con `--resume` al escribir.
+  | { readonly kind: 'closed_by_mage' }
   // Respuesta del motor a una peticion de Mage con `requestId` (rewind/fork, F4.4/F4.5): la emite el adapter al
   // reconocer la respuesta del CLI. `result` es el cuerpo TAL CUAL (su forma depende de la peticion); `error`
   // lleva el motivo cuando `ok` es false (o `process_not_running`/`process_exited` si no hubo proceso).

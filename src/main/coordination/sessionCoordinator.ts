@@ -464,6 +464,13 @@ export class SessionCoordinator {
     this.release(sessionId);
   }
 
+  // Cierre decidido por Mage (subsesion terminada o `mage_close_session`): avisa a TODOS los clientes —la pestaña que la
+  // tenga abierta incluida— y para la sesion. El aviso va antes: tras `stop` ya no queda nadie suscrito.
+  closeByMage(sessionId: string): void {
+    this.announce(sessionId, { kind: 'closed_by_mage' });
+    this.stop(sessionId);
+  }
+
   stopOwnedBy(ownerId: number): readonly string[] {
     const stopped = this.deps.sessions.stopOwnedBy(ownerId);
     for (const sessionId of stopped) this.release(sessionId);
