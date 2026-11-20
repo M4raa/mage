@@ -7,6 +7,7 @@ import {
   type ResolvedRemoteServer,
   type ResolvedStdioServer,
 } from './mcpResolved';
+import { mergeClaudeSettings } from '@shared/externalActionAsk';
 
 // Traduccion del formato neutro (`mcpResolved.ts`) al de cada CLI. PURO. Lo medido que sostiene cada
 // traductor esta en `spike/mcp-providers-spike.mjs` (agy 1.2.14, codex-cli 0.144.4) y en
@@ -77,8 +78,9 @@ export function toClaudeArgs(
     env = translated.env;
     args.push('--mcp-config', writeMcpConfig(`${JSON.stringify(translated.config, null, 2)}\n`));
   }
-  // UN solo `--settings`: el fragmento comun fusionado con los ajustes de arranque de la sesion (p. ej. ultracode).
-  const settings = { ...(settingsFragment ?? {}), ...extraSettings };
+  // UN solo `--settings`: el fragmento comun fusionado con los ajustes de arranque de la sesion (p. ej. ultracode o
+  // las reglas `ask` de acciones externas). Los `permissions` de los dos se mezclan: no se pierde nada del usuario.
+  const settings = mergeClaudeSettings(settingsFragment ?? {}, extraSettings);
   if (settingsFragment !== null || Object.keys(extraSettings).length > 0) args.push('--settings', JSON.stringify(settings));
   return { args, env };
 }

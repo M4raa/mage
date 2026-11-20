@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeAdapter } from './claudeAdapter';
 import { normalizeRawEvent } from './normalize';
 import { localized } from '@shared/i18n/localizedText';
+import { EXTERNAL_ACTION_ASK_RULES } from '@shared/externalActionAsk';
 
 const launch = { sessionId: 's1', accountDir: '/home/u/.claude-p', model: 'haiku', cwd: '/proj' };
 
@@ -349,7 +350,8 @@ describe('ClaudeAdapter', () => {
 
       const plan = withWriter.buildSpawnPlan({ ...launch, shared });
 
-      expect(plan.args.slice(-4)).toEqual(['--mcp-config', '/gen/claude-p.mcp.json', '--settings', '{"hooks":{}}']);
+      expect(plan.args.slice(-4, -1)).toEqual(['--mcp-config', '/gen/claude-p.mcp.json', '--settings']);
+      expect(JSON.parse(plan.args.at(-1)!)).toEqual({ hooks: {}, permissions: { ask: [...EXTERNAL_ACTION_ASK_RULES] } });
       expect(written[0]![0]).toBe(launch.accountDir);
       // Ni en el fichero ni en la linea de comandos: el valor viaja en el entorno del hijo y el CLI
       // expande la referencia (medido en 2.1.286).
@@ -375,20 +377,46 @@ describe('ClaudeAdapter', () => {
     it('buildSpawnPlan_ultracode_settingsConUltracode', () => {
       const plan = adapter.buildSpawnPlan({ ...launch, ultracode: true });
 
-      expect(plan.args.slice(-2)).toEqual(['--settings', '{"ultracode":true}']);
+      expect(plan.args.at(-2)).toBe('--settings');
+      expect(JSON.parse(plan.args.at(-1)!)).toEqual({ ultracode: true, permissions: { ask: [...EXTERNAL_ACTION_ASK_RULES] } });
       expect(plan.args.filter((arg) => arg === '--settings')).toHaveLength(1);
     });
 
     it('buildSpawnPlan_sinUltracode_igualQueAntes', () => {
       expect(adapter.buildSpawnPlan({ ...launch, ultracode: false }).args).toEqual(adapter.buildSpawnPlan(launch).args);
-      expect(adapter.buildSpawnPlan(launch).args).not.toContain('--settings');
+      expect(adapter.buildSpawnPlan({ ...launch, permissionMode: 'bypassPermissions' }).args).not.toContain('--settings');
     });
 
     it('buildSpawnPlan_sinSharedConfigArgs_noAnadeNiMcpConfigNiSettings', () => {
-      const plan = adapter.buildSpawnPlan(launch);
+      const plan = adapter.buildSpawnPlan({ ...launch, permissionMode: 'bypassPermissions' });
 
       expect(plan.args).not.toContain('--mcp-config');
       expect(plan.args).not.toContain('--settings');
+    });
+
+    it('buildSpawnPlan_auto_settingsConLasReglasDeAccionesExternas', () => {
+      const plan = adapter.buildSpawnPlan({ ...launch, permissionMode: 'auto' });
+
+      expect(plan.args.slice(plan.args.indexOf('--permission-mode'), plan.args.indexOf('--permission-mode') + 2)).toEqual(['--permission-mode', 'auto']);
+      expect(JSON.parse(plan.args[plan.args.indexOf('--settings') + 1]!)).toEqual({ permissions: { ask: [...EXTERNAL_ACTION_ASK_RULES] } });
+    });
+
+    it('buildSpawnPlan_bypassPermissions_sinReglasDeAccionesExternas', () => {
+      const shared = { mcpServers: [], settingsFragment: { permissions: { ask: ['Bash(rm:*)'] } }, claudeAiConnectors: true };
+
+      const plan = adapter.buildSpawnPlan({ ...launch, permissionMode: 'bypassPermissions', shared });
+
+      expect(JSON.parse(plan.args[plan.args.indexOf('--settings') + 1]!)).toEqual({ permissions: { ask: ['Bash(rm:*)'] } });
+    });
+
+    it('buildSpawnPlan_askDelUsuarioYAuto_lasDosSinRepetir', () => {
+      const shared = { mcpServers: [], settingsFragment: { permissions: { ask: ['Bash(rm:*)', 'Artifact'], deny: ['WebFetch'] } }, claudeAiConnectors: true };
+
+      const plan = adapter.buildSpawnPlan({ ...launch, permissionMode: 'auto', shared });
+
+      const permissions = JSON.parse(plan.args[plan.args.indexOf('--settings') + 1]!).permissions;
+      expect(permissions.deny).toEqual(['WebFetch']);
+      expect(permissions.ask).toEqual(['Bash(rm:*)', 'Artifact', ...EXTERNAL_ACTION_ASK_RULES.filter((rule) => rule !== 'Artifact')]);
     });
   });
 });

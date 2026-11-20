@@ -5,6 +5,7 @@ import { buildUserContentBlocks } from '@shared/imageRefs';
 import type { MageEvent, PermissionDecision, PermissionScope } from '@shared/events';
 import { localized } from '@shared/i18n/localizedText';
 import { isUuid } from '@shared/sessionInput';
+import { withExternalActionAsk } from '@shared/externalActionAsk';
 import { parseElicitationRequest, type ElicitationAnswer } from '@shared/elicitation';
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
@@ -133,7 +134,9 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (appended.length > 0) args.push('--append-system-prompt', appended);
     // Lo comun (MCP compartidos y extensiones, hooks y permisos) traducido a flags de Claude.
     // Ultracode (medido en 2.1.319: `--settings {"ultracode":true}` hace que el CLI inyecte `ultra_effort_enter`).
-    const shared = claudeSharedLaunch(params.shared, params.accountDir, this.writeMcpConfig, params.ultracode === true ? { ultracode: true } : {});
+    // Acciones externas (publicar, push, escribir en GitHub): reglas `ask` en todos los modos salvo «Omitir permisos».
+    const launchSettings = withExternalActionAsk(params.ultracode === true ? { ultracode: true } : {}, params.permissionMode);
+    const shared = claudeSharedLaunch(params.shared, params.accountDir, this.writeMcpConfig, launchSettings);
     args.push(...shared.args);
     // Env del hijo: se fija la cuenta y se SANEA (scrubAgentEnv), que borra toda credencial heredada. El
     // invariante de facturacion vive en un solo sitio: ver src/main/os/agentEnv.ts. Segunda excepcion
