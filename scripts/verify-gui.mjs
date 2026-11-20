@@ -6125,6 +6125,8 @@ const CHECKS = [
     // contrato de `reconcileLayoutWithRegistry` y lo que evita el "residuo de maquina" de otras rondas.
     name: '2.9.b: las tres vistas nuevas montan y no roban el panel activo',
     async run(page) {
+      // Van escondidos por defecto: se colocan los tres (sin dejar ninguno abierto) y se mide como antes.
+      await revealHiddenPanels(page, ['instructions', 'commands', 'agents']);
       const iconos = [ui('menu.panel.instructions'), ui('menu.panel.commands'), ui('menu.panel.agents')];
       const antes = await page.evaluate(
         (labels) => ({
@@ -6478,6 +6480,7 @@ const CHECKS = [
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
       });
       await openTemporaryConversation(page);
+      await revealHiddenPanels(page, ['permissions']);
       const icon = page.getByRole('button', { name: ui('chat.permission.title'), exact: true }).first();
       const abiertoAntes = (await icon.getAttribute('aria-pressed')) === 'true';
       if (!abiertoAntes) {
@@ -6590,6 +6593,7 @@ const CHECKS = [
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
       });
       await openTemporaryConversation(page);
+      await revealHiddenPanels(page, ['permissions']);
       const icon = page.getByRole('button', { name: ui('chat.permission.title'), exact: true }).first();
       const abiertoAntes = (await icon.getAttribute('aria-pressed')) === 'true';
       if (!abiertoAntes) {
@@ -7695,6 +7699,7 @@ const CHECKS = [
         });
       });
       await page.waitForTimeout(CONFIG.settleMs * 2);
+      await revealHiddenPanels(page, ['logs']);
 
       const boton = page.getByRole('button', { name: 'Logs', exact: true }).first();
       const hayPanel = await boton.isVisible().catch(() => false);
@@ -8320,6 +8325,7 @@ const CHECKS = [
       }
 
       // 3) En el PANEL nuevo: las mismas, sin tener que scrollear el hilo.
+      await revealHiddenPanels(page, ['artifacts']);
       const boton = page.getByRole('button', { name: 'Artifacts', exact: true }).first();
       const hayPanel = await boton.isVisible().catch(() => false);
       let enElPanel = null;
@@ -8429,6 +8435,7 @@ const CHECKS = [
         });
       });
       await page.waitForTimeout(CONFIG.settleMs * 2);
+      await revealHiddenPanels(page, ['logs', 'mcp']);
 
       const medido = { paneles: {} };
       const contextName = ui('menu.panel.context');
@@ -8545,6 +8552,7 @@ const CHECKS = [
     async run(page) {
       const previo = page.viewportSize();
       const previoLayout = await page.evaluate(() => JSON.parse(JSON.stringify(window.__mageDev.panelStore.getState().layout)));
+      await revealHiddenPanels(page, ['usage']); // sin él, la zona 'b' del borde izquierdo no tiene ningún panel
       await page.setViewportSize({ width: 900, height: 600 });
       await page.waitForTimeout(CONFIG.settleMs * 3);
       // Las dos zonas del borde izquierdo abiertas y un reparto MAS ALTO que la ventana entera.
@@ -8677,6 +8685,7 @@ const CHECKS = [
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, toolsByChat: s.toolsByChat };
       });
       await openTemporaryConversation(page);
+      await revealHiddenPanels(page, ['tools']);
       await page.evaluate(() => {
         const dev = window.__mageDev;
         if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
@@ -11161,6 +11170,7 @@ const CHECKS = [
     name: 'Q03: aviso de permiso en el icono del dock',
     state: { tabs: 1 },
     async run(page) {
+      await revealHiddenPanels(page, ['permissions']);
       const previo = await page.evaluate(() => window.__mageDev.store.getState().statusByChat);
       try {
         await page.evaluate(() => {
@@ -11276,6 +11286,7 @@ const CHECKS = [
     name: 'Q10: el icono de Permisos late con un permiso pendiente',
     state: { tabs: 1 },
     async run(page) {
+      await revealHiddenPanels(page, ['permissions']);
       const previo = await page.evaluate(() => window.__mageDev.store.getState().statusByChat);
       try {
         await page.evaluate(() => {
@@ -15107,6 +15118,18 @@ function wcagContrast(first, second) {
 
 async function restoreSidebar(page, previo) {
   await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// Los paneles `defaultHidden` no están en ninguna barra en un perfil nuevo: una comprobación que mide uno
+// los coloca primero (revelar abre el último de su zona; se cierra para que el icono quede presente y la zona
+// como las comprobaciones esperan: «clic abre, clic cierra»). El layout lo restaura `runGuiCheck` al terminar.
+async function revealHiddenPanels(page, ids) {
+  await page.evaluate((lista) => {
+    const store = window.__mageDev.panelStore;
+    for (const id of lista) store.getState().revealPanelById(id);
+    for (const id of lista) if (store.getState().isPanelOpen(id)) store.getState().togglePanelById(id);
+  }, ids);
   await page.waitForTimeout(CONFIG.settleMs);
 }
 
