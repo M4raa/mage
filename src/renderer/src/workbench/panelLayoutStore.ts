@@ -92,6 +92,23 @@ function persist(layout: PanelLayoutState): void {
     .catch((err: unknown) => reportActionError(t('menu.panelLayout.saveError'), err, 'persist', 'save-failed:layout'));
 }
 
+// Coloca un panel escondido en su borde y zona por defecto y lo deja abierto (lo piden los botones que
+// abren Uso, Permisos, PR…: sin esto no harían nada). Lanza si el id no está en el registro.
+function placeFromRegistry(layout: PanelLayoutState, panelId: PanelId): PanelLayoutState {
+  const def = PANEL_REGISTRY.find((p) => p.id === panelId);
+  if (def === undefined) throw new Error(`placeFromRegistry: el panel "${panelId}" no existe en el registro`);
+  return placePanelInZone(layout, panelId, def.defaultAnchor, def.defaultZone);
+}
+
+type StoreGet = () => PanelLayoutStoreState;
+type StoreSet = (partial: Partial<PanelLayoutStoreState>) => void;
+
+function placeHidden(get: StoreGet, set: StoreSet, panelId: PanelId): void {
+  const layout = placeFromRegistry(get().layout, panelId);
+  set({ layout });
+  persist(layout);
+}
+
 export const usePanelLayoutStore = create<PanelLayoutStoreState>((set, get) => ({
   // Layout SINCRONO desde el registro (mismos defaults que hoy, §5.3 "migracion") mientras la carga
   // real por IPC esta en vuelo: el primer pintado ya reproduce el layout correcto sin esperar al main.
@@ -120,13 +137,13 @@ export const usePanelLayoutStore = create<PanelLayoutStoreState>((set, get) => (
 
   togglePanelById: (panelId) => {
     const loc = locatePanel(get().layout, panelId);
-    if (loc === undefined) return; // no deberia pasar tras reconciliar; no hay zona que alternar
+    if (loc === undefined) return placeHidden(get, set, panelId); // escondido: se coloca y se abre
     get().togglePanel(loc.anchor, loc.zone, panelId);
   },
 
   revealPanelById: (panelId) => {
     const loc = locatePanel(get().layout, panelId);
-    if (loc === undefined) return; // el panel esta escondido: no hay zona donde revelarlo
+    if (loc === undefined) return placeHidden(get, set, panelId); // escondido: se coloca y se abre
     if (get().layout.stripes[loc.anchor][loc.zone].activePanelId === panelId) return; // ya se esta viendo
     get().togglePanel(loc.anchor, loc.zone, panelId);
   },
