@@ -6050,6 +6050,46 @@ const CHECKS = [
     },
   },
   {
+    // Pantalla «Artifacts» (todos los de todas las cuentas) y visibilidad en la tarjeta del chat. Sin red ni CLI: se
+    // siembran las respuestas sustituyendo las funciones de `artifactsSource` (`window.mage` no se puede sustituir) y
+    // se devuelven en `finally`. El visor NO se abre: necesitaría red. «Cambiar en claude.ai» no se pulsa: abriría
+    // el navegador del sistema.
+    name: 'Artifacts: la pantalla lista creados y compartidos de dos cuentas y la tarjeta enseña la visibilidad',
+    state: { tabs: 1 },
+    async run(page, { runDir }) {
+      await sembrarArtifacts(page);
+      try {
+        const pantalla = await medirPantallaArtifacts(page, runDir);
+        await hydrateBlocks(page, [artifactBlock('vg-vis')]);
+        const visibilidad = page.locator('[data-artifact-visibility]');
+        await visibilidad.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const tarjeta = await page.evaluate(() => {
+          const linea = document.querySelector('[data-artifact-visibility]');
+          return {
+            audience: linea?.getAttribute('data-artifact-visibility') ?? null,
+            texto: (linea?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+            esperado: window.__mageDev.t('chat.artifact.audience.owner'),
+            enlace: linea?.querySelector('[data-artifact-change-visibility]')?.textContent?.trim() ?? null,
+            enlaceEsperado: window.__mageDev.t('chat.artifact.changeVisibility'),
+          };
+        });
+        const ok =
+          pantalla.filas.length === 2 &&
+          pantalla.filas.some((f) => f.rel === 'mine' && f.cuenta === 'vg-cuenta-a' && f.titulo === 'vg-artifact-a') &&
+          pantalla.filas.some((f) => f.rel === 'shared' && f.cuenta === 'vg-cuenta-b' && f.titulo === 'vg-artifact-b') &&
+          pantalla.etiquetasCuenta.join('|') === 'vg-cuenta-a|vg-cuenta-b' &&
+          pantalla.visorVacio &&
+          pantalla.cerrada &&
+          tarjeta.audience === 'owner' &&
+          tarjeta.texto.startsWith(tarjeta.esperado) &&
+          tarjeta.enlace === tarjeta.enlaceEsperado;
+        return { ok, detail: JSON.stringify({ pantalla, tarjeta }) };
+      } finally {
+        await restaurarArtifacts(page);
+      }
+    },
+  },
+  {
     // 2.4: sin cuenta publicadora conocida (el indice del perfil aislado esta vacio), NO puede haber un
     // "Abrir" que abriria con una cuenta arbitraria: solo "Abrir con…", que lo elige el usuario.
     name: '2.4: sin cuenta publicadora conocida, el boton ofrece "abrir con…"',
@@ -15552,6 +15592,60 @@ const REAL_ARTIFACT = {
   },
   url: 'https://claude.ai/code/artifact/477497ff-717a-4375-a39e-a47e383648a8',
 };
+
+// Pantalla «Artifacts»: siembra dos cuentas (una con un creado, otra con un compartido), la publicadora de cualquier
+// tarjeta (vg-cuenta-a) y su visibilidad (`owner`). Lo original queda en `window.__vgArtifactsOriginal`.
+async function sembrarArtifacts(page) {
+  await page.evaluate(() => {
+    const src = window.__mageDev.artifactsSource;
+    window.__vgArtifactsOriginal = { list: src.list, publisher: src.publisher, visibility: src.visibility };
+    const item = (accountId, id, rel, title, audience) => ({
+      accountId, id, kind: 'page', rel, title, openUrl: `https://claude.ai/artifact/${id}`, audience,
+      sortTime: Date.parse('2026-11-19T22:44:00Z'), external: false,
+    });
+    const page = (accountId, rel, items) => ({ ok: true, page: { accountId, rel, items, nextPageToken: null } });
+    src.list = async () => [
+      { accountId: 'vg-cuenta-a', mine: page('vg-cuenta-a', 'mine', [item('vg-cuenta-a', 'vgCreadoA', 'mine', 'vg-artifact-a', 'owner')]), shared: page('vg-cuenta-a', 'shared', []) },
+      { accountId: 'vg-cuenta-b', mine: page('vg-cuenta-b', 'mine', []), shared: page('vg-cuenta-b', 'shared', [item('vg-cuenta-b', 'vgCompartidoB', 'shared', 'vg-artifact-b', 'users')]) },
+    ];
+    src.publisher = async () => 'vg-cuenta-a';
+    src.visibility = async () => ({ audience: 'owner', openUrl: 'https://claude.ai/artifact/vgCreadoA' });
+  });
+}
+
+async function restaurarArtifacts(page) {
+  await page.evaluate(() => {
+    const original = window.__vgArtifactsOriginal;
+    if (original !== undefined) Object.assign(window.__mageDev.artifactsSource, original);
+    delete window.__vgArtifactsOriginal;
+    window.__mageDev.store.getState().closeArtifactsLibrary();
+  });
+  await page.locator('[data-artifacts-library]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+}
+
+// Abre la pantalla, mide sus filas (rel, título y cuenta de su sección) y el visor vacío, la captura y la cierra con
+// Escape (que la cierra de verdad: espera al desmontaje).
+async function medirPantallaArtifacts(page, runDir) {
+  await page.evaluate(() => window.__mageDev.store.getState().openArtifactsLibrary());
+  const filas = page.locator('[data-artifacts-library] [data-artifact-row]');
+  await filas.nth(1).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const medida = await page.evaluate(() => {
+    const raiz = document.querySelector('[data-artifacts-library]');
+    return {
+      filas: [...raiz.querySelectorAll('[data-artifact-row]')].map((fila) => ({
+        rel: fila.getAttribute('data-artifact-rel'),
+        titulo: fila.querySelector('span')?.textContent?.trim() ?? '',
+        cuenta: fila.closest('[data-artifacts-account]')?.getAttribute('data-artifacts-account') ?? null,
+      })),
+      etiquetasCuenta: [...raiz.querySelectorAll('[data-artifacts-account-label]')].map((n) => n.textContent?.trim() ?? ''),
+      visorVacio: raiz.querySelector('[data-artifacts-viewer]')?.getAttribute('data-artifacts-viewer') === 'empty',
+    };
+  });
+  await page.locator('[data-artifacts-library]').screenshot({ path: path.join(runDir, 'artifacts-pantalla-sembrada.png') });
+  await page.keyboard.press('Escape');
+  await page.locator('[data-artifacts-library]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  return { ...medida, cerrada: true };
+}
 
 // Bloque de tool que YA publico un artifact, con la forma que produce el reducer.
 function artifactBlock(id = 'a1') {
