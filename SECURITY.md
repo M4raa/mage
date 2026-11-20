@@ -31,7 +31,7 @@ las carpetas que autorices. Además toca cosas sensibles por diseño:
     opción por defecto. Sin respuesta en 2 minutos, o si Mage corre sin ventana, se rechaza. Si lo autorizas, Mage
     entrega al cliente un token propio UNA vez y guarda solo su SHA-256, con el nombre, el tipo, la fecha de alta y la
     del último uso, en `<datos de Mage>/host-clients.json`. La terminal guarda el suyo en
-    `<datos de Mage>/run/client-token`, legible solo por tu usuario. Cualquiera se revoca en Configuración › Hooks y
+    `<datos de Mage>/run/client-token`, legible solo por tu usuario. Ojo: «tu usuario» incluye a los agentes que ejecutan comandos en tu máquina; si sospechas que uno lo ha leído, revoca ese cliente. Cualquiera se revoca en Configuración › Hooks y
     permisos › Clientes emparejados: revocar corta en el acto las conexiones abiertas con ese token, y el cliente
     tendrá que volver a pedir permiso.
 
