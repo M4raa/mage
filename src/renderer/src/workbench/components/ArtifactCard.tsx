@@ -1,9 +1,52 @@
 import { useEffect, useState } from 'react';
+import type { ArtifactVisibility } from '@shared/artifactLibrary';
 import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import type { ArtifactCard as ArtifactCardModel } from '../artifactView';
+import { audienceLabel } from '../artifactsLibraryModel';
+import { artifactsSource } from '../artifactsSource';
 import { useT } from '../../i18n/uiLanguage';
 import { describeError } from '../describeError';
+
+// Quién puede verlo, de la lista de artifacts de la cuenta que lo publicó (main). Si no consta o falla, la tarjeta
+// sale como siempre: es un dato de más, no un fallo de la tarjeta (se deja en la consola).
+function useVisibility(url: string, publisher: string): ArtifactVisibility | null {
+  const [visibility, setVisibility] = useState<ArtifactVisibility | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    artifactsSource
+      .visibility({ accountId: publisher, url })
+      .then((found) => !cancelled && setVisibility(found))
+      .catch((err: unknown) => console.warn('No se pudo saber la visibilidad del artifact', describeError(err)));
+    return () => {
+      cancelled = true;
+    };
+  }, [url, publisher]);
+  return visibility;
+}
+
+// «Solo tú · Cambiar en claude.ai». Mage no la cambia (sería escribir en claude.ai): abre su página.
+function VisibilityLine({ url, publisher, onError }: { readonly url: string; readonly publisher: string; readonly onError: (message: string) => void }): React.JSX.Element | null {
+  const t = useT();
+  const visibility = useVisibility(url, publisher);
+  if (visibility === null) return null;
+  const label = audienceLabel(t, visibility.audience);
+  return (
+    <span data-artifact-visibility={visibility.audience} className="flex items-center gap-[6px] text-[10.5px] text-mg-sec2">
+      <Icon name="eye" size={11} />
+      <span aria-label={t('chat.artifact.visibilityAria', { audience: label })}>{label}</span>
+      {visibility.openUrl.length > 0 && (
+        <button
+          data-artifact-change-visibility
+          onClick={() => void window.mage.openExternal(visibility.openUrl).catch((err: unknown) => onError(describeError(err)))}
+          className="text-mg-focus underline-offset-2 hover:underline"
+        >
+          {t('chat.artifact.changeVisibility')}
+        </button>
+      )}
+    </span>
+  );
+}
 
 // Tarjeta de un artifact publicado (2.4). Lo que resuelve, y que un navegador no puede: abrirlo con la
 // MISMA cuenta que lo publico, aunque la conversacion se este mirando con otra.
@@ -22,8 +65,8 @@ export function ArtifactCard({ card }: { readonly card: ArtifactCardModel }): Re
 
   useEffect(() => {
     let cancelled = false;
-    void window.mage
-      .lookupArtifactPublisher(card.url)
+    void artifactsSource
+      .publisher(card.url)
       .then((accountDir) => {
         if (!cancelled) setPublisher(accountDir);
       })
@@ -69,6 +112,7 @@ export function ArtifactCard({ card }: { readonly card: ArtifactCardModel }): Re
             <span className="truncate font-mono text-[10px] text-mg-muted" title={card.url}>
               {card.url}
             </span>
+            {typeof publisher === 'string' && publisher.length > 0 && <VisibilityLine url={card.url} publisher={publisher} onError={setError} />}
           </div>
         </div>
 

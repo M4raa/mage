@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { AccountInfo } from '@shared/accounts';
-import type { AccountArtifacts, ArtifactKind, ArtifactPage, ArtifactPageResult, ArtifactRel, ArtifactSummary } from '@shared/artifactLibrary';
+import type { AccountArtifacts, ArtifactKind, ArtifactPage, ArtifactPageResult, ArtifactRel, ArtifactSummary, ArtifactVisibility } from '@shared/artifactLibrary';
 import { foreignText, UserFacingError } from '@shared/i18n/localizedText';
 import type { FrameClient } from './frameClient';
 
@@ -98,6 +98,24 @@ function claudeUrlOrEmpty(value: string | null | undefined): string {
   return url.protocol === 'https:' && url.host === OPEN_URL_HOST ? url.href : '';
 }
 
+// URL de un artifact sin query, fragmento ni barra final, para compararla.
+export function normalizeArtifactUrl(url: string): string {
+  if (!URL.canParse(url)) return url.trim();
+  const parsed = new URL(url);
+  return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
+}
+
+// La fila de una tarjeta del chat: por `open_url` normalizada (la forma que publica el CLI 2.1.319,
+// `claude.ai/artifact/<id corto>`) o, para la forma vieja `claude.ai/code/artifact/<uuid>`, por el id de la fila
+// (ese uuid ES el id, medido).
+export function findArtifactByUrl(items: readonly ArtifactSummary[], url: string): ArtifactSummary | null {
+  const target = normalizeArtifactUrl(url);
+  const lastSegment = target.slice(target.lastIndexOf('/') + 1);
+  const matches = (item: ArtifactSummary): boolean =>
+    (item.openUrl.length > 0 && normalizeArtifactUrl(item.openUrl) === target) || (lastSegment.length > 0 && item.id === lastSegment);
+  return items.find(matches) ?? null;
+}
+
 function epochMsOrNull(value: string | null | undefined): number | null {
   if (typeof value !== 'string') return null;
   const ms = Date.parse(value);
@@ -135,6 +153,17 @@ export class ArtifactsService {
     const page = await this.fetchPage(accountId, rel, null);
     this.cache.set(key, { at: nowMs, page });
     return page;
+  }
+
+  // Visibilidad de un artifact publicado por esta cuenta, de su lista `mine` (la primera pagina, con su cache).
+  // null si no esta en ella: la tarjeta sale entonces como siempre, sin visibilidad.
+  // ponytail: solo la primera pagina y sin saltar la cache; un artifact recien publicado dentro de los 60 s de una
+  // lista ya pedida no sale hasta que caduca. Pedir de nuevo al no encontrarlo lo arreglaria a costa de una peticion
+  // por cada tarjeta vieja.
+  async visibilityOf(accountId: string, url: string): Promise<ArtifactVisibility | null> {
+    const page = await this.page(accountId, 'mine', { pageToken: null, refresh: false });
+    const found = findArtifactByUrl(page.items, url);
+    return found === null ? null : { audience: found.audience, openUrl: found.openUrl };
   }
 
   // Las dos listas de todas las cuentas. Cada lista de cada cuenta falla sola.

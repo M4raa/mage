@@ -3,13 +3,13 @@
 // credenciales de CUALQUIER ruta y usara ese token (mismo motivo que la guarda de `UsageGet`).
 import { z } from 'zod';
 import { IpcChannel } from '@shared/ipc';
-import type { AccountArtifacts, ArtifactPage } from '@shared/artifactLibrary';
+import type { AccountArtifacts, ArtifactPage, ArtifactVisibility } from '@shared/artifactLibrary';
 import { ARTIFACT_ID_PATTERN, type ArtifactsService } from './artifactsService';
 import type { ArtifactViewer, OpenedArtifact } from './artifactViewer';
 
 export interface ArtifactsIpcDeps {
   readonly handle: (channel: string, listener: (event: unknown, arg: unknown) => unknown) => void;
-  readonly service: Pick<ArtifactsService, 'page' | 'listAll'>;
+  readonly service: Pick<ArtifactsService, 'page' | 'listAll' | 'visibilityOf'>;
   readonly viewer: Pick<ArtifactViewer, 'open'>;
   // Las cuentas con lista, en este momento (las cuentas cambian mientras Mage corre).
   readonly accountIds: () => readonly string[];
@@ -30,6 +30,10 @@ const moreSchema = z
   })
   .strict();
 
+const MAX_URL_CHARS = 2048;
+const visibilitySchema = z
+  .object({ accountId: z.string().min(1).max(MAX_ACCOUNT_CHARS), url: z.string().min(1).max(MAX_URL_CHARS) })
+  .strict();
 const openSchema = z
   .object({ accountId: z.string().min(1).max(MAX_ACCOUNT_CHARS), id: z.string().regex(ARTIFACT_ID_PATTERN) })
   .strict();
@@ -60,6 +64,13 @@ export function moreArtifacts(deps: ArtifactsIpcDeps, raw: unknown): Promise<Art
   return deps.service.page(accountId, rel, { pageToken, refresh: false });
 }
 
+// Una cuenta sin lista (la de clave de API que publico algo) no es un error: no hay visibilidad que enseñar.
+export async function artifactVisibility(deps: ArtifactsIpcDeps, raw: unknown): Promise<ArtifactVisibility | null> {
+  const { accountId, url } = parseWith(visibilitySchema, raw);
+  if (!deps.accountIds().includes(accountId)) return null;
+  return deps.service.visibilityOf(accountId, url);
+}
+
 export function openArtifactInViewer(deps: ArtifactsIpcDeps, raw: unknown): Promise<OpenedArtifact> {
   const { accountId, id } = parseWith(openSchema, raw);
   requireArtifactAccount(deps, accountId);
@@ -70,4 +81,5 @@ export function registerArtifactsIpc(deps: ArtifactsIpcDeps): void {
   deps.handle(IpcChannel.ArtifactsList, (_event, arg) => listArtifacts(deps, arg));
   deps.handle(IpcChannel.ArtifactsMore, (_event, arg) => moreArtifacts(deps, arg));
   deps.handle(IpcChannel.ArtifactsOpen, (_event, arg) => openArtifactInViewer(deps, arg));
+  deps.handle(IpcChannel.ArtifactsVisibility, (_event, arg) => artifactVisibility(deps, arg));
 }

@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import { listArtifacts, moreArtifacts, openArtifactInViewer, requireArtifactAccount, type ArtifactsIpcDeps } from './artifactsIpc';
+import { artifactVisibility, listArtifacts, moreArtifacts, openArtifactInViewer, requireArtifactAccount, type ArtifactsIpcDeps } from './artifactsIpc';
 
 const ACCOUNT = '/home/u/.claude';
 
 function deps(overrides: Partial<ArtifactsIpcDeps> = {}): ArtifactsIpcDeps {
   return {
     handle: vi.fn(),
-    service: { page: vi.fn(async () => ({ accountId: ACCOUNT, rel: 'mine' as const, items: [], nextPageToken: null })), listAll: vi.fn(async () => []) },
+    service: {
+      page: vi.fn(async () => ({ accountId: ACCOUNT, rel: 'mine' as const, items: [], nextPageToken: null })),
+      listAll: vi.fn(async () => []),
+      visibilityOf: vi.fn(async () => ({ audience: 'owner', openUrl: 'https://claude.ai/artifact/x' })),
+    },
     viewer: { open: vi.fn(async () => ({ title: 't' })) },
     accountIds: () => [ACCOUNT],
     ...overrides,
@@ -63,6 +67,33 @@ describe('artifactsIpc', () => {
   it('openArtifactInViewer_unsafeIdOrUnknownAccount_throws', () => {
     expect(() => openArtifactInViewer(deps(), { accountId: ACCOUNT, id: 'evil.com/x' })).toThrow(/inválida/);
     expect(() => openArtifactInViewer(deps(), { accountId: '/etc', id: 'abc' })).toThrow(/\/etc/);
+  });
+
+  it('artifactVisibility_listedAccount_asksTheService', async () => {
+    // Arrange
+    const d = deps();
+
+    // Act
+    const visibility = await artifactVisibility(d, { accountId: ACCOUNT, url: 'https://claude.ai/artifact/x' });
+
+    // Assert
+    expect(visibility).toEqual({ audience: 'owner', openUrl: 'https://claude.ai/artifact/x' });
+  });
+
+  it('artifactVisibility_accountWithoutList_isNullWithoutAsking', async () => {
+    // Arrange
+    const d = deps();
+
+    // Act
+    const visibility = await artifactVisibility(d, { accountId: '/home/u/.claude-api', url: 'https://claude.ai/artifact/x' });
+
+    // Assert
+    expect(visibility).toBeNull();
+    expect(d.service.visibilityOf).not.toHaveBeenCalled();
+  });
+
+  it('artifactVisibility_badParams_rejects', async () => {
+    await expect(artifactVisibility(deps(), { accountId: ACCOUNT })).rejects.toThrow(/inválida/);
   });
 
   it('requireArtifactAccount_known_returnsIt', () => {

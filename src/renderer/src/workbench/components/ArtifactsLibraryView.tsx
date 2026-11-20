@@ -4,6 +4,7 @@ import { useT } from '../../i18n/uiLanguage';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { describeError } from '../describeError';
 import { withMorePage } from '../artifactsLibraryModel';
+import { artifactsSource } from '../artifactsSource';
 import { BrowserPanelBody } from '../browser/BrowserPanel';
 import { useBrowserStore } from '../browser/browserStore';
 import { useWorkbenchStore } from '../workbenchStore';
@@ -34,8 +35,8 @@ function useArtifactLists() {
   useEffect(() => {
     let alive = true;
     setLoad((current) => (current.kind === 'ready' ? current : { kind: 'loading' }));
-    window.mage
-      .listArtifacts({ refresh: round.refresh })
+    artifactsSource
+      .list({ refresh: round.refresh })
       .then((entries) => alive && setLoad({ kind: 'ready', entries }))
       .catch((err: unknown) => alive && setLoad({ kind: 'error', message: describeError(err) }));
     return () => {
@@ -46,8 +47,8 @@ function useArtifactLists() {
     const key = listKey(accountId, rel);
     setLoadingMore((s) => new Set(s).add(key));
     setMoreErrors(({ [key]: _gone, ...rest }) => rest);
-    window.mage
-      .moreArtifacts({ accountId, rel, pageToken })
+    artifactsSource
+      .more({ accountId, rel, pageToken })
       .then((page) => setLoad((current) => (current.kind === 'ready' ? { kind: 'ready', entries: withMorePage(current.entries, page) } : current)))
       .catch((err: unknown) => setMoreErrors((errors) => ({ ...errors, [key]: describeError(err) })))
       .finally(() => setLoadingMore((s) => new Set([...s].filter((k) => k !== key))));
@@ -62,8 +63,8 @@ function useViewer() {
   const open = (item: ArtifactSummary): void => {
     const key = itemKey(item);
     setOpening({ key, title: item.title, error: null, busy: true });
-    window.mage
-      .openArtifactInViewer({ accountId: item.accountId, id: item.id })
+    artifactsSource
+      .open({ accountId: item.accountId, id: item.id })
       .then(() => setOpening((o) => (o?.key === key ? { ...o, busy: false } : o)))
       .catch((err: unknown) => setOpening((o) => (o?.key === key ? { ...o, busy: false, error: describeError(err) } : o)));
   };

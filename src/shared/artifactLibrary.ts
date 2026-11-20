@@ -56,6 +56,20 @@ export interface ArtifactsMoreParams {
   readonly pageToken: string;
 }
 
+// Visibilidad de un artifact publicado, para su tarjeta del chat.
+export interface ArtifactVisibility {
+  readonly audience: string;
+  // Donde se cambia (claude.ai); '' si la fila no traia una URL valida.
+  readonly openUrl: string;
+}
+
+export interface ArtifactsVisibilityParams {
+  // La cuenta que lo publico.
+  readonly accountId: string;
+  // La URL de la tarjeta.
+  readonly url: string;
+}
+
 export interface ArtifactsOpenParams {
   readonly accountId: string;
   readonly id: string;

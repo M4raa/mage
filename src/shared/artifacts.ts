@@ -16,9 +16,11 @@
 // con haiku y si en las sesiones reales del usuario), asi que la UI no asume que exista: si nunca llega
 // un tool_result asi, no hay tarjeta y no se promete nada.
 
-// Solo https y solo claude.ai/code/artifact/<id>. Mismo criterio que `isHttpsUrl` en la frontera de
-// `OpenExternal`: una URL de otro host abriria una ventana con sesion de la cuenta en un sitio ajeno.
-export const ARTIFACT_URL_PATTERN = /^https:\/\/claude\.ai\/code\/artifact\/[A-Za-z0-9-]+$/;
+// Solo https y solo claude.ai/code/artifact/<id> o claude.ai/artifact/<id>. Mismo criterio que `isHttpsUrl` en la
+// frontera de `OpenExternal`: una URL de otro host abriria una ventana con sesion de la cuenta en un sitio ajeno.
+// Las dos formas, medidas en transcripciones: la vieja `code/artifact/<uuid>` y la que publica el CLI 2.1.319,
+// `artifact/<id corto de 22>` (la misma que da `open_url` en la lista de artifacts).
+export const ARTIFACT_URL_PATTERN = /^https:\/\/claude\.ai\/(?:code\/)?artifact\/[A-Za-z0-9-]+$/;
 
 // Nombre de la tool que publica artifacts.
 export const ARTIFACT_TOOL_NAME = 'Artifact';

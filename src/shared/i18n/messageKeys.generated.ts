@@ -538,6 +538,7 @@ export interface MessageValues {
   readonly "chat.artifact.audience.owner": never;
   readonly "chat.artifact.audience.public": never;
   readonly "chat.artifact.audience.users": never;
+  readonly "chat.artifact.changeVisibility": never;
   readonly "chat.artifact.copied": never;
   readonly "chat.artifact.copyFailed": never;
   readonly "chat.artifact.copyLink": never;
@@ -549,6 +550,7 @@ export interface MessageValues {
   readonly "chat.artifact.openWithPickerAria": { readonly "title": string | number };
   readonly "chat.artifact.openWithTip": { readonly "alias": string | number };
   readonly "chat.artifact.pickAccountAria": never;
+  readonly "chat.artifact.visibilityAria": { readonly "audience": string | number };
   readonly "chat.artifacts.empty": never;
   readonly "chat.artifacts.openLibrary": never;
   readonly "chat.artifacts.title": { readonly "count": string | number };

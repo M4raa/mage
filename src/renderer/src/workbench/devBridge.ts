@@ -12,6 +12,7 @@ import { t } from '../i18n/uiLanguage';
 import { usageHistorySource } from './usageHistorySource';
 import { sweepIdleSessions } from './idleSessionCloser';
 import { linkOpener } from './linkOpener';
+import { artifactsSource } from './artifactsSource';
 
 // Asidero SOLO de desarrollo para `pnpm verify:gui`: deja medir el DOM del chat sin gastar un turno
 // real ni spawnear el CLI. Sin el, el harness no puede hidratar una conversacion (el store de Zustand
@@ -58,6 +59,8 @@ export interface MageDevBridge {
   readonly sweepIdleSessions: typeof sweepIdleSessions;
   // El harness espía cómo se abre fuera un enlace del chat (y así no abre el navegador del sistema).
   readonly linkOpener: typeof linkOpener;
+  // El harness siembra la lista de artifacts y la visibilidad de una tarjeta (y lo devuelve al acabar).
+  readonly artifactsSource: typeof artifactsSource;
 }
 
 (window as unknown as { __mageDev?: MageDevBridge }).__mageDev = {
@@ -82,4 +85,5 @@ export interface MageDevBridge {
   usageHistorySource,
   sweepIdleSessions,
   linkOpener,
+  artifactsSource,
 };

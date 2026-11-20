@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AccountInfo } from '@shared/accounts';
 import { UserFacingError, localized } from '@shared/i18n/localizedText';
-import { ARTIFACT_LIST_TTL_MS, ArtifactsService, artifactAccountIds, listPath, toArtifactPage } from './artifactsService';
+import { ARTIFACT_LIST_TTL_MS, ArtifactsService, artifactAccountIds, findArtifactByUrl, listPath, normalizeArtifactUrl, toArtifactPage } from './artifactsService';
 
 const MINE = '/home/u/.claude';
 const OTHER = '/home/u/.claude-p';
@@ -114,6 +114,36 @@ describe('toArtifactPage', () => {
   it('toArtifactPage_notAnObject_throwsWithAccount', () => {
     // Act + Assert
     expect(() => toArtifactPage(MINE, 'mine', 'html')).toThrow(/\.claude/);
+  });
+});
+
+describe('findArtifactByUrl', () => {
+  const page = toArtifactPage(MINE, 'mine', { artifacts: [row(), row({ id: 'f24ac738-153b-4e4a-a5b0-8db33bdcd511', open_url: 'https://claude.ai/artifact/7KBfSjkZSF584Uv7YhFiKh', audience: 'org' })] });
+
+  it.each([
+    'https://claude.ai/artifact/ApBG3JewJ2xSMoUq4UFmkW',
+    'https://claude.ai/artifact/ApBG3JewJ2xSMoUq4UFmkW/',
+    'https://claude.ai/artifact/ApBG3JewJ2xSMoUq4UFmkW?x=1#y',
+  ])('findArtifactByUrl_openUrlNormalized_matches (%s)', (url) => {
+    expect(findArtifactByUrl(page.items, url)?.audience).toBe('owner');
+  });
+
+  it('findArtifactByUrl_oldCodeFormByUuid_matchesTheId', () => {
+    expect(findArtifactByUrl(page.items, 'https://claude.ai/code/artifact/f24ac738-153b-4e4a-a5b0-8db33bdcd511')?.audience).toBe('org');
+  });
+
+  it('findArtifactByUrl_otherArtifactOrCaseChange_isNull', () => {
+    expect(findArtifactByUrl(page.items, 'https://claude.ai/artifact/SYDrAVix5qpsw3DSxj81ko')).toBeNull();
+    expect(findArtifactByUrl(page.items, 'https://claude.ai/artifact/apbg3jewj2xsmouq4ufmkw')).toBeNull();
+  });
+
+  it('findArtifactByUrl_emptyListOrUrl_isNull', () => {
+    expect(findArtifactByUrl([], 'https://claude.ai/artifact/ApBG3JewJ2xSMoUq4UFmkW')).toBeNull();
+    expect(findArtifactByUrl(page.items, '')).toBeNull();
+  });
+
+  it('normalizeArtifactUrl_unparseable_isTrimmed', () => {
+    expect(normalizeArtifactUrl('  no es url ')).toBe('no es url');
   });
 });
 
@@ -249,6 +279,40 @@ describe('ArtifactsService', () => {
 
     // Assert
     expect(entry!.mine).toEqual({ ok: false, error: { key: 'events.detailOnly', values: { detail: 'ECONNRESET' } } });
+  });
+
+  it('visibilityOf_publishedArtifact_returnsAudienceAndWhereToChangeIt', async () => {
+    // Arrange
+    const getJson = vi.fn(async () => ({ artifacts: [row({ owner_account: 'acct-SECRET' })] }));
+    const service = serviceWith(getJson);
+
+    // Act
+    const visibility = await service.visibilityOf(MINE, 'https://claude.ai/artifact/ApBG3JewJ2xSMoUq4UFmkW');
+
+    // Assert
+    expect(visibility).toEqual({ audience: 'owner', openUrl: 'https://claude.ai/artifact/ApBG3JewJ2xSMoUq4UFmkW' });
+    expect((getJson.mock.calls as unknown[][])[0]![1]).toContain('rel=mine');
+  });
+
+  it('visibilityOf_usesTheListCache', async () => {
+    // Arrange
+    const getJson = vi.fn(async () => ({ artifacts: [row()] }));
+    const service = serviceWith(getJson);
+    await service.page(MINE, 'mine', { pageToken: null, refresh: false });
+
+    // Act
+    await service.visibilityOf(MINE, 'https://claude.ai/artifact/ApBG3JewJ2xSMoUq4UFmkW');
+
+    // Assert
+    expect(getJson).toHaveBeenCalledTimes(1);
+  });
+
+  it('visibilityOf_notInList_isNull', async () => {
+    expect(await serviceWith(async () => ({ artifacts: [] })).visibilityOf(MINE, 'https://claude.ai/artifact/x')).toBeNull();
+  });
+
+  it('visibilityOf_listFails_rejects', async () => {
+    await expect(serviceWith(async () => { throw new Error('503'); }).visibilityOf(MINE, 'https://claude.ai/artifact/x')).rejects.toThrow('503');
   });
 
   it('listAll_noAccounts_isEmpty', async () => {
