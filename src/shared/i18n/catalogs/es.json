@@ -901,6 +901,7 @@
   "chat.subagents.failed": "{count} con error",
   "chat.subagents.launched": "Lanzó {count, plural, one {{count} subagente} other {{count} subagentes}}",
   "chat.system.blockedDuringPr": "Bloqueado durante «Crear PR»: {command}",
+  "chat.system.closedByMage": "Sesión cerrada al terminar para liberar memoria; se reabre al escribir.",
   "chat.system.conversationReset": "Conversación reiniciada",
   "chat.table.copyMarkdown": "Copiar Markdown",
   "chat.table.copyTsv": "Copiar TSV",

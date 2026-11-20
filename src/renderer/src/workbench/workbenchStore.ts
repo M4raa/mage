@@ -3421,7 +3421,11 @@ async function releaseTabSessionForMigration(mage: MageClient, get: () => Workbe
 
 // La pestaña se queda apuntando a su conversación (`resumeSessionId`) y olvida su estado de motor.
 function detachLiveSession(set: SetFn, tabId: string, conversationId: string): void {
-  set((s) => ({
+  set((s) => detachedPatch(s, tabId, conversationId));
+}
+
+function detachedPatch(s: WorkbenchState, tabId: string, conversationId: string): Partial<WorkbenchState> {
+  return {
     tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: conversationId } : t)),
     sessionIdByChat: without(s.sessionIdByChat, tabId),
     statusByChat: without(s.statusByChat, tabId),
@@ -3430,7 +3434,19 @@ function detachLiveSession(set: SetFn, tabId: string, conversationId: string): v
     streamingIdByChat: without(s.streamingIdByChat, tabId),
     queuedByChat: without(s.queuedByChat, tabId),
     steeringByChat: without(s.steeringByChat, tabId),
-  }));
+  };
+}
+
+// Main cerró la sesión de esta pestaña (subsesión terminada o `mage_close_session`): la pestaña hace lo de soltar una
+// sesión inactiva —queda apuntando a su conversación— y lo dice en el hilo; escribir de nuevo la reabre con `--resume`.
+// Sin conversación todavía (el CLI no llegó a dar su id) no hay a qué apuntar y no se toca nada.
+function closedByMagePatch(state: WorkbenchState, tabId: string): Partial<WorkbenchState> {
+  const tab = state.tabs.find((t) => t.id === tabId);
+  if (tab === undefined) return {};
+  const conversationId = conversationIdOfTab(tab, state.sessionIdByChat[tabId]);
+  if (conversationId === undefined) return {};
+  const line = appendSystemBlock(blocksOf(state, tabId), closedByMageText(), nextBlockId());
+  return { ...detachedPatch(state, tabId, conversationId), ...withBlocks(state, tabId, line) };
 }
 
 // Punto 23 (D2): suelta el proceso de una pestaña inactiva sin cerrarla; escribir la reanuda (`ensureSession` con `resumeSessionId`).
@@ -3789,6 +3805,9 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
         contextUsageByChat: without(state.contextUsageByChat, tabId),
         tabs: state.tabs.map((t) => (t.id === tabId && t.resumeSessionId !== undefined ? { ...t, resumeSessionId: event.newSessionId } : t)),
       };
+    // Main cierra la sesion de la pestaña (subsesion terminada o `mage_close_session`): queda reanudable.
+    case 'closed_by_mage':
+      return closedByMagePatch(state, tabId);
     // Cola de main (F2.2): el renderer la PINTA tal cual llega, entera. Los otros dos avisos de la cola
     // tienen efecto en el store (`handleEvent`), no en el hilo.
     case 'queue_changed':
@@ -4331,6 +4350,7 @@ const EMPTY_BLOCKS: readonly Block[] = [];
 
 // Linea que deja `/clear` en el chat vaciado (P-028).
 export const conversationResetText = (): string => t('chat.system.conversationReset');
+export const closedByMageText = (): string => t('chat.system.closedByMage');
 
 export function selectAccount(state: WorkbenchState, accountId: string): Account | undefined {
   return state.accounts.find((a) => a.id === accountId);

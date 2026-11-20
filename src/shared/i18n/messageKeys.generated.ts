@@ -903,6 +903,7 @@ export interface MessageValues {
   readonly "chat.subagents.failed": { readonly "count": string | number };
   readonly "chat.subagents.launched": { readonly "count": number };
   readonly "chat.system.blockedDuringPr": { readonly "command": string | number };
+  readonly "chat.system.closedByMage": never;
   readonly "chat.system.conversationReset": never;
   readonly "chat.table.copyMarkdown": never;
   readonly "chat.table.copyTsv": never;
