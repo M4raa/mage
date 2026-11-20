@@ -189,6 +189,9 @@ export interface MessageValues {
   readonly "accountsUsage.refreshLoginBusy": never;
   readonly "accountsUsage.refreshLoginFailed": never;
   readonly "accountsUsage.refreshLoginTip": never;
+  readonly "accountsUsage.retryLogin": never;
+  readonly "accountsUsage.retryLoginFailed": never;
+  readonly "accountsUsage.retryLoginNoSession": never;
   readonly "accountsUsage.remaining.critical": never;
   readonly "accountsUsage.remaining.left": { readonly "pct": string | number };
   readonly "accountsUsage.remaining.used": { readonly "pct": string | number };
