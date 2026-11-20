@@ -1,5 +1,6 @@
 import type { MageEvent } from '@shared/events';
 import type { AdoptableSession } from '@shared/ipc';
+import type { RunningTabCloseBehavior } from '@shared/settings';
 import type { ChatStatus } from './types';
 import { t } from '../i18n/uiLanguage';
 
@@ -33,6 +34,14 @@ export interface BackgroundSession {
 // siempre (su proceso se para): dejarla viva seria pagar un CLI por cada pestaña que se cierra.
 export function shouldBackgroundOnClose(status: ChatStatus | undefined): boolean {
   return status === 'streaming' || status === 'needs_permission';
+}
+
+// Qué hacer al cerrar a mano una pestaña: cerrar sin más, preguntar, o lo que diga el ajuste.
+export type TabCloseDecision = 'close' | 'ask' | 'background' | 'stop';
+
+export function tabCloseDecision(status: ChatStatus | undefined, hasSession: boolean, behavior: RunningTabCloseBehavior): TabCloseDecision {
+  if (!hasSession || !shouldBackgroundOnClose(status)) return 'close';
+  return behavior;
 }
 
 // Motivo por el que una pestaña NO se puede mover a otra ventana (ni arrastrar fuera), o null si se

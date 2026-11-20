@@ -101,6 +101,7 @@ import {
   backgroundMoveBlockedReason,
   backgroundOfConversation,
   nextBackgroundState,
+  tabCloseDecision,
   tabMoveBlockedReason,
   type BackgroundSession,
 } from './backgroundWork';
@@ -373,9 +374,15 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // Devuelve una promesa que resuelve cuando el CLI de esa pestaña YA ha parado (B17): quien borre
   // o mueva la conversacion despues tiene que esperarla o correra contra un fichero aun abierto.
   // `moved`: la pestaña se va a otra ventana, asi que su worktree NO se archiva (grupo D).
-  closeTab: (tabId: string, options?: { readonly moved?: boolean }) => Promise<void>;
+  closeTab: (tabId: string, options?: { readonly moved?: boolean; readonly stop?: boolean }) => Promise<void>;
   // Cierra la pestana ACTIVA (D5, atajo tab.close): resuelve el id activo y delega en closeTab.
   closeActiveTab: () => void;
+  // Cierre a mano de UNA pestaña (✕, clic central, menú, atajo): si trabaja, según `runningTabClose` pregunta,
+  // la deja en segundo plano o la para; si no, cierra sin más.
+  requestCloseTab: (tabId: string) => void;
+  // Pestaña cuyo diálogo «¿Cerrar una conversación que está trabajando?» está abierto; null = cerrado.
+  closeTabPrompt: { readonly tabId: string } | null;
+  answerCloseTabPrompt: (answer: { readonly action: 'cancel' | 'background' | 'stop'; readonly remember: boolean }) => void;
   // Menu contextual de pestañas (Ronda 3, item 12). Los cierres en masa respetan SIEMPRE las ancladas
   // (ver tabActions.ts) y reutilizan closeTab una a una — no hay un camino paralelo que se olvide de
   // parar la sesion o de limpiar el estado de motor de cada pestaña.
@@ -1106,6 +1113,15 @@ async function closeSessionInMain(mage: MageClient, sessionId: string): Promise<
   }
 }
 
+// Para la sesión de una pestaña que se cierra con «Cerrar y parar». Si main falla, se avisa y la pestaña se cierra igual.
+async function stopSessionReportingErrors(mage: MageClient, sessionId: string): Promise<void> {
+  try {
+    await mage.stop(sessionId);
+  } catch (err) {
+    reportActionError(t('errors.workbench.closeSessionFailed'), err, 'chat');
+  }
+}
+
 // La sesión viva de un chat sin conversación que cambia de cuenta (0.1.4): era de la cuenta vieja y no tiene turnos.
 // Se olvida su estado de motor y se cierra en main; el primer mensaje arranca otra con la cuenta nueva
 // (`ensureSession`). `closeSessionInMain` ya trata «Sesion inexistente» como ausencia y avisa de cualquier otro fallo.
@@ -1637,6 +1653,7 @@ export function createWorkbenchStore(mage: MageClient) {
     settingsLoaded: false,
     setSidebarFilter: (filter) => set({ sidebarFilter: filter }),
     closePromptOpen: false,
+    closeTabPrompt: null,
     updateState: IDLE_UPDATE_STATE,
     updatePromptVersion: null,
 
@@ -1806,7 +1823,10 @@ export function createWorkbenchStore(mage: MageClient) {
     closeTab: async (tabId, options) => {
       const sessionId = get().sessionIdByChat[tabId];
       const tab = get().tabs.find((t) => t.id === tabId);
-      const background = sessionId !== undefined && (await closeSessionInMain(mage, sessionId));
+      const keptAlive = sessionId !== undefined && (await closeSessionInMain(mage, sessionId));
+      // «Cerrar y parar»: main la habría dejado en segundo plano; se para como al migrar una pestaña.
+      if (keptAlive && options?.stop === true) await stopSessionReportingErrors(mage, sessionId);
+      const background = keptAlive && options?.stop !== true;
       if (background && sessionId !== undefined && tab !== undefined) {
         const entry: BackgroundSession = {
           sessionId,
@@ -1884,7 +1904,26 @@ export function createWorkbenchStore(mage: MageClient) {
 
     closeActiveTab: () => {
       const tabId = get().activeTabId;
-      if (tabId.length > 0) void get().closeTab(tabId);
+      if (tabId.length > 0) get().requestCloseTab(tabId);
+    },
+
+    requestCloseTab: (tabId) => {
+      const state = get();
+      const decision = tabCloseDecision(state.statusByChat[tabId], state.sessionIdByChat[tabId] !== undefined, state.settings.runningTabClose);
+      if (decision === 'ask') {
+        set({ closeTabPrompt: { tabId } });
+        return;
+      }
+      void state.closeTab(tabId, decision === 'stop' ? { stop: true } : undefined);
+    },
+
+    answerCloseTabPrompt: (answer) => {
+      const prompt = get().closeTabPrompt;
+      set({ closeTabPrompt: null });
+      if (prompt === null || answer.action === 'cancel') return;
+      if (!get().tabs.some((tab) => tab.id === prompt.tabId)) return;
+      if (answer.remember) get().setRunningTabClose(answer.action);
+      void get().closeTab(prompt.tabId, answer.action === 'stop' ? { stop: true } : undefined);
     },
 
     closeAllTabs: () => {

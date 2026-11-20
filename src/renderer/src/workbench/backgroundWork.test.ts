@@ -10,6 +10,7 @@ import {
   countWorkingConversations,
   nextBackgroundState,
   shouldBackgroundOnClose,
+  tabCloseDecision,
   tabMoveBlockedReason,
   type BackgroundSession,
 } from './backgroundWork';
@@ -51,6 +52,29 @@ describe('shouldBackgroundOnClose', () => {
     expect(shouldBackgroundOnClose('idle')).toBe(false);
     expect(shouldBackgroundOnClose('error')).toBe(false);
     expect(shouldBackgroundOnClose(undefined)).toBe(false);
+  });
+});
+
+describe('tabCloseDecision', () => {
+  it('tabCloseDecision_sinTrabajo_close', () => {
+    expect(tabCloseDecision('idle', true, 'ask')).toBe('close');
+    expect(tabCloseDecision(undefined, true, 'stop')).toBe('close');
+  });
+
+  it('tabCloseDecision_sinSesion_close', () => {
+    expect(tabCloseDecision('streaming', false, 'ask')).toBe('close');
+  });
+
+  it('tabCloseDecision_streamingYAsk_ask', () => {
+    expect(tabCloseDecision('streaming', true, 'ask')).toBe('ask');
+  });
+
+  it('tabCloseDecision_permisoPendienteYStop_stop', () => {
+    expect(tabCloseDecision('needs_permission', true, 'stop')).toBe('stop');
+  });
+
+  it('tabCloseDecision_streamingYBackground_background', () => {
+    expect(tabCloseDecision('streaming', true, 'background')).toBe('background');
   });
 });
 
