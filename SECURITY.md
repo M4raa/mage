@@ -11,11 +11,27 @@ las carpetas que autorices. Además toca cosas sensibles por diseño:
   una credencial del entorno no se cuele en el agente.
 - Un **proxy local** en `127.0.0.1` para los proveedores compatibles con la API de OpenAI.
 - Un **host local** para otros clientes de la misma máquina (terminal, widget, MCP): un *named pipe* en Windows o
-  un socket Unix en Linux y macOS (directorio `0700`, socket `0600`), nunca un puerto de red. Cada conexión tiene que
-  presentar un token aleatorio de 32 bytes que se genera en cada arranque y vive en un fichero que solo lee tu
-  usuario (`<datos de Mage>/run/host-token`); no se pasa por variables de entorno ni llega a los agentes ni a la
-  interfaz. En Windows, Node no permite restringir el descriptor de seguridad del pipe, así que la barrera real es
-  ese token.
+  un socket Unix en Linux y macOS (directorio `0700`, socket `0600`), nunca un puerto de red. Hay dos credenciales:
+  - El **token de arranque**: 32 bytes aleatorios que se generan en cada arranque y viven en un fichero que solo lee
+    tu usuario (`<datos de Mage>/run/host-token`); no se pasa por variables de entorno ni llega a los agentes ni a la
+    interfaz. Toda conexión lo presenta, pero como cualquier proceso de tu usuario puede leer ese fichero (también un
+    agente), por sí solo **solo deja leer**: listar proyectos, cuentas y sesiones, su estado y sus resultados, y pedir
+    el emparejamiento. Crear o enviar, cambiar opciones, contestar permisos, dar de alta cuentas o parar Mage
+    responden «no está emparejado».
+  - El **token de cliente**, para un cliente **emparejado**. La primera vez que un cliente (por ejemplo `mage chat`)
+    necesita algo más que leer, Mage enseña en su ventana «¿Autorizas a «…» a controlar Mage?», con «Rechazar» como
+    opción por defecto. Sin respuesta en 2 minutos, o si Mage corre sin ventana, se rechaza. Si lo autorizas, Mage
+    entrega al cliente un token propio UNA vez y guarda solo su SHA-256, con el nombre, el tipo, la fecha de alta y la
+    del último uso, en `<datos de Mage>/host-clients.json`. La terminal guarda el suyo en
+    `<datos de Mage>/run/client-token`, legible solo por tu usuario. Cualquiera se revoca en Configuración › Hooks y
+    permisos › Clientes emparejados: revocar corta en el acto las conexiones abiertas con ese token, y el cliente
+    tendrá que volver a pedir permiso.
+
+  Las sesiones que lanza Mage no pasan por el diálogo: su servidor MCP (`mage mcp`) presenta, además del token de
+  arranque, una credencial de su sesión que solo recibe el proceso de esa sesión (nunca está en disco) y que deja de
+  valer cuando la sesión termina. Con ella solo se abre el canal MCP, cuyas herramientas aplican sus propios límites
+  (qué sesiones puede ver o crear, profundidad, cuentas); no da acceso a los demás métodos de escritura. En Windows,
+  Node no permite restringir el descriptor de seguridad del pipe, así que la barrera real son estos tokens.
 
 Mage **no envía telemetría** ni tiene servidor propio: no hay ningún sitio al que tu contenido viaje
 por parte del proyecto. Las peticiones que hace Mage por su cuenta están todas en la sección siguiente.
@@ -66,7 +82,7 @@ Solo la **última versión publicada**. El proyecto está en beta y no se retro-
 ## Qué cuenta y qué no
 
 Cuenta, por ejemplo: que una credencial acabe en un log o en una transcripción, que una ruta escape
-de la carpeta autorizada, que el proxy local acepte peticiones de fuera de la máquina, que el host local acepte una conexión sin el token, que el flujo
+de la carpeta autorizada, que el proxy local acepte peticiones de fuera de la máquina, que el host local acepte una conexión sin el token o deje escribir a un cliente sin emparejar, que el flujo
 de permisos pueda saltarse, o que una actualización se pueda suplantar.
 
 No cuenta que Mage ejecute comandos: **es lo que hace**. El agente pide permiso y tú decides; si das
