@@ -43,7 +43,7 @@ las carpetas que autorices. Además toca cosas sensibles por diseño:
 
 - Las dependencias de producción pasan `pnpm audit` en cada integración. Excepción conocida: GHSA-mrhx-c7xc-m3w5 de zod 3 (consumo de memoria al validar entradas enormes de procesos locales), hasta pasar a zod 4.
 - Dependabot propone actualizaciones de las dependencias y de las acciones de GitHub.
-- Cada release lleva su SBOM CycloneDX (`mage-<versión>-sbom.cdx.json`).
+- Cada release lleva su SBOM CycloneDX (`mage-<versión>-sbom.cdx.json`) (incluye también las dependencias de desarrollo).
 
 Mage **no envía telemetría** ni tiene servidor propio: no hay ningún sitio al que tu contenido viaje
 por parte del proyecto. Las peticiones que hace Mage por su cuenta están todas en la sección siguiente.
