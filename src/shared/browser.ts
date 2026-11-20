@@ -15,6 +15,8 @@ export interface BrowserEntryState {
   readonly zoomPercent: number;
   readonly control: BrowserControl;
   readonly lastAction: BrowserAgentAction | null;
+  // En su ventana propia: el panel enseña «Traer aquí» en vez de la página.
+  readonly poppedOut: boolean;
 }
 
 // -1 aleja, 0 vuelve a 100 %, 1 acerca.

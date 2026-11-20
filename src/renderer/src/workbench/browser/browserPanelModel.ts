@@ -22,6 +22,16 @@ export function browserPanelViewOf(sessionId: string | undefined, states: Browse
   return { kind: 'open', state };
 }
 
+// Dónde se pinta el navegador: en el panel del dock o en su ventana propia (`?browserWindow=`).
+export type BrowserPlace = 'panel' | 'window';
+
+// ¿Coloca la vista quien pregunta? El panel, solo si el navegador no está fuera; la ventana propia, solo si lo está.
+// Así, mientras está fuera, el hueco del panel no la mueve.
+export function placesView(state: BrowserEntryState | null, place: BrowserPlace): boolean {
+  if (state === null) return false;
+  return place === 'window' ? state.poppedOut : !state.poppedOut;
+}
+
 export function indexStates(list: readonly BrowserEntryState[]): BrowserStates {
   return Object.fromEntries(list.map((state) => [state.sessionId, state]));
 }

@@ -4,6 +4,7 @@ import { IpcChannel } from '@shared/ipc';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { describeIssues } from '../capabilities/capabilityPackage';
 import { BrowserControlError, type BrowserHandle, type BrowserRegistry } from './browserRegistry';
+import type { BrowserPopouts } from './browserPopout';
 import { parseStrokes } from './captureAnnotation';
 import { PenCaptureExpiredError, type PenSessions } from './penSession';
 import type { PlacementWindow, ViewPlacement } from './viewPlacement';
@@ -21,6 +22,7 @@ export interface BrowserIpcDeps {
   readonly openExternal: (url: string) => Promise<void>;
   // `app.isPackaged`: empaquetada no hay herramientas de desarrollo del navegador.
   readonly isPackaged: boolean;
+  readonly popouts: Pick<BrowserPopouts, 'popOut' | 'popIn'>;
 }
 
 const MAX_SESSION_ID_CHARS = 200;
@@ -28,6 +30,7 @@ const MAX_URL_CHARS = 2048;
 const MAX_CAPTURE_ID_CHARS = 100;
 const MAX_BOUNDS_VALUE = 100_000;
 const MAX_PREVIEW_CHARS = 200;
+const MAX_TITLE_CHARS = 200;
 
 const sessionIdSchema = z.string().min(1).max(MAX_SESSION_ID_CHARS);
 const boundsValueSchema = z.number().int().min(0).max(MAX_BOUNDS_VALUE);
@@ -44,6 +47,8 @@ const boundsSchema = z
 const zoomSchema = z
   .object({ sessionId: sessionIdSchema, step: z.union([z.literal(-1), z.literal(0), z.literal(1)]) })
   .strict();
+// El título de la conversación, solo para el de la ventana propia.
+const popOutSchema = z.object({ sessionId: sessionIdSchema, title: z.string().max(MAX_TITLE_CHARS) }).strict();
 // Los trazos se validan aparte con `parseStrokes` (S01), que ya conoce sus límites.
 const composeSchema = z
   .object({ sessionId: sessionIdSchema, captureId: z.string().min(1).max(MAX_CAPTURE_ID_CHARS), strokes: z.unknown() })
@@ -110,7 +115,7 @@ function setBounds(deps: BrowserIpcDeps, window: PlacementWindow, raw: unknown):
   // El panel puede informar de su hueco antes de que exista el navegador.
   const handle = deps.registry.get(sessionId);
   if (handle === null) return;
-  if (bounds === null) deps.placement.hide(handle);
+  if (bounds === null) deps.placement.hide(handle, window);
   else deps.placement.show(handle, window, bounds);
 }
 
@@ -148,6 +153,11 @@ export function registerBrowserIpc(deps: BrowserIpcDeps): void {
   bySession(IpcChannel.BrowserDevTools, (sessionId) => openDevTools(deps, sessionId));
   bySession(IpcChannel.BrowserClose, async (sessionId) => void (await registry.close(sessionId)));
   route(IpcChannel.BrowserSetBounds, (arg, window) => setBounds(deps, window, arg));
+  route(IpcChannel.BrowserPopOut, (arg) => {
+    const { sessionId, title } = parseWith(popOutSchema, arg);
+    deps.popouts.popOut(sessionId, title);
+  });
+  bySession(IpcChannel.BrowserPopIn, (sessionId) => deps.popouts.popIn(sessionId));
   bySession(IpcChannel.BrowserTakeControl, (sessionId) => registry.takeControl(sessionId));
   bySession(IpcChannel.BrowserReturnControl, (sessionId) => registry.returnControl(sessionId));
   bySession(IpcChannel.BrowserPenCapture, (sessionId) => pens.capture(sessionId));

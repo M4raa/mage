@@ -107,7 +107,7 @@ describe('ViewPlacement', () => {
     const handle = fakeHandle();
     placement.show(handle, window, BOUNDS);
 
-    placement.hide(handle);
+    placement.hide(handle, window);
 
     expect(window.contentView.removeChildView).toHaveBeenCalledWith(handle.view);
     expect(parking.window.contentView.addChildView).toHaveBeenCalledWith(handle.view);
@@ -120,7 +120,7 @@ describe('ViewPlacement', () => {
     const placement = new ViewPlacement(() => parking.window);
     const handle = fakeHandle();
 
-    placement.hide(handle);
+    placement.hide(handle, fakeWindow().window);
 
     expect(handle.setVisible).not.toHaveBeenCalled();
     expect(parking.window.contentView.addChildView).not.toHaveBeenCalled();
@@ -132,7 +132,7 @@ describe('ViewPlacement', () => {
     const handle = fakeHandle();
     placement.ensureHosted(handle);
 
-    placement.hide(handle);
+    placement.hide(handle, parking.window);
 
     expect(parking.window.contentView.addChildView).toHaveBeenCalledTimes(1);
   });
@@ -171,7 +171,7 @@ describe('ViewPlacement', () => {
     placement.show(handle, window, BOUNDS);
 
     placement.forget(handle);
-    placement.hide(handle);
+    placement.hide(handle, window);
 
     expect(window.contentView.removeChildView).toHaveBeenCalledWith(handle.view);
     expect(handle.setVisible).not.toHaveBeenCalledWith(false);
@@ -190,6 +190,133 @@ describe('ViewPlacement', () => {
 
     expect(first.window.contentView.removeChildView).not.toHaveBeenCalled();
     expect(second.window.contentView.addChildView).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ViewPlacement — ventana propia', () => {
+  function placedInPanel() {
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
+    const panel = fakeWindow();
+    const popout = fakeWindow();
+    const handle = fakeHandle();
+    placement.show(handle, panel.window, BOUNDS);
+    return { placement, parking, panel, popout, handle };
+  }
+
+  it('hide_fromWindowNotHosting_noop', () => {
+    const { placement, panel, parking, handle } = placedInPanel();
+    const other = fakeWindow();
+
+    placement.hide(handle, other.window);
+
+    expect(panel.window.contentView.removeChildView).not.toHaveBeenCalled();
+    expect(parking.window.contentView.addChildView).not.toHaveBeenCalled();
+  });
+
+  it('detach_untilPopoutReports_viewStaysInPanel', () => {
+    const { placement, panel, popout, handle } = placedInPanel();
+
+    placement.detach(handle, popout.window);
+
+    expect(panel.window.contentView.removeChildView).not.toHaveBeenCalled();
+    expect(popout.window.contentView.addChildView).not.toHaveBeenCalled();
+    expect(placement.detachedWindowOf(handle)).toBe(popout.window);
+  });
+
+  it('show_detachedFromPopout_movesViewToPopout', () => {
+    const { placement, panel, popout, handle } = placedInPanel();
+    placement.detach(handle, popout.window);
+
+    placement.show(handle, popout.window, BOUNDS);
+
+    expect(panel.window.contentView.removeChildView).toHaveBeenCalledWith(handle.view);
+    expect(popout.window.contentView.addChildView).toHaveBeenCalledWith(handle.view);
+  });
+
+  it('show_detachedFromPanel_ignored', () => {
+    const { placement, panel, popout, handle } = placedInPanel();
+    placement.detach(handle, popout.window);
+    placement.show(handle, popout.window, BOUNDS);
+
+    placement.show(handle, panel.window, { ...BOUNDS, width: 999 });
+    placement.hide(handle, panel.window);
+
+    expect(panel.window.contentView.addChildView).toHaveBeenCalledTimes(1);
+    expect(handle.setBounds).not.toHaveBeenCalledWith({ ...BOUNDS, width: 999 });
+    expect(popout.window.contentView.removeChildView).not.toHaveBeenCalled();
+  });
+
+  it('detach_twice_throws', () => {
+    const { placement, popout, handle } = placedInPanel();
+    placement.detach(handle, popout.window);
+
+    expect(() => placement.detach(handle, fakeWindow().window)).toThrow(/ya tiene una ventana propia/);
+  });
+
+  it('reattach_fromPopout_parksAndPanelCanShowAgain', () => {
+    const { placement, parking, panel, popout, handle } = placedInPanel();
+    placement.detach(handle, popout.window);
+    placement.show(handle, popout.window, BOUNDS);
+
+    expect(placement.reattach(handle)).toBe(true);
+    placement.show(handle, panel.window, BOUNDS);
+
+    expect(popout.window.contentView.removeChildView).toHaveBeenCalledWith(handle.view);
+    expect(parking.window.contentView.addChildView).toHaveBeenCalledWith(handle.view);
+    expect(panel.window.contentView.addChildView).toHaveBeenCalledTimes(2);
+    expect(placement.detachedWindowOf(handle)).toBeNull();
+  });
+
+  it('reattach_popoutNeverReported_leavesViewWhereItIs', () => {
+    const { placement, parking, panel, popout, handle } = placedInPanel();
+    placement.detach(handle, popout.window);
+
+    placement.reattach(handle);
+
+    expect(panel.window.contentView.removeChildView).not.toHaveBeenCalled();
+    expect(parking.window.contentView.addChildView).not.toHaveBeenCalled();
+  });
+
+  it('reattach_notDetached_false', () => {
+    const { placement, handle } = placedInPanel();
+
+    expect(placement.reattach(handle)).toBe(false);
+  });
+
+  it('show_lateFromRetiredPopout_ignored', () => {
+    const { placement, panel, popout, handle } = placedInPanel();
+    placement.detach(handle, popout.window);
+    placement.show(handle, popout.window, BOUNDS);
+    placement.reattach(handle);
+    placement.show(handle, panel.window, BOUNDS);
+
+    placement.show(handle, popout.window, BOUNDS);
+
+    expect(popout.window.contentView.addChildView).toHaveBeenCalledTimes(1);
+    expect(panel.window.contentView.removeChildView).toHaveBeenCalledTimes(1);
+  });
+
+  it('reattach_popoutClosedWithoutRescue_parksTheView', () => {
+    const { placement, parking, popout, handle } = placedInPanel();
+    placement.detach(handle, popout.window);
+    placement.show(handle, popout.window, BOUNDS);
+    popout.state.destroyed = true;
+    popout.close();
+
+    placement.reattach(handle);
+
+    expect(popout.window.contentView.removeChildView).not.toHaveBeenCalled();
+    expect(parking.window.contentView.addChildView).toHaveBeenCalledWith(handle.view);
+  });
+
+  it('forget_detached_clearsPopout', () => {
+    const { placement, popout, handle } = placedInPanel();
+    placement.detach(handle, popout.window);
+
+    placement.forget(handle);
+
+    expect(placement.detachedWindowOf(handle)).toBeNull();
   });
 });
 

@@ -549,10 +549,14 @@ export interface MessageValues {
   readonly "chat.browser.penToolBox": never;
   readonly "chat.browser.penToolPen": never;
   readonly "chat.browser.penUndo": never;
+  readonly "chat.browser.popIn": never;
+  readonly "chat.browser.popOut": never;
+  readonly "chat.browser.poppedOut": never;
   readonly "chat.browser.reload": never;
   readonly "chat.browser.returnControl": never;
   readonly "chat.browser.stop": never;
   readonly "chat.browser.userControlling": never;
+  readonly "chat.browser.windowTitle": { readonly "title": string | number };
   readonly "chat.browser.zoomIn": never;
   readonly "chat.browser.zoomOut": never;
   readonly "chat.browser.zoomReset": { readonly "percent": string | number };

@@ -41,12 +41,14 @@ function setup(liveSessions: string[] = ['A'], isPackaged = false) {
     onChange: vi.fn(),
     onOpened: vi.fn(),
     onClosed: vi.fn(),
+    isPoppedOut: () => false,
     log: vi.fn(),
   });
   const placement = { show: vi.fn(), hide: vi.fn() };
   const pens = { capture: vi.fn(), compose: vi.fn() };
   const window = {} as PlacementWindow;
   const openExternal = vi.fn(async (_url: string) => undefined);
+  const popouts = { popOut: vi.fn(), popIn: vi.fn() };
   const handlers = new Map<string, (event: typeof OWN, arg: unknown) => unknown>();
   registerBrowserIpc({
     handle: (channel, listener) => void handlers.set(channel, listener),
@@ -56,13 +58,14 @@ function setup(liveSessions: string[] = ['A'], isPackaged = false) {
     windowOf: (id) => (id === 1 ? window : null),
     openExternal,
     isPackaged,
+    popouts,
   });
   const call = async (channel: string, arg?: unknown, event = OWN) => {
     const handler = handlers.get(channel);
     if (handler === undefined) throw new Error(`Canal sin manejador: ${channel}`);
     return handler(event, arg);
   };
-  return { registry, handles, placement, pens, window, openExternal, call };
+  return { registry, handles, placement, pens, window, openExternal, popouts, call };
 }
 
 async function keyOf(action: Promise<unknown>): Promise<string | undefined> {
@@ -127,13 +130,13 @@ describe('registerBrowserIpc', () => {
     );
   });
 
-  it('setBounds_null_hides', async () => {
-    const { call, registry, placement } = setup();
+  it('setBounds_null_hidesFromSenderWindow', async () => {
+    const { call, registry, placement, window } = setup();
     registry.open('A');
 
     await call(IpcChannel.BrowserSetBounds, { sessionId: 'A', bounds: null });
 
-    expect(placement.hide).toHaveBeenCalledTimes(1);
+    expect(placement.hide).toHaveBeenCalledWith(expect.anything(), window);
     expect(placement.show).not.toHaveBeenCalled();
   });
 
@@ -279,6 +282,29 @@ describe('registerBrowserIpc', () => {
 
     await expect(call(IpcChannel.BrowserDevTools, 'A')).rejects.toThrow(/sin empaquetar \(sesión A\)/);
     expect(handles[0]?.openDevTools).not.toHaveBeenCalled();
+  });
+
+  it('popOut_valid_delegatesSessionAndTitle', async () => {
+    const { call, popouts } = setup();
+
+    await call(IpcChannel.BrowserPopOut, { sessionId: 'A', title: 'Mi conversación' });
+
+    expect(popouts.popOut).toHaveBeenCalledWith('A', 'Mi conversación');
+  });
+
+  it('popOut_missingTitle_throwsWithValue', async () => {
+    const { call, popouts } = setup();
+
+    await expect(call(IpcChannel.BrowserPopOut, { sessionId: 'A' })).rejects.toThrow(/inválida.*title.*"sessionId":"A"/s);
+    expect(popouts.popOut).not.toHaveBeenCalled();
+  });
+
+  it('popIn_delegatesSession', async () => {
+    const { call, popouts } = setup();
+
+    await call(IpcChannel.BrowserPopIn, 'A');
+
+    expect(popouts.popIn).toHaveBeenCalledWith('A');
   });
 
   it('open_deadSession_sessionNotLiveKey', async () => {

@@ -31,6 +31,7 @@ export interface BrowserToolbarProps {
   readonly state: BrowserEntryState | null;
   readonly onError: (message: string | null) => void;
   readonly onPen?: () => void;
+  readonly onPopOut?: () => void;
 }
 
 type Run = (action: Promise<unknown>) => void;
@@ -57,7 +58,7 @@ function AddressInput({ sessionId, state, run }: { readonly sessionId: string; r
       onChange={(e) => setTyped(e.target.value)}
       onKeyDown={(e) => onEnter(e, typed, submit)}
       spellCheck={false}
-      className="min-w-0 flex-1 rounded-[6px] border border-mg-border-ctrl bg-transparent px-[8px] py-[3px] font-mono text-[10.5px] text-mg-body"
+      className="min-w-[120px] flex-1 basis-[160px] rounded-[6px] border border-mg-border-ctrl bg-transparent px-[8px] py-[3px] font-mono text-[10.5px] text-mg-body"
     />
   );
 }
@@ -81,26 +82,29 @@ interface ActionsProps {
   readonly state: BrowserEntryState;
   readonly run: Run;
   readonly onPen?: () => void;
+  readonly onPopOut?: () => void;
 }
 
-// A la derecha de la dirección (D-1): copiar, abrir fuera, zoom, la pluma, herramientas de desarrollo y cerrar.
-function PageActions({ sessionId, state, run, onPen }: ActionsProps): React.JSX.Element {
+// A la derecha de la dirección: copiar, abrir fuera, zoom, ventana propia, la pluma, herramientas de desarrollo y cerrar.
+function PageActions({ sessionId, state, run, onPen, onPopOut }: ActionsProps): React.JSX.Element {
   const t = useT();
   const zoom = (step: BrowserZoomStep): void => run(window.mage.browserZoom({ sessionId, step }));
   return (
-    <>
+    // Un solo grupo: si no cabe junto a la dirección, baja entero a la fila siguiente, pegado a la derecha.
+    <div className="ml-auto flex shrink-0 items-center gap-[4px]">
       <ToolButton icon="copy" label={t('chat.browser.copyAddress')} dataAttr={{ 'data-browser-copy': '' }} onClick={() => run(navigator.clipboard.writeText(state.url))} />
       <ToolButton icon="external" label={t('chat.browser.openExternal')} dataAttr={{ 'data-browser-open-external': '' }} onClick={() => run(window.mage.browserOpenExternal(sessionId))} />
       <ZoomControls state={state} zoom={zoom} />
+      {onPopOut !== undefined && <ToolButton icon="newWindow" label={t('chat.browser.popOut')} dataAttr={{ 'data-browser-pop-out': '' }} onClick={onPopOut} />}
       {onPen !== undefined && <ToolButton icon="pencil" label={t('chat.browser.pen')} dataAttr={{ 'data-browser-pen-button': '' }} onClick={onPen} />}
       {/* Sin empaquetar lo dice main (`--mage-development`), no `import.meta.env`. */}
       {window.mage.isDevelopment && <ToolButton icon="panelCommands" label={t('chat.browser.devTools')} dataAttr={{ 'data-browser-devtools': '' }} onClick={() => run(window.mage.browserDevTools(sessionId))} />}
       <ToolButton icon="close" label={t('chat.browser.close')} dataAttr={{ 'data-browser-close': '' }} onClick={() => run(window.mage.browserClose(sessionId))} />
-    </>
+    </div>
   );
 }
 
-export function BrowserToolbar({ sessionId, state, onError, onPen }: BrowserToolbarProps): React.JSX.Element {
+export function BrowserToolbar({ sessionId, state, onError, onPen, onPopOut }: BrowserToolbarProps): React.JSX.Element {
   const t = useT();
   const run: Run = (action) => {
     onError(null);
@@ -114,12 +118,13 @@ export function BrowserToolbar({ sessionId, state, onError, onPen }: BrowserTool
     run(window.mage.browserZoom({ sessionId, step }));
   };
   return (
-    <div data-browser-toolbar onKeyDown={onKeyDown} className="flex shrink-0 items-center gap-[4px] border-b border-mg-border-subtle px-[8px] py-[5px]">
+    // `flex-wrap`: en un panel estrecho los botones de la derecha bajan a otra fila en vez de aplastar la dirección.
+    <div data-browser-toolbar onKeyDown={onKeyDown} className="flex shrink-0 flex-wrap items-center gap-[4px] border-b border-mg-border-subtle px-[8px] py-[5px]">
       <ToolButton icon="chevron" flip label={t('chat.browser.back')} disabled={state?.canGoBack !== true} dataAttr={{ 'data-browser-back': '' }} onClick={() => run(window.mage.browserBack(sessionId))} />
       <ToolButton icon="chevron" label={t('chat.browser.forward')} disabled={state?.canGoForward !== true} dataAttr={{ 'data-browser-forward': '' }} onClick={() => run(window.mage.browserForward(sessionId))} />
       <ToolButton icon="refresh" label={t('chat.browser.reload')} disabled={state === null} onClick={() => run(window.mage.browserReload(sessionId))} />
       <AddressInput sessionId={sessionId} state={state} run={run} />
-      {state !== null && <PageActions sessionId={sessionId} state={state} run={run} onPen={onPen} />}
+      {state !== null && <PageActions sessionId={sessionId} state={state} run={run} onPen={onPen} onPopOut={onPopOut} />}
     </div>
   );
 }

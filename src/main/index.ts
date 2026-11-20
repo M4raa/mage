@@ -140,7 +140,7 @@ import { registerCapabilitiesIpc } from './capabilities/overview/capabilitiesIpc
 import { managedSettingsDir, readCapabilitiesOverview, readPluginCatalog } from './capabilities/overview/capabilitiesOverview';
 import { readSkillFile } from './capabilities/overview/skillFiles';
 import { runNativeCommand } from './capabilities/nativeRunner';
-import { BROWSER_STATE_CHANNEL } from '@shared/browser';
+import { BROWSER_STATE_CHANNEL, type BrowserEntryState } from '@shared/browser';
 import { registerBrowserIpc } from './browser/browserIpc';
 import { BROWSER_SWEEP_INTERVAL_MS, BrowserRegistry } from './browser/browserRegistry';
 import { createBrowserAgent } from './browser/browserAgent';
@@ -148,6 +148,7 @@ import { createParkingWindow, electronBrowserDeps, electronImageDeps } from './b
 import { IsolatedBrowser } from './browser/isolatedBrowser';
 import { PenSessions } from './browser/penSession';
 import { createParkingHost, ViewPlacement } from './browser/viewPlacement';
+import { BrowserPopouts, type PopoutWindow } from './browser/browserPopout';
 import { libraryStatePath, loadLibraryState } from './capabilities/library/libraryState';
 import { LibraryService, type LibraryAccount } from './capabilities/library/libraryService';
 import { decideTestLibraryClaudeDir, testLibraryAccounts } from './capabilities/library/testLibraryAccount';
@@ -728,6 +729,8 @@ const sessionCoordinator = new SessionCoordinator({
     },
     release: (sessionId) => getConversationLocks().releaseWhere((holder) => holder === `session:${sessionId}`),
   },
+  // El navegador de Mage vive lo que su sesión: se cierra con ella (y su ventana propia), sin esperar al barrido.
+  onReleased: (sessionId) => void browserRegistry.close(sessionId),
   // A8: el corte pendiente de un rewind de Claude se borra en cuanto sale el siguiente mensaje.
   onUserMessageSent: (ref) => { if (ref.provider === 'claude') getRewindState().clearPendingCut(ref.nativeId); },
   // Keep-alive de la cache (F4.6). Para saber si una cuenta es de API basta su ficha: no se lee la clave de la boveda.
@@ -2977,16 +2980,21 @@ const hostOwnership = new HostOwnership({
 // D-M6: credencial por sesion que identifica al hijo ante `mage mcp`.
 const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordinator.ownerOf(id) !== undefined });
 // Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel o, sin panel, en la de aparcamiento (D-S3, Z01).
-const viewPlacement = new ViewPlacement(createParkingHost(createParkingWindow));
+const viewPlacement = new ViewPlacement<PopoutWindow>(createParkingHost(createParkingWindow));
 const browserRegistry = new BrowserRegistry({
   createBrowser: (instanceId, sessionId) => new IsolatedBrowser(instanceId, electronBrowserDeps, sessionCoordinator.rewindContext(sessionId).cwd),
   newId: randomUUID,
   isLive: (sessionId) => sessionCoordinator.ownerOf(sessionId) !== undefined,
-  onChange: (states) => windowManager.broadcast(BROWSER_STATE_CHANNEL, states),
+  onChange: broadcastBrowserStates,
   onOpened: (_sessionId, handle) => viewPlacement.ensureHosted(handle),
-  onClosed: (sessionId, handle) => { viewPlacement.forget(handle); penSessions.discard(sessionId); },
+  onClosed: (sessionId, handle) => { browserPopouts.forget(handle); penSessions.discard(sessionId); },
+  isPoppedOut: (handle) => viewPlacement.detachedWindowOf(handle) !== null,
   log: mainLog,
 });
+// Ventanas propias del navegador (una por navegador como mucho), por el id de su webContents: la IPC del navegador
+// las reconoce como ventanas de Mage y reciben su estado. No son del workbench: no salen en `windowManager`.
+const browserPopoutWindows = new Map<number, BrowserWindow>();
+const browserPopouts = new BrowserPopouts({ registry: browserRegistry, placement: viewPlacement, createWindow: createBrowserPopoutWindow });
 const penSessions = new PenSessions({ registry: browserRegistry, imageDeps: electronImageDeps, newId: randomUUID });
 const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinator, eventChannel: EVENT_CHANNEL });
 // D-M11: registro de main de las delegadas del MCP (uno para todas las conexiones).
@@ -4239,10 +4247,61 @@ function registerBrowserIpcFromMain(): void {
     registry: browserRegistry,
     placement: viewPlacement,
     pens: penSessions,
-    windowOf: (id) => { const windowId = windowManager.windowIdOf(id); return windowId === null ? null : windowManager.get(windowId); },
+    windowOf: browserIpcWindowOf,
     openExternal: (url) => openWithService.openExternal(url),
     isPackaged: app.isPackaged,
+    popouts: browserPopouts,
   });
+}
+
+// Quien habla con la IPC del navegador: una ventana del workbench o una ventana propia del navegador.
+function browserIpcWindowOf(webContentsId: number): BrowserWindow | null {
+  const windowId = windowManager.windowIdOf(webContentsId);
+  if (windowId !== null) return windowManager.get(windowId);
+  const popout = browserPopoutWindows.get(webContentsId);
+  return popout === undefined || popout.isDestroyed() ? null : popout;
+}
+
+function broadcastBrowserStates(states: readonly BrowserEntryState[]): void {
+  windowManager.broadcast(BROWSER_STATE_CHANNEL, states);
+  for (const popout of browserPopoutWindows.values()) {
+    if (!popout.isDestroyed()) popout.webContents.send(BROWSER_STATE_CHANNEL, states);
+  }
+}
+
+// Tamaño de la ventana propia del navegador al abrirse.
+const BROWSER_POPOUT_SIZE = { width: 1100, height: 800, minWidth: 480, minHeight: 360 } as const;
+
+// La ventana propia del navegador: una ventana de Mage (su preload, su sandbox y su CSP) que carga el renderer en su
+// modo «solo navegador» de una sesión (`?browserWindow=`). Sin barra de pestañas ni chat; la barra de título es la del SO.
+function createBrowserPopoutWindow(sessionId: string, title: string): BrowserWindow {
+  const window = new BrowserWindow({
+    ...BROWSER_POPOUT_SIZE,
+    show: false,
+    backgroundColor: resolveThemeBackgroundColor(),
+    webPreferences: { additionalArguments: isDev ? ['--mage-development'] : [], preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  const contentsId = window.webContents.id;
+  browserPopoutWindows.set(contentsId, window);
+  window.on('closed', () => browserPopoutWindows.delete(contentsId));
+  installNavigationGuard(window.webContents, (url) => isRendererUrl(url, { devUrl: process.env['ELECTRON_RENDERER_URL'], rendererDir }), logBlockedNavigation);
+  window.on('ready-to-show', () => showBrowserPopout(window));
+  const query = { browserWindow: sessionId, title };
+  const devUrl = process.env['ELECTRON_RENDERER_URL'];
+  if (devUrl) void window.loadURL(`${devUrl}?${new URLSearchParams(query).toString()}`);
+  else void window.loadFile(join(currentDir, '../renderer/index.html'), { query });
+  return window;
+}
+
+// Como las ventanas del workbench: en las pruebas, fuera de la pantalla y sin robar el foco.
+function showBrowserPopout(window: BrowserWindow): void {
+  if (!backgroundTestRun) {
+    window.show();
+    return;
+  }
+  const { x, y } = offScreenPosition(screen.getAllDisplays().map((display) => display.bounds), window.getBounds().width);
+  window.setPosition(x, y);
+  window.showInactive();
 }
 
 function registerPromptIpc2(deps: IpcDependencies): void {

@@ -12,6 +12,7 @@ const stateOf = (sessionId: string): BrowserEntryState => ({
   loading: false,
   control: 'idle',
   lastAction: null,
+  poppedOut: false,
 });
 
 describe('useBrowserStore', () => {

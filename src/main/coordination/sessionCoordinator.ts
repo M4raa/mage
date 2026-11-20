@@ -80,6 +80,9 @@ export interface SessionCoordinatorDeps {
   // Bloqueo entre instancias (#55, F2.8): una sesion en segundo plano CON turno sigue teniendo su conversacion aunque
   // ya no tenga pestaña; la suelta al acabar el turno (segundo plano sin turno) o al parar.
   readonly conversationHold?: ConversationHold;
+  // La sesion deja de estar viva (parada, cerrada sin trabajo o caducada). Lo usa el navegador de Mage para cerrarse
+  // con ella al momento, y su ventana propia si la tiene, sin esperar al barrido.
+  readonly onReleased?: (sessionId: string) => void;
   // Se llama, si la sesion tiene su referencia nativa, justo despues de que un envio (directo o de la cola) llegue al
   // motor sin lanzar. Con ella main borra el corte pendiente de esa conversacion (A8): desde ese mensaje la hoja
   // nueva basta.
@@ -861,6 +864,7 @@ export class SessionCoordinator {
     this.deps.conversationHold?.release(sessionId);
     this.persist(tracked);
     this.notifyClosed(tracked);
+    this.deps.onReleased?.(sessionId);
   }
 
   private notifyClosed(tracked: Tracked): void {

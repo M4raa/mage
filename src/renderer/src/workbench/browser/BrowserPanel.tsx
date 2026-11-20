@@ -7,7 +7,8 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { Hint } from '../components/TranscriptHint';
 import { BrowserControlBar } from './BrowserControlBar';
 import { BrowserToolbar } from './BrowserToolbar';
-import { browserPanelViewOf, sameBounds, toWindowBounds } from './browserPanelModel';
+import { displayTitle } from '../conversationTitle';
+import { browserPanelViewOf, placesView, sameBounds, toWindowBounds, type BrowserPlace } from './browserPanelModel';
 import { ensureBrowserStateSync, useBrowserStore } from './browserStore';
 import { PenOverlay } from './PenOverlay';
 
@@ -17,6 +18,7 @@ ensureBrowserStateSync();
 
 // Cada cuántos ms se vuelve a medir el hueco por si el panel se mueve sin cambiar de tamaño.
 const BOUNDS_POLL_MS = 250;
+const NOTICE_ACTION = 'rounded-[6px] border border-mg-border-ctrl px-[10px] py-[4px] text-[11px] text-mg-body2 hover:bg-mg-hover hover:text-mg-body';
 
 function warnBounds(err: unknown): void {
   console.warn('No se pudo colocar el navegador', describeError(err));
@@ -64,25 +66,62 @@ function BrowserHost({ sessionId, state, enabled }: { readonly sessionId: string
   );
 }
 
-function BrowserPanelBody({ sessionId, state }: { readonly sessionId: string; readonly state: BrowserEntryState | null }): React.JSX.Element {
+// El navegador está en su ventana propia: el panel lo dice y deja traerlo de vuelta.
+function PoppedOutNotice({ sessionId }: { readonly sessionId: string }): React.JSX.Element {
+  const t = useT();
+  const [error, setError] = useState<string | null>(null);
+  const bringBack = (): void => {
+    setError(null);
+    window.mage.browserPopIn(sessionId).catch((err: unknown) => setError(describeError(err)));
+  };
+  return (
+    <div data-browser-panel data-browser-popped-out className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-[10px] p-[14px] text-center text-[11px] text-mg-muted">
+      <span>{t('chat.browser.poppedOut')}</span>
+      <button data-browser-pop-in onClick={bringBack} className={NOTICE_ACTION}>
+        {t('chat.browser.popIn')}
+      </button>
+      {error !== null && <div role="alert" className="text-[10.5px] text-mg-danger">{error}</div>}
+    </div>
+  );
+}
+
+interface BodyProps {
+  readonly sessionId: string;
+  readonly state: BrowserEntryState | null;
+  readonly place: BrowserPlace;
+}
+
+// El navegador entero (barra, control y hueco de la vista). El mismo en el panel y en su ventana propia; la pluma y
+// «Sacar a una ventana propia» solo en el panel (la pluma adjunta al borrador del chat, que vive en esta ventana).
+export function BrowserPanelBody({ sessionId, state, place }: BodyProps): React.JSX.Element {
   const tabId = usePaneTabId();
   const [penOpen, setPenOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inPanel = place === 'panel';
   const penActive = penOpen && state !== null;
+  const popOut = (): void => {
+    setError(null);
+    window.mage.browserPopOut({ sessionId, title: conversationTitleOf(tabId) }).catch((err: unknown) => setError(describeError(err)));
+  };
   return (
     // `h-full` y no solo `flex-1`: el contenedor de los paneles del dock no es flex, y con `flex-1` el panel medía lo que la
-    // barra de direcciones (39 px) y la vista nativa quedaba en un hueco de 0 px de alto (P-038: «google.com no pinta nada»).
-    <div data-browser-panel className="flex h-full min-h-0 flex-1 flex-col">
-      <BrowserToolbar sessionId={sessionId} state={state} onError={setError} onPen={() => setPenOpen(true)} />
+    // barra de direcciones (39 px) y la vista nativa quedaba en un hueco de 0 px de alto («google.com no pinta nada»).
+    <div data-browser-panel={place} className="flex h-full min-h-0 flex-1 flex-col">
+      <BrowserToolbar sessionId={sessionId} state={state} onError={setError} onPen={inPanel ? () => setPenOpen(true) : undefined} onPopOut={inPanel ? popOut : undefined} />
       {error !== null && (
         <div role="alert" className="px-[10px] py-[4px] text-[10.5px] text-mg-danger">
           {error}
         </div>
       )}
       {state !== null && <BrowserControlBar state={state} />}
-      {penActive ? <PenOverlay sessionId={sessionId} tabId={tabId} onDone={() => setPenOpen(false)} /> : <BrowserHost sessionId={sessionId} state={state} enabled={state !== null} />}
+      {penActive ? <PenOverlay sessionId={sessionId} tabId={tabId} onDone={() => setPenOpen(false)} /> : <BrowserHost sessionId={sessionId} state={state} enabled={placesView(state, place)} />}
     </div>
   );
+}
+
+function conversationTitleOf(tabId: string): string {
+  const tab = useWorkbenchStore.getState().tabs.find((candidate) => candidate.id === tabId);
+  return displayTitle(tab?.title ?? '');
 }
 
 export function BrowserPanel(): React.JSX.Element {
@@ -91,6 +130,7 @@ export function BrowserPanel(): React.JSX.Element {
   const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[tabId]);
   const view = browserPanelViewOf(sessionId, useBrowserStore((s) => s.states));
   if (view.kind === 'noSession') return <Hint text={t('chat.browser.noSession')} />;
-  if (view.kind === 'open') return <BrowserPanelBody key={view.state.sessionId} sessionId={view.state.sessionId} state={view.state} />;
-  return <BrowserPanelBody key={view.sessionId} sessionId={view.sessionId} state={null} />;
+  if (view.kind === 'closed') return <BrowserPanelBody key={view.sessionId} sessionId={view.sessionId} state={null} place="panel" />;
+  if (view.state.poppedOut) return <PoppedOutNotice key={view.state.sessionId} sessionId={view.state.sessionId} />;
+  return <BrowserPanelBody key={view.state.sessionId} sessionId={view.state.sessionId} state={view.state} place="panel" />;
 }

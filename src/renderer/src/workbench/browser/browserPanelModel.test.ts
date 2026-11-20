@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BrowserEntryState } from '@shared/browser';
-import { browserPanelViewOf, indexStates, sameBounds, shouldRevealBrowser, toWindowBounds } from './browserPanelModel';
+import { browserPanelViewOf, indexStates, placesView, sameBounds, shouldRevealBrowser, toWindowBounds } from './browserPanelModel';
 
 const stateOf = (sessionId: string, control: BrowserEntryState['control'] = 'idle'): BrowserEntryState => ({
   sessionId,
@@ -12,6 +12,7 @@ const stateOf = (sessionId: string, control: BrowserEntryState['control'] = 'idl
   loading: false,
   control,
   lastAction: null,
+  poppedOut: false,
 });
 
 describe('browserPanelViewOf', () => {
@@ -81,5 +82,24 @@ describe('shouldRevealBrowser', () => {
 
   it('shouldRevealBrowser_userControl_false', () => {
     expect(shouldRevealBrowser({}, indexStates([stateOf('A', 'user')]), 'A')).toBe(false);
+  });
+});
+
+describe('placesView', () => {
+  it('placesView_sinNavegador_false', () => {
+    expect(placesView(null, 'panel')).toBe(false);
+    expect(placesView(null, 'window')).toBe(false);
+  });
+
+  it('placesView_dentro_soloElPanel', () => {
+    expect(placesView(stateOf('A'), 'panel')).toBe(true);
+    expect(placesView(stateOf('A'), 'window')).toBe(false);
+  });
+
+  it('placesView_fuera_soloLaVentanaPropia', () => {
+    const out = { ...stateOf('A'), poppedOut: true };
+
+    expect(placesView(out, 'panel')).toBe(false);
+    expect(placesView(out, 'window')).toBe(true);
   });
 });

@@ -382,6 +382,8 @@ export const IpcChannel = {
   BrowserZoom: 'browser:zoom',
   BrowserOpenExternal: 'browser:open-external',
   BrowserDevTools: 'browser:devtools',
+  BrowserPopOut: 'browser:pop-out',
+  BrowserPopIn: 'browser:pop-in',
   BrowserClose: 'browser:close',
   BrowserSetBounds: 'browser:set-bounds',
   BrowserTakeControl: 'browser:take-control',
@@ -1420,6 +1422,9 @@ export interface MageApi {
   browserOpenExternal(sessionId: string): Promise<void>;
   // Solo sin empaquetar (`isDevelopment`); empaquetada, main lo rechaza.
   browserDevTools(sessionId: string): Promise<void>;
+  // Saca la MISMA vista a una ventana propia de Mage (sin recargar) y la trae de vuelta. `title`: el de la conversación.
+  browserPopOut(params: { readonly sessionId: string; readonly title: string }): Promise<void>;
+  browserPopIn(sessionId: string): Promise<void>;
   browserClose(sessionId: string): Promise<void>;
   browserSetBounds(params: { readonly sessionId: string; readonly bounds: BrowserBounds | null }): Promise<void>;
   browserTakeControl(sessionId: string): Promise<void>;

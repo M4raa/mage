@@ -47,6 +47,7 @@ function setup(liveSessions: string[] = ['s1']) {
     onChange: vi.fn(),
     onOpened: vi.fn(),
     onClosed: vi.fn(),
+    isPoppedOut: vi.fn((_handle: BrowserHandle) => false),
     log: vi.fn(),
   } satisfies BrowserRegistryDeps;
   return { registry: new BrowserRegistry(deps), deps, handles, live };
@@ -120,7 +121,7 @@ describe('BrowserRegistry beginAgentAction', () => {
 
     registry.beginAgentAction('s1', 'read_dom');
 
-    expect(registry.states()[0]).toMatchObject({ sessionId: 's1', control: 'agent', lastAction: 'read_dom' });
+    expect(registry.states()[0]).toMatchObject({ sessionId: 's1', control: 'agent', lastAction: 'read_dom', poppedOut: false });
   });
 });
 
@@ -260,5 +261,23 @@ describe('BrowserRegistry close and sweep', () => {
 
     expect(handles.map((handle) => handle.close.mock.calls.length)).toEqual([1, 1]);
     expect(registry.states()).toEqual([]);
+  });
+
+  it('states_poppedOut_readsFromPlacement', () => {
+    const { registry, deps, handles } = setup(['s1']);
+    registry.open('s1');
+    deps.isPoppedOut.mockImplementation((handle) => handle === (handles[0] as unknown as BrowserHandle));
+
+    expect(registry.states()[0]?.poppedOut).toBe(true);
+  });
+
+  it('notifyChange_emitsCurrentStates', () => {
+    const { registry, deps } = setup(['s1']);
+    registry.open('s1');
+    deps.onChange.mockClear();
+
+    registry.notifyChange();
+
+    expect(deps.onChange).toHaveBeenCalledWith(registry.states());
   });
 });

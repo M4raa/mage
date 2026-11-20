@@ -48,6 +48,8 @@ export interface BrowserRegistryDeps {
   readonly onChange: (states: readonly BrowserEntryState[]) => void;
   readonly onOpened: (sessionId: string, handle: BrowserHandle) => void; // S03: colocar la vista
   readonly onClosed: (sessionId: string, handle: BrowserHandle) => void; // S03: quitarla de su ventana
+  // ¿Está en su ventana propia? Lo sabe `ViewPlacement`, que es quien decide dónde está la vista.
+  readonly isPoppedOut: (handle: BrowserHandle) => boolean;
   readonly log: (level: 'info' | 'warn', message: string, data?: unknown) => void;
 }
 
@@ -156,7 +158,13 @@ export class BrowserRegistry {
       sessionId,
       control: entry.control,
       lastAction: entry.lastAction,
+      poppedOut: this.deps.isPoppedOut(entry.handle),
     }));
+  }
+
+  // Algo de fuera del registro cambió el estado que enseña el panel (la ventana propia).
+  notifyChange(): void {
+    this.emit();
   }
 
   private requireEntry(sessionId: string, message?: string): Entry {
