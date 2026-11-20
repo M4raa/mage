@@ -100,6 +100,14 @@ export class HostClientStore {
   }
 }
 
+const MAX_CLIENT_ID_CHARS = 128;
+
+// El id que manda la ventana para revocar: se valida antes de tocar el almacén.
+export function parseClientId(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_CLIENT_ID_CHARS) throw new Error(`Id de cliente del host inválido: ${JSON.stringify(value)}`);
+  return value;
+}
+
 // Lectura tolerante: una entrada inválida se descarta (ese cliente tendrá que volver a emparejarse) y un fichero
 // ilegible cuenta como vacío. Las dos cosas se trazan: nunca en silencio. Fallar hacia «sin clientes» es lo seguro.
 export function parseClients(text: string | null, log: SessionLogFn): ClientRecord[] {

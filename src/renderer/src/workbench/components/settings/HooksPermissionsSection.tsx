@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useWorkbenchStore } from '../../workbenchStore';
 import { useSharedConfigStore } from '../../sharedConfigStore';
 import { CommonRulesEditor } from './CommonRulesEditor';
+import { HostClientsList } from './HostClientsList';
 import type { EffectiveSettings, HookEntry, PermissionRule, SettingsOrigin } from '@shared/ipc';
 import { useT } from '../../../i18n/uiLanguage';
 import { describeError } from '../../describeError';
@@ -88,6 +89,7 @@ export function HooksPermissionsSection(): React.JSX.Element {
         <CommonRulesEditor />
       </div>
       <HostPermissionAnswersToggle />
+      <HostClientsList />
     </div>
   );
 }

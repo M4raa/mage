@@ -382,6 +382,8 @@ const api: MageApi = {
     return () => ipcRenderer.removeListener(HOST_PAIR_REQUESTS_CHANNEL, handler);
   },
   answerHostPair: (answer: HostPairAnswer) => ipcRenderer.invoke(IpcChannel.HostPairAnswer, answer),
+  listHostClients: () => ipcRenderer.invoke(IpcChannel.HostClientsList),
+  revokeHostClient: (clientId: string) => ipcRenderer.invoke(IpcChannel.HostClientsRevoke, clientId),
   getUpdateState: () => ipcRenderer.invoke(IpcChannel.UpdateGetState),
   onUpdateState: (listener: (state: UpdateState) => void) => {
     const handler = (_: unknown, state: UpdateState) => listener(state);

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { hashClientToken } from './hostAccess';
-import { HostClientStore, parseClients } from './hostClients';
+import { HostClientStore, parseClientId, parseClients } from './hostClients';
 
 const NOW = '2026-11-20T10:00:00.000Z';
 const LATER = '2026-11-20T11:00:00.000Z';
@@ -108,6 +108,19 @@ describe('HostClientStore', () => {
     const second = harness(first.file());
 
     expect(second.store.authenticate(paired.clientToken)).toBe(paired.clientId);
+  });
+});
+
+describe('parseClientId', () => {
+  it('parseClientId_texto_loDevuelve', () => {
+    expect(parseClientId('id-1')).toBe('id-1');
+  });
+
+  it('parseClientId_invalido_lanzaConElValor', () => {
+    expect(() => parseClientId('')).toThrow(/""/);
+    expect(() => parseClientId(7)).toThrow(/7/);
+    expect(() => parseClientId('x'.repeat(129))).toThrow();
+    expect(() => parseClientId(undefined)).toThrow(/inválido/);
   });
 });
 

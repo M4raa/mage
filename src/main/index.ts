@@ -303,7 +303,7 @@ import { DelegatedCloser } from './mcpServer/delegatedCloser';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
 import { resolvedPath } from './os/resolvedPath';
 import { readSnapshot, writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
-import { HOST_CLIENTS_FILE, HostClientStore } from './host/hostClients';
+import { HOST_CLIENTS_FILE, HostClientStore, parseClientId } from './host/hostClients';
 import { HostPairing, parseHostPairAnswer } from './host/hostPairing';
 import { HOST_PAIR_REQUESTS_CHANNEL } from '@shared/hostClients';
 import { SettingsStore } from './state/settingsStore';
@@ -3687,6 +3687,8 @@ function registerDialogIpc1(): void {
     const { requestId, approve } = parseHostPairAnswer(answer);
     hostPairing.answer(requestId, approve);
   });
+  ipcMain.handle(IpcChannel.HostClientsList, () => hostClientStore.list());
+  ipcMain.handle(IpcChannel.HostClientsRevoke, (_event, clientId: unknown) => hostClientStore.revoke(parseClientId(clientId)));
   ipcMain.handle(IpcChannel.UpdateGetState, () => getUpdateState());
   ipcMain.handle(IpcChannel.UpdateInstall, () => installUpdate());
   ipcMain.handle(IpcChannel.UpdateCheck, () => checkForUpdatesNow());

@@ -3,7 +3,7 @@
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
 import type { UsageHistory } from './usageHistory';
-import type { HostPairAnswer, HostPairRequestView } from './hostClients';
+import type { HostClientView, HostPairAnswer, HostPairRequestView } from './hostClients';
 import type { BrowserBounds, BrowserEntryState, BrowserPenCapture, BrowserPenResult, BrowserPenStroke, BrowserZoomStep } from './browser';
 import type { ConversationLockParams, ConversationLockRef, ConversationLockStatus } from './conversationLock';
 import type { ResolvedUiLanguage } from './i18n/language';
@@ -356,6 +356,9 @@ export const IpcChannel = {
   // Emparejamiento del host local: las peticiones pendientes (para una ventana que carga tarde) y la respuesta.
   HostPairPending: 'host:pairPending',
   HostPairAnswer: 'host:pairAnswer',
+  // Clientes emparejados (Configuración › Hooks y permisos): listar y revocar.
+  HostClientsList: 'host:clientsList',
+  HostClientsRevoke: 'host:clientsRevoke',
   // Estado de la actualizacion (para una ventana que carga tarde) e instalarla ya descargada.
   UpdateGetState: 'update:getState',
   UpdateInstall: 'update:install',
@@ -1445,6 +1448,9 @@ export interface MageApi {
   getHostPairRequests(): Promise<readonly HostPairRequestView[]>;
   onHostPairRequests(listener: (pending: readonly HostPairRequestView[]) => void): () => void;
   answerHostPair(answer: HostPairAnswer): Promise<void>;
+  listHostClients(): Promise<readonly HostClientView[]>;
+  // Revoca y corta sus conexiones. false si ya no existía.
+  revokeHostClient(clientId: string): Promise<boolean>;
   getUpdateState(): Promise<UpdateState>;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
   // main pide a ESTA ventana el dialogo de «lista para instalar» de la version dada.

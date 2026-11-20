@@ -2240,6 +2240,13 @@ export interface MessageValues {
   readonly "settings.hooks.hooksHeading": { readonly "count": string | number };
   readonly "settings.hooks.hostAnswers.hint": never;
   readonly "settings.hooks.hostAnswers.label": never;
+  readonly "settings.hooks.hostClients.empty": never;
+  readonly "settings.hooks.hostClients.failed": { readonly "error": string | number };
+  readonly "settings.hooks.hostClients.heading": never;
+  readonly "settings.hooks.hostClients.hint": never;
+  readonly "settings.hooks.hostClients.meta": { readonly "created": string | number; readonly "kind": string | number; readonly "lastUsed": string | number };
+  readonly "settings.hooks.hostClients.never": never;
+  readonly "settings.hooks.hostClients.revoke": never;
   readonly "settings.hooks.intro.editable": never;
   readonly "settings.hooks.intro.end": never;
   readonly "settings.hooks.intro.readOnly": never;

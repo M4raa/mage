@@ -9,7 +9,7 @@ import { DialogButton } from './CloseMageDialog';
 // «¿Autorizas a … a controlar Mage?»: un cliente del host local (la terminal) pide emparejarse. Main decide y guarda;
 // aquí solo se pregunta. `Esc` o clic fuera = Rechazar, que además lleva el foco inicial (un Enter distraído no
 // concede nada). Con varias peticiones, se contestan de una en una.
-const KIND_KEY = {
+export const HOST_CLIENT_KIND_KEY = {
   terminal: 'dialogs.hostPair.kind.terminal',
   mcp: 'dialogs.hostPair.kind.mcp',
   widget: 'dialogs.hostPair.kind.widget',
@@ -63,7 +63,7 @@ function HostPairBody({ request }: { readonly request: HostPairRequestView }): R
         className="flex w-[440px] flex-col gap-[12px] rounded-[11px] border border-mg-border-pop bg-mg-panel p-[18px] text-[12px] mg-shadow-modal"
       >
         <div id="host-pair-title" className="text-[13px] font-bold text-mg-text [overflow-wrap:anywhere]">
-          {t('dialogs.hostPair.title', { name: request.clientName, kind: t(KIND_KEY[request.clientKind]) })}
+          {t('dialogs.hostPair.title', { name: request.clientName, kind: t(HOST_CLIENT_KIND_KEY[request.clientKind]) })}
         </div>
         <p id="host-pair-body" className="leading-[1.55] text-mg-body2">{t('dialogs.hostPair.body')}</p>
         <div className="mt-[2px] flex justify-end gap-[8px]">
