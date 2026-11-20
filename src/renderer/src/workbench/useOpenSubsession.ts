@@ -20,6 +20,7 @@ export function useOpenSubsession(): (conversationId: string) => void {
     const target = findSubsession(conversationId, { tabs: state.tabs, sessionIdByChat: state.sessionIdByChat, history: state.allConversationHistory });
     if (target.kind === 'tab') {
       state.setActiveTab(target.tabId);
+      state.focusPrompt();
       return;
     }
     if (target.kind === 'history') {

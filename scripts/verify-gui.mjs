@@ -13454,6 +13454,28 @@ const CHECKS = [
     },
   },
   {
+    // Sin Enter: la letra sin enviar dice en qué panel está escribiendo de verdad el usuario.
+    name: 'Pestañas: Ctrl+Tab en un split deja el teclado en la pestaña marcada',
+    async run(page) {
+      const previo = await snapshotTabsState(page);
+      try {
+        const { tabA, tabB } = await openFocusedSplitPair(page);
+        await page.keyboard.press('Control+Shift+Tab');
+        await page.waitForTimeout(CONFIG.settleMs);
+        const tras = await medirPestanaDescuadrada(page);
+        await page.keyboard.type('q');
+        await page.waitForTimeout(CONFIG.settleMs);
+        const textos = { a: await editorTextOf(page, tabA), b: await editorTextOf(page, tabB) };
+        const marcada = tras.marcada === tabA ? textos.a : textos.b;
+        const otra = tras.marcada === tabA ? textos.b : textos.a;
+        const ok = !pestanaDescuadrada(tras) && marcada === 'q' && otra !== 'q';
+        return { ok, detail: JSON.stringify({ tabA, tabB, tras, textos }) };
+      } finally {
+        await restoreTabsState(page, previo);
+      }
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del

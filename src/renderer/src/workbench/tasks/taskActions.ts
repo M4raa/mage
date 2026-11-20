@@ -39,6 +39,7 @@ export function openTaskConversation(task: TaskRecord, translate: typeof t): voi
   const tab = state.tabs.find((candidate) => taskOfTab([task], candidate, state.sessionIdByChat[candidate.id]) !== undefined);
   if (tab !== undefined) {
     state.setActiveTab(tab.id);
+    state.focusPrompt();
     return;
   }
   const entry = state.allConversationHistory.find((candidate) => task.conversationId !== null && candidate.item.sessionId === task.conversationId);

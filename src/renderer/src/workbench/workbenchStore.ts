@@ -2009,6 +2009,7 @@ export function createWorkbenchStore(mage: MageClient) {
       const next = tabs[nextIndex];
       if (next === undefined) return;
       get().setActiveTab(next.id);
+      get().focusPrompt(); // el teclado va con la pestaña marcada, no se queda en el otro panel
     },
 
     // Import DINAMICO (no estatico arriba) a proposito: panelLayoutStore.ts importa PANEL_REGISTRY de
@@ -2082,6 +2083,7 @@ export function createWorkbenchStore(mage: MageClient) {
           if (tab === undefined) return;
           get().setActiveAccount(tab.accountId);
           get().setActiveTab(tabId);
+          get().focusPrompt();
         });
         mage.onNotificationClicked((target) => get().focusNotificationTarget(target));
         mage.onWidgetEnabledChanged((enabled) => {
