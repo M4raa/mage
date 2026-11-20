@@ -8,7 +8,6 @@ import { reportActionError } from '../notificationStore';
 import { conversationIdOfTab } from '../conversationId';
 import { conversationSizeById } from '../sidebarModel';
 import { formatSize } from '../conversationList';
-import { contextPctOf } from '../contextView';
 import type { Account } from '../types';
 import type { StatusIndicator, StatusInfo } from '@shared/status';
 import { formatMicroUsd } from '@shared/usage';
@@ -143,7 +142,6 @@ function AccountStatus({ account }: { readonly account: Account }): React.JSX.El
   });
   const apiUsage = useWorkbenchStore((s) => s.usageByAccount[account.id]?.apiUsage);
   // Ocupación de la ventana de contexto de la pestaña activa que reporta el CLI; sin dato todavía, no se pinta.
-  const contextPct = useWorkbenchStore((s) => contextPctOf(s.contextUsageByChat[s.activeTabId]));
   const refreshUsage = useWorkbenchStore((s) => s.refreshUsage);
   const accounts = useWorkbenchStore((s) => s.accounts);
   const refreshAll = (): void => {
@@ -194,11 +192,6 @@ function AccountStatus({ account }: { readonly account: Account }): React.JSX.El
       {sizeBytes > 0 && (
         <span data-status-size="true" data-volatile-text="true" title={t('sidebar.history.sizeOnDisk', { bytes: formatInteger(sizeBytes) })} className="-ml-[8px]">
           <span aria-hidden="true">· </span>{formatSize(sizeBytes)}
-        </span>
-      )}
-      {contextPct !== null && (
-        <span data-status-context={contextPct} data-tip={t('tabs.subline.contextTip')} className="-ml-[8px] cursor-help tabular-nums">
-          <span aria-hidden="true">· </span>{t('tabs.subline.context', { pct: contextPct })}
         </span>
       )}
     </>

@@ -14,7 +14,7 @@ function collector() {
   return { write: (text) => { chunks.push(text); return true; }, text: () => chunks.join('') };
 }
 
-async function start({ env = {}, connect } = {}) {
+async function start({ env = {}, connect, access = 'tunnel' } = {}) {
   const socket = new EventEmitter();
   let notify = () => undefined;
   const rpc = { notify: vi.fn(), close: vi.fn(), onNotification: (listener) => { notify = listener; } };
@@ -22,10 +22,45 @@ async function start({ env = {}, connect } = {}) {
   const stdout = collector();
   const stderr = collector();
   const exit = vi.fn();
-  const connectFn = connect ?? vi.fn(async () => ({ rpc, socket }));
+  const connectFn = connect ?? vi.fn(async () => ({ rpc, socket, hello: { protocol: '1.8', access } }));
   await runMcpRelay({ connect: connectFn, stdin, stdout, stderr, env, messages, exit });
   return { rpc, socket, stdin, stdout, stderr, exit, connect: connectFn, hostSays: (method, params) => notify(method, params) };
 }
+
+describe('runMcpRelay — acceso (host 1.8)', () => {
+  it('relay_hostSoloDaLectura_saleConMotivoSinReenviarNada', async () => {
+    const h = await start({ access: 'read' });
+
+    h.stdin.write('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n');
+    await tick();
+
+    expect(h.exit).toHaveBeenCalledWith(1);
+    expect(h.stderr.text()).toContain(messages.mcpNotMageSession());
+    expect(h.rpc.close).toHaveBeenCalledTimes(1);
+    expect(h.rpc.notify).not.toHaveBeenCalled();
+  });
+
+  it.each(['tunnel', 'full'])('relay_acceso_%s_reenvia', async (access) => {
+    const h = await start({ access });
+
+    h.stdin.write('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n');
+    await tick();
+
+    expect(h.exit).not.toHaveBeenCalled();
+    expect(h.rpc.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('relay_hostAnteriorSinAccess_reenvia', async () => {
+    const rpc = { notify: vi.fn(), close: vi.fn(), onNotification: () => undefined };
+    const h = await start({ connect: async () => ({ rpc, socket: new EventEmitter(), hello: { protocol: '1.7' } }) });
+
+    h.stdin.write('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n');
+    await tick();
+
+    expect(h.exit).not.toHaveBeenCalled();
+    expect(rpc.notify).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('runMcpRelay', () => {
   it('relay_stdinLine_notifiesHost', async () => {

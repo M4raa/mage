@@ -229,6 +229,11 @@ const ES = {
   mcpConnectFailed: (detail) => `No se pudo conectar con Mage: ${detail}`,
   mcpBadLine: () => 'Línea de entrada que no es JSON: se ignora.',
   mcpHostClosed: () => 'Mage cerró la conexión.',
+  mcpNotMageSession: () => '`mage mcp` solo funciona desde una sesión de Mage: este proceso no trae la credencial de una sesión viva.',
+  pairingAsk: () => '[esta terminal aún no está emparejada con Mage: autorízala en la ventana de Mage para seguir]',
+  pairingDone: () => '[terminal emparejada: no se volverá a preguntar. Puedes revocarla en Configuración › Hooks y permisos]',
+  pairingNeedsWindow: () => 'Esta terminal aún no está emparejada con Mage y no hay ningún Mage abierto con este perfil: abre Mage (con su ventana) y vuelve a lanzar el comando para autorizarla.',
+  notPairedLocal: () => 'Esta terminal ya no está emparejada con Mage (se revocó en Configuración): vuelve a lanzar el comando para emparejarla de nuevo.',
   accountKeyPrompt: () => 'Clave de API (no se verá al escribir):',
   accountAdded: (account) => `Cuenta dada de alta: ${account.provider} · ${account.name} · ${account.billing}`,
 };
@@ -308,6 +313,11 @@ const EN = {
   mcpConnectFailed: (detail) => `Could not connect to Mage: ${detail}`,
   mcpBadLine: () => 'Input line is not JSON: ignored.',
   mcpHostClosed: () => 'Mage closed the connection.',
+  mcpNotMageSession: () => '`mage mcp` only works from a Mage session: this process does not carry the credential of a live session.',
+  pairingAsk: () => '[this terminal is not paired with Mage yet: authorize it in the Mage window to continue]',
+  pairingDone: () => '[terminal paired: you will not be asked again. You can revoke it in Settings › Hooks and permissions]',
+  pairingNeedsWindow: () => 'This terminal is not paired with Mage yet and no Mage is open with this profile: open Mage (with its window) and run the command again to authorize it.',
+  notPairedLocal: () => 'This terminal is no longer paired with Mage (it was revoked in Settings): run the command again to pair it again.',
   accountKeyPrompt: () => 'API key (hidden while typing):',
   accountAdded: (account) => `Account added: ${account.provider} · ${account.name} · ${account.billing}`,
 };

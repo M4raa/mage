@@ -14,18 +14,21 @@ function createHandle() {
     view: {},
     navigate: vi.fn(async (url: string) => url),
     back: vi.fn(() => true),
+    forward: vi.fn(() => true),
     reload: vi.fn(),
+    zoom: vi.fn((_step: number) => 110),
+    openDevTools: vi.fn(),
     close: vi.fn(async () => undefined),
     releaseControl: vi.fn(),
     isUsable: true,
-    state: vi.fn(() => ({ url: 'http://localhost:4000/', title: 'Prueba', canGoBack: false, loading: false })),
+    state: vi.fn(() => ({ url: 'http://localhost:4000/', title: 'Prueba', canGoBack: false, canGoForward: false, loading: false, zoomPercent: 100 })),
     onStateChange: vi.fn(() => vi.fn()),
     setBounds: vi.fn(),
     setVisible: vi.fn(),
   };
 }
 
-function setup(liveSessions: string[] = ['A']) {
+function setup(liveSessions: string[] = ['A'], isPackaged = false) {
   const handles: ReturnType<typeof createHandle>[] = [];
   const registry = new BrowserRegistry({
     createBrowser: () => {
@@ -38,11 +41,14 @@ function setup(liveSessions: string[] = ['A']) {
     onChange: vi.fn(),
     onOpened: vi.fn(),
     onClosed: vi.fn(),
+    isPoppedOut: () => false,
     log: vi.fn(),
   });
   const placement = { show: vi.fn(), hide: vi.fn() };
   const pens = { capture: vi.fn(), compose: vi.fn() };
   const window = {} as PlacementWindow;
+  const openExternal = vi.fn(async (_url: string) => undefined);
+  const popouts = { popOut: vi.fn(), popIn: vi.fn() };
   const handlers = new Map<string, (event: typeof OWN, arg: unknown) => unknown>();
   registerBrowserIpc({
     handle: (channel, listener) => void handlers.set(channel, listener),
@@ -50,13 +56,16 @@ function setup(liveSessions: string[] = ['A']) {
     placement: placement as unknown as ViewPlacement,
     pens: pens as unknown as PenSessions,
     windowOf: (id) => (id === 1 ? window : null),
+    openExternal,
+    isPackaged,
+    popouts,
   });
   const call = async (channel: string, arg?: unknown, event = OWN) => {
     const handler = handlers.get(channel);
     if (handler === undefined) throw new Error(`Canal sin manejador: ${channel}`);
     return handler(event, arg);
   };
-  return { registry, handles, placement, pens, window, call };
+  return { registry, handles, placement, pens, window, openExternal, popouts, call };
 }
 
 async function keyOf(action: Promise<unknown>): Promise<string | undefined> {
@@ -121,13 +130,13 @@ describe('registerBrowserIpc', () => {
     );
   });
 
-  it('setBounds_null_hides', async () => {
-    const { call, registry, placement } = setup();
+  it('setBounds_null_hidesFromSenderWindow', async () => {
+    const { call, registry, placement, window } = setup();
     registry.open('A');
 
     await call(IpcChannel.BrowserSetBounds, { sessionId: 'A', bounds: null });
 
-    expect(placement.hide).toHaveBeenCalledTimes(1);
+    expect(placement.hide).toHaveBeenCalledWith(expect.anything(), window);
     expect(placement.show).not.toHaveBeenCalled();
   });
 
@@ -203,6 +212,99 @@ describe('registerBrowserIpc', () => {
     expect(await keyOf(call(IpcChannel.BrowserPenCompose, { sessionId: 'A', captureId: 'c1', strokes: [] }))).toBe(
       'errors.browser.penCaptureExpired',
     );
+  });
+
+  it('forward_whileAgent_takesControlAndGoesForward', async () => {
+    const { call, registry, handles } = setup();
+    registry.beginAgentAction('A', 'navigate');
+
+    await call(IpcChannel.BrowserForward, 'A');
+
+    expect(registry.states()[0]?.control).toBe('user');
+    expect(handles[0]?.forward).toHaveBeenCalledTimes(1);
+  });
+
+  it('zoom_validStep_delegatesStep', async () => {
+    const { call, registry, handles } = setup();
+    registry.open('A');
+
+    await call(IpcChannel.BrowserZoom, { sessionId: 'A', step: -1 });
+
+    expect(handles[0]?.zoom).toHaveBeenCalledWith(-1);
+  });
+
+  it('zoom_stepOutOfRange_throwsWithValue', async () => {
+    const { call, registry, handles } = setup();
+    registry.open('A');
+
+    await expect(call(IpcChannel.BrowserZoom, { sessionId: 'A', step: 2 })).rejects.toThrow(/inválida.*"step":2/s);
+    expect(handles[0]?.zoom).not.toHaveBeenCalled();
+  });
+
+  it('openExternal_open_passesCurrentUrlFromBrowser', async () => {
+    const { call, registry, handles, openExternal } = setup();
+    registry.open('A');
+    handles[0]?.state.mockReturnValue({ url: 'https://example.com/b', title: 'B', canGoBack: true, canGoForward: false, loading: false, zoomPercent: 100 });
+
+    await call(IpcChannel.BrowserOpenExternal, 'A');
+
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/b');
+  });
+
+  it('openExternal_fileUrl_errorReachesCaller', async () => {
+    const { call, registry, handles, openExternal } = setup();
+    registry.open('A');
+    handles[0]?.state.mockReturnValue({ url: 'file:///C:/proyecto/index.html', title: '', canGoBack: false, canGoForward: false, loading: false, zoomPercent: 100 });
+    openExternal.mockRejectedValueOnce(new Error('Solo https: "file:///C:/proyecto/index.html"'));
+
+    await expect(call(IpcChannel.BrowserOpenExternal, 'A')).rejects.toThrow('Solo https: "file:///C:/proyecto/index.html"');
+  });
+
+  it('openExternal_noBrowser_browserNotOpenKey', async () => {
+    const { call, openExternal } = setup();
+
+    expect(await keyOf(call(IpcChannel.BrowserOpenExternal, 'A'))).toBe('errors.browser.browserNotOpen');
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it('devTools_unpackaged_opensDevTools', async () => {
+    const { call, registry, handles } = setup();
+    registry.open('A');
+
+    await call(IpcChannel.BrowserDevTools, 'A');
+
+    expect(handles[0]?.openDevTools).toHaveBeenCalledTimes(1);
+  });
+
+  it('devTools_packaged_throwsWithSession', async () => {
+    const { call, registry, handles } = setup(['A'], true);
+    registry.open('A');
+
+    await expect(call(IpcChannel.BrowserDevTools, 'A')).rejects.toThrow(/sin empaquetar \(sesión A\)/);
+    expect(handles[0]?.openDevTools).not.toHaveBeenCalled();
+  });
+
+  it('popOut_valid_delegatesSessionAndTitle', async () => {
+    const { call, popouts } = setup();
+
+    await call(IpcChannel.BrowserPopOut, { sessionId: 'A', title: 'Mi conversación' });
+
+    expect(popouts.popOut).toHaveBeenCalledWith('A', 'Mi conversación');
+  });
+
+  it('popOut_missingTitle_throwsWithValue', async () => {
+    const { call, popouts } = setup();
+
+    await expect(call(IpcChannel.BrowserPopOut, { sessionId: 'A' })).rejects.toThrow(/inválida.*title.*"sessionId":"A"/s);
+    expect(popouts.popOut).not.toHaveBeenCalled();
+  });
+
+  it('popIn_delegatesSession', async () => {
+    const { call, popouts } = setup();
+
+    await call(IpcChannel.BrowserPopIn, 'A');
+
+    expect(popouts.popIn).toHaveBeenCalledWith('A');
   });
 
   it('open_deadSession_sessionNotLiveKey', async () => {

@@ -46,8 +46,8 @@ export type SettingsActionName =
   | 'setAgyCommandVerdict'
   | 'setAgyLinkedPaths'
   | 'setDefaultProvider'
-  | 'setArtifactEnabled'
   | 'setHostPermissionAnswers'
+  | 'setLinksOpenExternally'
   | 'setKeepAlive'
   | 'setIdleCloseMinutes'
   | 'setDelegationDepth'
@@ -57,6 +57,7 @@ export type SettingsActionName =
   | 'setOnboardingCompleted'
   | 'setScratchRetention'
   | 'setCloseBehavior'
+  | 'setRunningTabClose'
   | 'setNewConversationFolder'
   | 'setImportedContextMaxChars'
   | 'setBackgroundOpacity'
@@ -238,13 +239,13 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
       deps.persistSettings();
     },
 
-    setArtifactEnabled: (enabled) => {
-      set((s) => ({ settings: { ...s.settings, artifactEnabled: enabled } }));
+    setHostPermissionAnswers: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, hostPermissionAnswers: enabled } }));
       deps.persistSettings();
     },
 
-    setHostPermissionAnswers: (enabled) => {
-      set((s) => ({ settings: { ...s.settings, hostPermissionAnswers: enabled } }));
+    setLinksOpenExternally: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, linksOpenExternally: enabled } }));
       deps.persistSettings();
     },
 
@@ -307,6 +308,11 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
 
     setCloseBehavior: (behavior) => {
       set((s) => ({ settings: { ...s.settings, closeBehavior: behavior } }));
+      deps.persistSettings();
+    },
+
+    setRunningTabClose: (behavior) => {
+      set((s) => ({ settings: { ...s.settings, runningTabClose: behavior } }));
       deps.persistSettings();
     },
 

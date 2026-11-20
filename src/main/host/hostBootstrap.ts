@@ -21,6 +21,9 @@ export interface HostBootstrapDeps {
   readonly control: HostControl;
   readonly rewind: HostConnectionDeps['rewind'];
   readonly mcp: HostConnectionDeps['mcp'];
+  readonly isMageCaller: HostConnectionDeps['isMageCaller'];
+  readonly clients: HostConnectionDeps['clients'];
+  readonly pairing: HostConnectionDeps['pairing'];
   readonly hostVersion: string;
   readonly log: SessionLogFn;
   readonly newId: () => string;
@@ -44,7 +47,7 @@ export async function startLocalHost(deps: HostBootstrapDeps): Promise<HostServe
     token: createHostToken({ randomBytes: deps.randomBytes ?? randomBytes }),
     fs: deps.fs,
     getuid: deps.getuid,
-    connection: { sessions: deps.sessions, hostVersion: deps.hostVersion, log: deps.log, newId: deps.newId, setTimer: deps.setTimer, translate: deps.translate, mode: deps.mode, control: deps.control, rewind: deps.rewind, mcp: deps.mcp },
+    connection: { sessions: deps.sessions, hostVersion: deps.hostVersion, log: deps.log, newId: deps.newId, setTimer: deps.setTimer, translate: deps.translate, mode: deps.mode, control: deps.control, rewind: deps.rewind, mcp: deps.mcp, isMageCaller: deps.isMageCaller, clients: deps.clients, pairing: deps.pairing },
   });
   deps.log('info', 'Host local escuchando', { kind: endpoint.kind, mode: deps.mode });
   return handle;

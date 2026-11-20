@@ -9,7 +9,7 @@ import { SessionCoordinator, type ConversationHold, type ConversationIdentityInd
 const ACCOUNT = '/home/u/.claude';
 
 // Gestor de sesiones falso: guarda el sumidero de cada sesion para emitir eventos a mano.
-function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnStart?: MageEvent; rules?: Record<string, readonly string[]>; hold?: ConversationHold } = {}) {
+function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnStart?: MageEvent; rules?: Record<string, readonly string[]>; hold?: ConversationHold; onReleased?: (sessionId: string) => void } = {}) {
   const sinks = new Map<string, (payload: SessionEventPayload) => void>();
   let next = 0;
   const sessions: CoordinatedSessions = {
@@ -51,6 +51,7 @@ function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnSt
   const coordinator = new SessionCoordinator({
     sessions, index, now: () => ++clock, log, newId: () => `cmd-${++ids}`, alwaysAllowTools, defer: (fn) => deferred.push(fn), setTimer,
     ...(options.hold === undefined ? {} : { conversationHold: options.hold }),
+    ...(options.onReleased === undefined ? {} : { onReleased: options.onReleased }),
   });
   const flush = () => { while (deferred.length > 0) deferred.shift()!(); };
   const received: SequencedSessionEvent[] = [];
@@ -759,6 +760,16 @@ describe('SessionCoordinator — cierre y segundo plano en main (F2.4)', () => {
     expect(h.sessions.stop).toHaveBeenCalledWith(id);
   });
 
+  it('closeByMage_avisaAntesDeParar', () => {
+    const h = harness();
+    const id = h.create();
+
+    h.coordinator.closeByMage(id);
+
+    expect(h.received.at(-1)!.event).toEqual({ kind: 'closed_by_mage' });
+    expect(h.sessions.stop).toHaveBeenCalledWith(id);
+  });
+
   it('stop_enSegundoPlano_cancelaLaCaducidad', () => {
     const h = harness();
     const id = h.create();
@@ -973,6 +984,32 @@ describe('SessionCoordinator — varios clientes por sesión (F2.6, H2 de la dev
 
     expect(a.onClosed).toHaveBeenCalledTimes(1);
     expect(b.onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  it('stop_avisaOnReleasedUnaVezTrasLosClientes', () => {
+    const onReleased = vi.fn();
+    const h = harness({ onReleased });
+    const id = h.create();
+    const a = listener();
+    h.coordinator.subscribe(id, a.listener);
+
+    h.coordinator.stop(id);
+    h.coordinator.stopAll();
+
+    expect(onReleased).toHaveBeenCalledTimes(1);
+    expect(onReleased).toHaveBeenCalledWith(id);
+    expect(a.onClosed.mock.invocationCallOrder[0]).toBeLessThan(onReleased.mock.invocationCallOrder[0]!);
+  });
+
+  it('close_conTrabajo_noAvisaOnReleased', () => {
+    const onReleased = vi.fn();
+    const h = harness({ onReleased });
+    const id = h.create();
+    h.emit(id, state('running'));
+
+    expect(h.coordinator.close(id)).toEqual({ background: true });
+
+    expect(onReleased).not.toHaveBeenCalled();
   });
 
   it('stopAll_yStopOwnedBy_avisanALosClientes', () => {

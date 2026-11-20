@@ -732,3 +732,57 @@ describe('reduceEvent — uso acumulado de Codex y agy', () => {
     expect(patch.providerUsageByChat).toBeUndefined();
   });
 });
+
+describe('reduceEvent — closed_by_mage', () => {
+  const CLOSED: MageEvent = { kind: 'closed_by_mage' };
+  const live = (overrides: Partial<WorkbenchState> = {}) => state({
+    tabs: [tab({ provider: 'claude' })],
+    sessionIdByChat: { [TAB]: 'conv-1' },
+    statusByChat: { [TAB]: 'streaming' },
+    streamingIdByChat: { [TAB]: 'b1' },
+    // Los mapas que el estado mínimo de arriba no trae y que soltar la sesión vacía.
+    elicitationsByChat: {},
+    queuedByChat: {},
+    steeringByChat: {},
+    ...overrides,
+  });
+
+  it('avisoCerradaPorMage_pestanaApuntaASuConversacion', () => {
+    const patch = reduceEvent(live(), TAB, CLOSED);
+
+    expect(patch.sessionIdByChat).toEqual({});
+    expect(patch.statusByChat).toEqual({});
+    expect(patch.streamingIdByChat).toEqual({});
+    expect(patch.tabs?.find((t) => t.id === TAB)?.resumeSessionId).toBe('conv-1');
+    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'system', text: 'Sesión cerrada al terminar para liberar memoria; se reabre al escribir.' });
+  });
+
+  it('avisoCerradaPorMage_conHiloPrevio_loConservaYAñadeLaLinea', () => {
+    const before: Block = { kind: 'system', id: 'prev', text: 'antes' };
+    const patch = reduceEvent(live({ blocksByChat: { [TAB]: [before] } }), TAB, CLOSED);
+
+    expect(blocksOf(patch)).toHaveLength(2);
+    expect(blocksOf(patch)[0]).toBe(before);
+  });
+
+  it('avisoCerradaPorMage_pestanaAjena_noTocaLasDemas', () => {
+    const other = { id: 'tab-2', provider: 'claude' } as Tab;
+    const base = live({ tabs: [tab({ provider: 'claude' }), other], sessionIdByChat: { [TAB]: 'conv-1', 'tab-2': 'conv-2' } });
+
+    const patch = reduceEvent(base, TAB, CLOSED);
+
+    expect(patch.sessionIdByChat).toEqual({ 'tab-2': 'conv-2' });
+    expect(patch.tabs?.find((t) => t.id === 'tab-2')?.resumeSessionId).toBeUndefined();
+  });
+
+  it('avisoCerradaPorMage_sinConversacionTodavia_noTocaNada', () => {
+    // Codex sin `session_init`: no hay id de hilo al que apuntar.
+    const patch = reduceEvent(live({ tabs: [tab({ provider: 'codex' })] }), TAB, CLOSED);
+
+    expect(patch).toEqual({});
+  });
+
+  it('avisoCerradaPorMage_pestanaInexistente_noTocaNada', () => {
+    expect(reduceEvent(live({ tabs: [] }), TAB, CLOSED)).toEqual({});
+  });
+});

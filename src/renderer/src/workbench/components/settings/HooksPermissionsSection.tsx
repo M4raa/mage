@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { useWorkbenchStore } from '../../workbenchStore';
 import { useSharedConfigStore } from '../../sharedConfigStore';
 import { CommonRulesEditor } from './CommonRulesEditor';
+import { HostClientsList } from './HostClientsList';
 import type { EffectiveSettings, HookEntry, PermissionRule, SettingsOrigin } from '@shared/ipc';
 import { useT } from '../../../i18n/uiLanguage';
 import { describeError } from '../../describeError';
+import { EXTERNAL_ACTION_ASK_RULES } from '@shared/externalActionAsk';
 
 // Seccion "Hooks y permisos" (2.9.b). Los dos salen del MISMO fichero y por eso comparten pantalla:
 // `settings-common.json` esta restringido por forma a exactamente `hooks` y `permissions.allow/deny`.
@@ -77,6 +79,8 @@ export function HooksPermissionsSection(): React.JSX.Element {
         ? <p className="text-[12px] text-mg-muted">{t('settings.hooks.otherProvider', { provider: tab.provider })}</p>
         : <EffectiveView settings={settings} error={error} hasTab={tab !== undefined} />}
 
+      <ExternalActionAskList />
+
       <div className="flex flex-col gap-[8px] border-t border-mg-border pt-[14px]">
         <h3 className="text-[11px] font-semibold text-mg-body">{t('settings.hooks.editableHeading', { origin: mageCommon })}</h3>
         <p className="text-[10.5px] leading-[1.5] text-mg-muted">
@@ -85,7 +89,24 @@ export function HooksPermissionsSection(): React.JSX.Element {
         <CommonRulesEditor />
       </div>
       <HostPermissionAnswersToggle />
+      <HostClientsList />
     </div>
+  );
+}
+
+// Solo lectura: las reglas `ask` que Mage pasa siempre a Claude (fijas, no se editan desde aquí).
+function ExternalActionAskList(): React.JSX.Element {
+  const t = useT();
+  return (
+    <section data-external-action-ask="true" className="flex flex-col gap-[6px] border-t border-mg-border pt-[14px]">
+      <h3 className="text-[10px] font-bold uppercase tracking-[.07em] text-mg-ter">{t('settings.hooks.externalAsk.heading')}</h3>
+      <ul className="flex flex-col gap-[3px]">
+        {EXTERNAL_ACTION_ASK_RULES.map((rule) => (
+          <li key={rule} className="rounded-[6px] p-[4px_7px] font-mono text-[10.5px] text-mg-sec2">{rule}</li>
+        ))}
+      </ul>
+      <p className="text-[10.5px] leading-[1.5] text-mg-muted">{t('settings.hooks.externalAsk.note')}</p>
+    </section>
   );
 }
 

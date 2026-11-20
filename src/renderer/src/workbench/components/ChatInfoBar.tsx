@@ -78,6 +78,7 @@ function CreatorChip({ tabId }: { readonly tabId: string }): React.JSX.Element |
     if (target === undefined) return;
     state.setActiveAccount(target.accountId);
     state.setActiveTab(creator.tabId);
+    state.focusPrompt();
   };
   return (
     <button onClick={goToCreator} data-creator-chip data-tip={label} aria-label={label} className={`${CHIP_CLASS} transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body`}>

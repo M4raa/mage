@@ -19,6 +19,8 @@ import { TrustFolderDialog } from './workbench/components/TrustFolderDialog';
 // El de cierre tampoco: main espera su respuesta para cerrar, y un chunk que no cargara dejaria la X
 // sin efecto hasta recargar.
 import { CloseMageDialog } from './workbench/components/CloseMageDialog';
+import { HostPairDialog } from './workbench/components/HostPairDialog';
+import { CloseRunningTabDialog } from './workbench/components/CloseRunningTabDialog';
 
 // Los cuatro dialogos van en DIFERIDO (P15). Ya devolvian `null` cerrados, asi que la puerta de
 // RENDER estaba bien; lo que faltaba era la de BUNDLE: `SettingsView` pasa de 1.400 lineas y arrastra
@@ -34,6 +36,7 @@ import { OnboardingWizard } from './workbench/components/OnboardingWizard';
 
 const SettingsView = lazy(() => import('./workbench/components/SettingsView').then((m) => ({ default: m.SettingsView })));
 const AccountsUsageView = lazy(() => import('./workbench/components/AccountsUsageView').then((m) => ({ default: m.AccountsUsageView })));
+const ArtifactsLibraryView = lazy(() => import('./workbench/components/ArtifactsLibraryView').then((m) => ({ default: m.ArtifactsLibraryView })));
 const ScheduledTasksView = lazy(() => import('./workbench/tasks/ScheduledTasksView').then((m) => ({ default: m.ScheduledTasksView })));
 // Novedades, tambien en diferido: arrastra el changelog entero y casi nunca se abre.
 // El de «actualización lista», en diferido: sale una vez por version.
@@ -311,6 +314,7 @@ export function App(): React.JSX.Element {
         <AccountSwitchDialog />
         <SettingsView />
         <AccountsUsageView />
+        <ArtifactsLibraryView />
         <ScheduledTasksView />
         <UpdateReadyDialog />
       </Suspense>
@@ -320,6 +324,8 @@ export function App(): React.JSX.Element {
           encima del resto de dialogos: es lo primero que ve alguien con una instalacion limpia. */}
       <OnboardingWizard />
       <CloseMageDialog />
+      <CloseRunningTabDialog />
+      <HostPairDialog />
       <TooltipLayer />
     </div>
   );

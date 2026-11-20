@@ -80,7 +80,7 @@ export const MAGE_MCP_OFF_NOTICE = [
 // P-038 V14: las herramientas de Mage que solo LEEN no piden permiso (consultar sesiones, leer su respuesta, leer o
 // capturar la página). Crear, mandar, cancelar, navegar, pulsar y escribir siguen preguntando. Formato de regla del
 // CLI de Claude para una herramienta MCP: `mcp__<servidor>__<herramienta>`.
-export const MAGE_READ_ONLY_TOOLS = ['mage_list_sessions', 'mage_get_status', 'mage_read_result', 'mage_browser_read_dom', 'mage_browser_screenshot'] as const;
+export const MAGE_READ_ONLY_TOOLS = ['mage_list_sessions', 'mage_get_status', 'mage_read_result', 'mage_get_usage', 'mage_browser_read_dom', 'mage_browser_screenshot'] as const;
 
 type SettingsFragment = Readonly<Record<string, unknown>>;
 

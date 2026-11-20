@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MotionConfig } from 'motion/react';
 import { App } from './App';
+import { BrowserWindowApp } from './workbench/browser/BrowserWindowApp';
 import { ErrorBoundary } from './ErrorBoundary';
 import { installRendererLogForwarding } from './rendererLogForwarding';
 import { installDocumentDropGuard } from './documentDropGuard';
@@ -28,6 +29,11 @@ if (!container) throw new Error('No se encontro el nodo #root en index.html');
 // castellano. Si main no contesta, se monta igual en castellano y el error queda en la consola (no se traga).
 await initUiLanguage(window.mage).catch((err: unknown) => console.error('[i18n] no se pudo leer el idioma de la interfaz', err));
 
+// La ventana propia del navegador de una sesión carga este mismo renderer con `?browserWindow=<sessionId>` (main):
+// monta solo el navegador, sin pestañas ni chat.
+const searchParams = new URLSearchParams(window.location.search);
+const browserWindowSession = searchParams.get('browserWindow');
+
 createRoot(container).render(
   <StrictMode>
     <ErrorBoundary>
@@ -35,7 +41,7 @@ createRoot(container).render(
           animaciones de transform a un cambio instantaneo (deja opacity), sin tocar cada componente
           — mismo criterio que ya sigue mg-sparkle a mano en index.css. */}
       <MotionConfig reducedMotion="user">
-        <App />
+        {browserWindowSession === null ? <App /> : <BrowserWindowApp sessionId={browserWindowSession} title={searchParams.get('title') ?? ''} />}
       </MotionConfig>
     </ErrorBoundary>
   </StrictMode>,

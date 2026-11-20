@@ -16,6 +16,7 @@ import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
 import type { AgyUsageSnapshot, UsageInfo } from '@shared/usage';
 import type { StatusInfo } from '@shared/status';
 import { aliasFromConfigDir, applyAccountOverrides } from './accountView';
+import { offersResumeOnReset, withResumeOnReset } from './resumeOnResetTab';
 import { nextIndexForArrow } from './a11y/keyboardNav';
 import { canChangeCwd } from './cwdChange';
 import {
@@ -101,6 +102,7 @@ import {
   backgroundMoveBlockedReason,
   backgroundOfConversation,
   nextBackgroundState,
+  tabCloseDecision,
   tabMoveBlockedReason,
   type BackgroundSession,
 } from './backgroundWork';
@@ -134,6 +136,7 @@ import type {
   AppSettings,
   ChatProject,
   CloseBehavior,
+  RunningTabCloseBehavior,
   DefaultPermissionMode,
   ImportedTheme,
   NewConversationFolder,
@@ -166,6 +169,8 @@ import { isWindowsPlatform } from './keybindings/platform';
 import { describeError } from './describeError';
 import { localized, renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
+import { applyLaunchEvent, launchCardIpc, launchParamsOf, patchLaunchCard } from './launchCards';
+import type { LaunchCards } from './launchCards';
 import { mergeBackgroundTasks, type BackgroundTaskRow } from './backgroundTasks';
 import { formatClockTime } from '../i18n/format';
 
@@ -200,6 +205,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   settingsOpen: boolean; // pantalla de Configuracion de la app (M2.3) abierta
   accountsUsageOpen: boolean; // pantalla «Cuentas y consumo» (P-038 V11) abierta
   scheduledTasksOpen: boolean; // pantalla «Tareas programadas» abierta
+  artifactsLibraryOpen: boolean; // pantalla «Artifacts» (todos los de todas las cuentas) abierta
   // el espacio de trabajo terminó de restaurarse (bien o mal): a partir de aquí se pueden abrir conversaciones de tareas programadas
   workspaceReady: boolean;
   // Seccion con la que se abre Configuracion (P-028, 41: «Añadir cuenta» del gateway lleva a
@@ -352,6 +358,9 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // trabajo), por sessionId. NO se persiste: al cerrar Mage mueren todos los CLI, asi que un mapa
   // restaurado del arranque anterior solo prometeria procesos que ya no existen.
   readonly backgroundSessions: Readonly<Record<string, BackgroundSession>>;
+  // Tarjetas «Lanzar» de las delegadas que esperan a que el usuario confirme modelo y esfuerzo, por el id que recibió la
+  // creadora. NO se persiste: tras reiniciar Mage la pendiente está interrumpida en main.
+  readonly launchCards: LaunchCards;
 
   // Grupo B: main pidio a esta ventana el dialogo «¿Cerrar Mage?» y espera la respuesta.
   closePromptOpen: boolean;
@@ -372,9 +381,15 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // Devuelve una promesa que resuelve cuando el CLI de esa pestaña YA ha parado (B17): quien borre
   // o mueva la conversacion despues tiene que esperarla o correra contra un fichero aun abierto.
   // `moved`: la pestaña se va a otra ventana, asi que su worktree NO se archiva (grupo D).
-  closeTab: (tabId: string, options?: { readonly moved?: boolean }) => Promise<void>;
+  closeTab: (tabId: string, options?: { readonly moved?: boolean; readonly stop?: boolean }) => Promise<void>;
   // Cierra la pestana ACTIVA (D5, atajo tab.close): resuelve el id activo y delega en closeTab.
   closeActiveTab: () => void;
+  // Cierre a mano de UNA pestaña (✕, clic central, menú, atajo): si trabaja, según `runningTabClose` pregunta,
+  // la deja en segundo plano o la para; si no, cierra sin más.
+  requestCloseTab: (tabId: string) => void;
+  // Pestaña cuyo diálogo «¿Cerrar una conversación que está trabajando?» está abierto; null = cerrado.
+  closeTabPrompt: { readonly tabId: string } | null;
+  answerCloseTabPrompt: (answer: { readonly action: 'cancel' | 'background' | 'stop'; readonly remember: boolean }) => void;
   // Menu contextual de pestañas (Ronda 3, item 12). Los cierres en masa respetan SIEMPRE las ancladas
   // (ver tabActions.ts) y reutilizan closeTab una a una — no hay un camino paralelo que se olvide de
   // parar la sesion o de limpiar el estado de motor de cada pestaña.
@@ -388,6 +403,9 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // Decisión 13-11: abre como pestaña ACTIVA una subsesión del MCP que seguía sin pestaña, enganchada a su sesión
   // viva. Lanza si main ya no la sigue.
   openDelegatedSession: (sessionId: string) => Promise<void>;
+  // Tarjeta «Lanzar»: arranca la delegada con lo elegido («» = el de la cuenta) o la descarta. Un fallo queda en la tarjeta.
+  launchDelegated: (childId: string, choice: { readonly model: string; readonly effort: string }) => Promise<void>;
+  cancelDelegatedLaunch: (childId: string) => Promise<void>;
   // La transcripción de la conversación de una pestaña de Codex o agy no existe en su cuenta: la pestaña deja de
   // reanudar ese id (su primer turno abre un hilo nuevo) y el chat lo dice. Ver `missingConversationPatch`.
   forgetMissingConversation: (tabId: string, conversationId: string) => void;
@@ -426,6 +444,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   focusPrompt: () => void;
   // Abre el panel Ficheros en el documento de la referencia y fija el destino (F5.6, #31).
   openDocumentAnchor: (tabId: string, anchor: DocAnchor) => void;
+  openFileInPanel: (tabId: string, docId: string) => void;
   clearDocumentTarget: () => void;
   // Clic en una notificacion del SO (P-028 40): lleva a su pestaña y al prompt o, si la pestaña ya no
   // esta, RESALTA su fila del historial (reabrirla cortaria la sesion viva en segundo plano).
@@ -437,6 +456,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   refreshAccounts: () => Promise<void>;
   // Renueva el token caducado de una cuenta de Claude con su CLI, sin turno, y relee su estado (P-038).
   refreshLogin: (accountId: string) => Promise<void>;
+  // Relee del disco el login de una cuenta de Claude por suscripción, sin renovar nada («Reintentar», fin de turno).
+  reloadLogin: (accountId: string) => Promise<void>;
   // #46/H3: guarda un acento (el menos usado) para cada cuenta que aún no tiene uno. Solo con los ajustes
   // ya cargados: antes, persistir pisaría los colores elegidos a mano.
   assignAccountAccents: () => void;
@@ -477,6 +498,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   closeAccountsUsage: () => void;
   openScheduledTasks: () => void;
   closeScheduledTasks: () => void;
+  openArtifactsLibrary: () => void;
+  closeArtifactsLibrary: () => void;
   closeSettings: () => void;
   // Abre (o enfoca) la pseudo-pestaña de novedades en `version`, o en la instalada sin argumento.
   openReleaseNotes: (version?: string) => void;
@@ -510,6 +533,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setScratchRetention: (retention: ScratchRetention) => void;
   // Que hace la X de la ventana principal (P-028, 17). Tambien lo escribe main desde su dialogo.
   setCloseBehavior: (behavior: CloseBehavior) => void;
+  setRunningTabClose: (behavior: RunningTabCloseBehavior) => void;
   // Carpeta con la que nace «Nuevo chat» (P-028, 16).
   setNewConversationFolder: (folder: NewConversationFolder) => void;
   setImportedContextMaxChars: (chars: number) => void;
@@ -537,9 +561,10 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6); '' = el de la cuenta.
   setDefaultPermissionMode: (mode: DefaultPermissionMode) => void;
   // D5 (#53): permitir Artifact en las sesiones de Claude Code (publica en claude.ai). Siguiente arranque.
-  setArtifactEnabled: (enabled: boolean) => void;
   // D3: `mage chat` puede contestar permisos (apagado por defecto).
   setHostPermissionAnswers: (enabled: boolean) => void;
+  // Enlaces del chat: el clic normal abre fuera (true) o en el navegador de Mage (false).
+  setLinksOpenExternally: (enabled: boolean) => void;
   // Keep-alive de la caché de Claude (U11, U15): fusiona el parche con los ajustes; valida tipos y rangos.
   setKeepAlive: (patch: Partial<KeepAliveSettings>) => void;
   setIdleCloseMinutes: (minutes: number) => void;
@@ -691,6 +716,9 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   setActiveEffort: (effort: string) => void;
   // Ultracode de la pestana activa (solo Claude): de ARRANQUE como el esfuerzo.
   setActiveUltracode: (on: boolean) => void;
+  // «Continuar al restablecerse» de la pestana activa (solo Claude por suscripcion). Con sesion viva avisa a main; sin
+  // ella queda como borrador y se pasa al crearla. Si main lo rechaza, vuelve al valor anterior y el error sube.
+  setActiveResumeOnReset: (on: boolean) => Promise<void>;
   // Cambia la carpeta (cwd) de la pestana activa (F2). Solo tiene sentido ANTES de que arranque la
   // sesion: la regla vive en canChangeCwd (modulo puro), que comparten la UI y esta accion.
   // `tabId` = la pestaña del panel que lo pide (con el workspace dividido no tiene por que ser la
@@ -1102,6 +1130,15 @@ async function closeSessionInMain(mage: MageClient, sessionId: string): Promise<
   }
 }
 
+// Para la sesión de una pestaña que se cierra con «Cerrar y parar». Si main falla, se avisa y la pestaña se cierra igual.
+async function stopSessionReportingErrors(mage: MageClient, sessionId: string): Promise<void> {
+  try {
+    await mage.stop(sessionId);
+  } catch (err) {
+    reportActionError(t('errors.workbench.closeSessionFailed'), err, 'chat');
+  }
+}
+
 // La sesión viva de un chat sin conversación que cambia de cuenta (0.1.4): era de la cuenta vieja y no tiene turnos.
 // Se olvida su estado de motor y se cierra en main; el primer mensaje arranca otra con la cuenta nueva
 // (`ensureSession`). `closeSessionInMain` ya trata «Sesion inexistente» como ausencia y avisa de cualquier otro fallo.
@@ -1303,6 +1340,7 @@ async function createSessionFor(
       ...(tab.resumeSessionId === undefined ? {} : { resumeSessionId: tab.resumeSessionId }),
       ...(tab.effort === undefined ? {} : { effort: tab.effort }),
       ...(tab.provider === 'claude' && tab.ultracode === true ? { ultracode: true } : {}),
+      ...(offersResumeOnReset(tab, get().accounts) && tab.resumeOnReset === true ? { resumeOnReset: true } : {}),
       ...(tab.maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents: tab.maxBudgetUsdCents }),
       ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
       ...(projectId === undefined ? {} : { projectId }),
@@ -1520,6 +1558,17 @@ async function trackDelegatedSession(mage: MageClient, get: () => WorkbenchState
 
 // Decisión 13-11: una subsesión sin pestaña pasa a pestaña ACTIVA enganchada a su sesión viva. La instantánea
 // repone permisos y preguntas pendientes. Nunca crea otra sesión ni corta la que hay.
+// Contesta una tarjeta «Lanzar»: la deja ocupada mientras main responde y, si falla, guarda el motivo en ella.
+async function answerLaunchCard(set: SetFn, childId: string, call: () => Promise<void>): Promise<void> {
+  set((s) => ({ launchCards: patchLaunchCard(s.launchCards, childId, { busy: true, error: null }) }));
+  try {
+    await call();
+    set((s) => ({ launchCards: patchLaunchCard(s.launchCards, childId, { busy: false }) }));
+  } catch (err: unknown) {
+    set((s) => ({ launchCards: patchLaunchCard(s.launchCards, childId, { busy: false, error: t('chat.launchCard.failed', { reason: describeError(err) }) }) }));
+  }
+}
+
 async function openDelegatedSessionInto(mage: MageClient, get: () => WorkbenchState, set: SetFn, sessionId: string): Promise<void> {
   const entry = get().backgroundSessions[sessionId];
   if (entry?.hostSession === undefined) throw new Error(`No hay ninguna subsesión sin pestaña con la sesión ${JSON.stringify(sessionId)}`);
@@ -1576,6 +1625,7 @@ export function createWorkbenchStore(mage: MageClient) {
     settingsOpen: false,
     accountsUsageOpen: false,
     scheduledTasksOpen: false,
+    artifactsLibraryOpen: false,
     workspaceReady: false,
     settingsSection: null,
     releaseNotesVersion: null,
@@ -1629,10 +1679,12 @@ export function createWorkbenchStore(mage: MageClient) {
     allConversationHistory: [],
     elicitationsByChat: {},
     backgroundSessions: {},
+    launchCards: {},
     sidebarFilter: EMPTY_SIDEBAR_FILTER,
     settingsLoaded: false,
     setSidebarFilter: (filter) => set({ sidebarFilter: filter }),
     closePromptOpen: false,
+    closeTabPrompt: null,
     updateState: IDLE_UPDATE_STATE,
     updatePromptVersion: null,
 
@@ -1802,7 +1854,10 @@ export function createWorkbenchStore(mage: MageClient) {
     closeTab: async (tabId, options) => {
       const sessionId = get().sessionIdByChat[tabId];
       const tab = get().tabs.find((t) => t.id === tabId);
-      const background = sessionId !== undefined && (await closeSessionInMain(mage, sessionId));
+      const keptAlive = sessionId !== undefined && (await closeSessionInMain(mage, sessionId));
+      // «Cerrar y parar»: main la habría dejado en segundo plano; se para como al migrar una pestaña.
+      if (keptAlive && options?.stop === true) await stopSessionReportingErrors(mage, sessionId);
+      const background = keptAlive && options?.stop !== true;
       if (background && sessionId !== undefined && tab !== undefined) {
         const entry: BackgroundSession = {
           sessionId,
@@ -1880,7 +1935,26 @@ export function createWorkbenchStore(mage: MageClient) {
 
     closeActiveTab: () => {
       const tabId = get().activeTabId;
-      if (tabId.length > 0) void get().closeTab(tabId);
+      if (tabId.length > 0) get().requestCloseTab(tabId);
+    },
+
+    requestCloseTab: (tabId) => {
+      const state = get();
+      const decision = tabCloseDecision(state.statusByChat[tabId], state.sessionIdByChat[tabId] !== undefined, state.settings.runningTabClose);
+      if (decision === 'ask') {
+        set({ closeTabPrompt: { tabId } });
+        return;
+      }
+      void state.closeTab(tabId, decision === 'stop' ? { stop: true } : undefined);
+    },
+
+    answerCloseTabPrompt: (answer) => {
+      const prompt = get().closeTabPrompt;
+      set({ closeTabPrompt: null });
+      if (prompt === null || answer.action === 'cancel') return;
+      if (!get().tabs.some((tab) => tab.id === prompt.tabId)) return;
+      if (answer.remember) get().setRunningTabClose(answer.action);
+      void get().closeTab(prompt.tabId, answer.action === 'stop' ? { stop: true } : undefined);
     },
 
     closeAllTabs: () => {
@@ -1913,6 +1987,12 @@ export function createWorkbenchStore(mage: MageClient) {
     },
 
     openDelegatedSession: (sessionId) => openDelegatedSessionInto(mage, get, set, sessionId),
+    launchDelegated: (childId, choice) => answerLaunchCard(set, childId, () => launchCardIpc.launch(launchParamsOf(childId, choice))),
+    // Descartar no espera al aviso de main: la línea «No lanzada» sale en cuanto main lo acepta.
+    cancelDelegatedLaunch: (childId) => answerLaunchCard(set, childId, async () => {
+      await launchCardIpc.cancel(childId);
+      set((s) => ({ launchCards: patchLaunchCard(s.launchCards, childId, { outcome: { launched: false } }) }));
+    }),
 
     movePaneTab: (draggedTabId, targetPath, zone) => {
       set((s) => ({ activeTabId: draggedTabId, splitLayout: applyDrop(s.splitLayout, draggedTabId, targetPath, zone) }));
@@ -1966,6 +2046,7 @@ export function createWorkbenchStore(mage: MageClient) {
       const next = tabs[nextIndex];
       if (next === undefined) return;
       get().setActiveTab(next.id);
+      get().focusPrompt(); // el teclado va con la pestaña marcada, no se queda en el otro panel
     },
 
     // Import DINAMICO (no estatico arriba) a proposito: panelLayoutStore.ts importa PANEL_REGISTRY de
@@ -1983,6 +2064,11 @@ export function createWorkbenchStore(mage: MageClient) {
     focusPrompt: () => set((s) => ({ promptFocusToken: s.promptFocusToken + 1 })),
     openDocumentAnchor: (tabId, anchor) => {
       set({ documentTarget: { tabId, docId: anchor.docId, key: anchor.key, at: Date.now() } });
+      void import('./panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().revealPanelById('files'));
+    },
+    // Abre un fichero entero en Ficheros (ficha del chat): `key` vacía = sin punto que buscar.
+    openFileInPanel: (tabId, docId) => {
+      set({ documentTarget: { tabId, docId, key: '', at: Date.now() } });
       void import('./panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().revealPanelById('files'));
     },
     clearDocumentTarget: () => set({ documentTarget: null }),
@@ -2034,6 +2120,7 @@ export function createWorkbenchStore(mage: MageClient) {
           if (tab === undefined) return;
           get().setActiveAccount(tab.accountId);
           get().setActiveTab(tabId);
+          get().focusPrompt();
         });
         mage.onNotificationClicked((target) => get().focusNotificationTarget(target));
         mage.onWidgetEnabledChanged((enabled) => {
@@ -2676,6 +2763,8 @@ export function createWorkbenchStore(mage: MageClient) {
     closeAccountsUsage: () => set({ accountsUsageOpen: false }),
     openScheduledTasks: () => set({ scheduledTasksOpen: true }),
     closeScheduledTasks: () => set({ scheduledTasksOpen: false }),
+    openArtifactsLibrary: () => set({ artifactsLibraryOpen: true }),
+    closeArtifactsLibrary: () => set({ artifactsLibraryOpen: false }),
 
     openReleaseNotes: (version) => {
       set({ releaseNotesVersion: version ?? null });
@@ -2994,6 +3083,24 @@ export function createWorkbenchStore(mage: MageClient) {
       schedulePersist(mage, get);
     },
 
+    // «Continuar al restablecerse»: no se persiste (main tampoco lo recuerda tras reiniciar). Con sesion viva main es
+    // quien decide si la cuenta lo admite; si lanza, la pestana vuelve a como estaba.
+    setActiveResumeOnReset: async (on) => {
+      const tabId = get().activeTabId;
+      const tab = get().tabs.find((t) => t.id === tabId);
+      if (tab === undefined || !offersResumeOnReset(tab, get().accounts) || (tab.resumeOnReset === true) === on) return;
+      const apply = (enabled: boolean): void => set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? withResumeOnReset(t, enabled) : t)) }));
+      apply(on);
+      const sessionId = get().sessionIdByChat[tabId];
+      if (sessionId === undefined) return;
+      try {
+        await mage.setResumeOnReset({ sessionId, enabled: on });
+      } catch (err) {
+        apply(!on);
+        throw err;
+      }
+    },
+
     // Interrumpe el turno en curso de la pestana activa (boton "Parar"). Sin sesion viva no hay nada que
     // parar. El CLI cierra el turno y emite su `result`, que devuelve el chat a 'idle'.
     interruptActiveSession: () => {
@@ -3142,6 +3249,10 @@ export function createWorkbenchStore(mage: MageClient) {
       // Al terminar un turno, refresca el uso de la cuenta de esa pestana (el consumo acaba de subir).
       // El main cachea >=180 s, asi que llamadas seguidas no golpean la red de mas.
       if (event.kind === 'result' && tab !== undefined) void get().refreshUsage(tab.accountId);
+      // Y su login: el CLI pudo renovar el token durante el turno, y la ficha seguía con la lectura anterior.
+      if (event.kind === 'result' && tab !== undefined) {
+        void get().reloadLogin(tab.accountId).catch((err: unknown) => console.warn('No se pudo releer la sesión de la cuenta:', describeError(err)));
+      }
       // Y el de git (P-026 3.5): el agente acaba de tocar ficheros, quiza de hacer commit.
       if (event.kind === 'result' && tab !== undefined) void get().refreshGit(tab.id);
       // Y el del PR (grupo D): quiza acaba de hacer push o de abrirlo.
@@ -3310,7 +3421,11 @@ async function releaseTabSessionForMigration(mage: MageClient, get: () => Workbe
 
 // La pestaña se queda apuntando a su conversación (`resumeSessionId`) y olvida su estado de motor.
 function detachLiveSession(set: SetFn, tabId: string, conversationId: string): void {
-  set((s) => ({
+  set((s) => detachedPatch(s, tabId, conversationId));
+}
+
+function detachedPatch(s: WorkbenchState, tabId: string, conversationId: string): Partial<WorkbenchState> {
+  return {
     tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: conversationId } : t)),
     sessionIdByChat: without(s.sessionIdByChat, tabId),
     statusByChat: without(s.statusByChat, tabId),
@@ -3319,7 +3434,19 @@ function detachLiveSession(set: SetFn, tabId: string, conversationId: string): v
     streamingIdByChat: without(s.streamingIdByChat, tabId),
     queuedByChat: without(s.queuedByChat, tabId),
     steeringByChat: without(s.steeringByChat, tabId),
-  }));
+  };
+}
+
+// Main cerró la sesión de esta pestaña (subsesión terminada o `mage_close_session`): la pestaña hace lo de soltar una
+// sesión inactiva —queda apuntando a su conversación— y lo dice en el hilo; escribir de nuevo la reabre con `--resume`.
+// Sin conversación todavía (el CLI no llegó a dar su id) no hay a qué apuntar y no se toca nada.
+function closedByMagePatch(state: WorkbenchState, tabId: string): Partial<WorkbenchState> {
+  const tab = state.tabs.find((t) => t.id === tabId);
+  if (tab === undefined) return {};
+  const conversationId = conversationIdOfTab(tab, state.sessionIdByChat[tabId]);
+  if (conversationId === undefined) return {};
+  const line = appendSystemBlock(blocksOf(state, tabId), closedByMageText(), nextBlockId());
+  return { ...detachedPatch(state, tabId, conversationId), ...withBlocks(state, tabId, line) };
 }
 
 // Punto 23 (D2): suelta el proceso de una pestaña inactiva sin cerrarla; escribir la reanuda (`ensureSession` con `resumeSessionId`).
@@ -3619,6 +3746,9 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     case 'permission_mode':
       return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, permissionMode: event.mode } : t)) };
     // U26: la delegada espera (o ya no) la respuesta de su creadora; lo pinta el chip de ChatInfoBar.
+    case 'delegation_launch':
+    case 'delegation_launch_settled':
+      return { launchCards: applyLaunchEvent(state.launchCards, event) };
     case 'delegation_waiting':
       return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, awaitingCreator: event.waiting } : t)) };
     case 'error': {
@@ -3675,6 +3805,9 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
         contextUsageByChat: without(state.contextUsageByChat, tabId),
         tabs: state.tabs.map((t) => (t.id === tabId && t.resumeSessionId !== undefined ? { ...t, resumeSessionId: event.newSessionId } : t)),
       };
+    // Main cierra la sesion de la pestaña (subsesion terminada o `mage_close_session`): queda reanudable.
+    case 'closed_by_mage':
+      return closedByMagePatch(state, tabId);
     // Cola de main (F2.2): el renderer la PINTA tal cual llega, entera. Los otros dos avisos de la cola
     // tienen efecto en el store (`handleEvent`), no en el hilo.
     case 'queue_changed':
@@ -4217,6 +4350,7 @@ const EMPTY_BLOCKS: readonly Block[] = [];
 
 // Linea que deja `/clear` en el chat vaciado (P-028).
 export const conversationResetText = (): string => t('chat.system.conversationReset');
+export const closedByMageText = (): string => t('chat.system.closedByMage');
 
 export function selectAccount(state: WorkbenchState, accountId: string): Account | undefined {
   return state.accounts.find((a) => a.id === accountId);

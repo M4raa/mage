@@ -16,6 +16,7 @@ import {
   KEEP_ALIVE_MIN_CONTEXT_MAX,
   KEEP_ALIVE_MIN_CONTEXT_MIN,
   NEW_CONVERSATION_FOLDERS,
+  RUNNING_TAB_CLOSE_BEHAVIORS,
   RUNTIME_SHELLS,
   SCRATCH_RETENTIONS,
   THEME_PREFERENCES,
@@ -171,6 +172,7 @@ const APP_SETTINGS_SCHEMA = z.object({
   scratchRetention: z.enum(SCRATCH_RETENTIONS).catch('never'),
   // Cerrar la ventana (P-028, 17). Ausente o basura -> 'ask': el lado que vuelve a preguntar.
   closeBehavior: z.enum(CLOSE_BEHAVIORS).catch('ask'),
+  runningTabClose: z.enum(RUNNING_TAB_CLOSE_BEHAVIORS).catch('ask'),
   // Carpeta de «Nuevo chat» (P-028, 16). Ausente o basura -> 'scratch', lo de siempre.
   newConversationFolder: z.enum(NEW_CONVERSATION_FOLDERS).catch('scratch'),
   // Ausente o basura -> el valor por defecto; el fichero es editable a mano, así que se acota aquí también.
@@ -198,10 +200,10 @@ const APP_SETTINGS_SCHEMA = z.object({
   hiddenAccounts: z.array(z.string().min(1)).catch([]),
   // Conectores de claude.ai apagados por cuenta. Ausente o basura -> [] (encendidos, como antes de existir).
   claudeAiConnectorsOff: z.array(z.string().min(1)).catch([]),
-  // D5: Artifact. Ausente o basura -> false: el lado que no publica nada.
-  artifactEnabled: z.boolean().catch(false),
   // D3: contestar permisos desde la terminal. Ausente o basura -> false: el lado que no deja contestar.
   hostPermissionAnswers: z.boolean().catch(false),
+  // Enlaces del chat. Ausente o basura -> false: el clic normal abre en el navegador de Mage.
+  linksOpenExternally: z.boolean().catch(false),
   // Aviso de gh descartado (DA-3). Ausente o basura -> false: el lado que vuelve a avisar.
   ghNoticeDismissed: z.boolean().catch(false),
   // Auto-archivar al cerrarse el PR. Ausente o basura -> false: no se cierra nada solo.

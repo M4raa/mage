@@ -7,10 +7,13 @@ import { PANEL_REGISTRY } from './panels/panelRegistry';
 import { notify, useNotificationStore } from './notificationStore';
 import { useCodexAppsStore } from './codexAppsStore';
 import { useTaskStore } from './tasks/taskStore';
-import { toPersistedWorkspace } from './workspaceView';
+import { restoreTabs, toPersistedWorkspace } from './workspaceView';
 import { t } from '../i18n/uiLanguage';
 import { usageHistorySource } from './usageHistorySource';
 import { sweepIdleSessions } from './idleSessionCloser';
+import { linkOpener } from './linkOpener';
+import { artifactsSource } from './artifactsSource';
+import { launchCardIpc } from './launchCards';
 
 // Asidero SOLO de desarrollo para `pnpm verify:gui`: deja medir el DOM del chat sin gastar un turno
 // real ni spawnear el CLI. Sin el, el harness no puede hidratar una conversacion (el store de Zustand
@@ -32,6 +35,8 @@ export interface MageDevBridge {
   // La restauracion del harness libera tambien los listeners de las pestañas ficticias que retiro.
   readonly disposeTranscriptStore: typeof disposeTranscriptStore;
   readonly toPersistedWorkspace: typeof toPersistedWorkspace;
+  // `window.mage` no se puede sustituir, así que el harness restaura un workspace inventado por el mapeo real.
+  readonly restoreTabs: typeof restoreTabs;
   readonly transcriptToBlocks: typeof transcriptToBlocks;
   // El reducer REAL de eventos del motor. Con el, el harness puede inyectar un evento (p.ej. un
   // `permission_request` de AskUserQuestion) sin sesion viva: `handleEvent` no vale, porque resuelve la
@@ -53,6 +58,12 @@ export interface MageDevBridge {
   readonly usageHistorySource: typeof usageHistorySource;
   // Punto 23: el harness barre unas pestañas concretas con un reloj adelantado.
   readonly sweepIdleSessions: typeof sweepIdleSessions;
+  // El harness espía cómo se abre fuera un enlace del chat (y así no abre el navegador del sistema).
+  readonly linkOpener: typeof linkOpener;
+  // El harness siembra la lista de artifacts y la visibilidad de una tarjeta (y lo devuelve al acabar).
+  readonly artifactsSource: typeof artifactsSource;
+  // El harness espía «Lanzar» y «Cancelar» de la tarjeta de una delegada (y así no llega nada a main).
+  readonly launchCardIpc: typeof launchCardIpc;
 }
 
 (window as unknown as { __mageDev?: MageDevBridge }).__mageDev = {
@@ -65,6 +76,7 @@ export interface MageDevBridge {
   transcriptStoreFor: transcriptStoreForTab,
   disposeTranscriptStore,
   toPersistedWorkspace,
+  restoreTabs,
   transcriptToBlocks,
   reduceEvent,
   panelStore: usePanelLayoutStore,
@@ -75,4 +87,7 @@ export interface MageDevBridge {
   t,
   usageHistorySource,
   sweepIdleSessions,
+  linkOpener,
+  artifactsSource,
+  launchCardIpc,
 };

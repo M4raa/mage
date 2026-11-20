@@ -14,6 +14,7 @@ import { langFromPath } from '../codeHighlight';
 import type { Block } from '../types';
 import type { ProjectFileContent } from '@shared/ipc';
 import { describeError } from '../describeError';
+import { openInBrowserPanel } from '../browser/openInBrowserPanel';
 
 // Panel "Ficheros" (2.10, peticion del usuario: "si creas un plan .md .txt o lo que sea tiene que
 // aparecer a la derecha como un artifact y así poder ver el plan, poder editarlo").
@@ -224,6 +225,8 @@ function sectionLabel(section: PanelSection, t: Translate): string {
       return t('i3.files.section.read');
     case 'mentioned':
       return t('i3.files.section.mentioned');
+    case 'attached':
+      return t('i3.files.section.attached');
     case 'plans':
       return t('i3.files.section.plans');
   }
@@ -310,7 +313,7 @@ function PlanViewer({ docId, name, text }: { readonly docId: string; readonly na
   useEffect(() => {
     if (target === null) return;
     clearDocumentTarget();
-    if (Date.now() - target.at <= TARGET_TTL_MS) reveal(docId, text, target.key);
+    if (Date.now() - target.at <= TARGET_TTL_MS && target.key !== '') reveal(docId, text, target.key);
   }, [target, docId, text, reveal, clearDocumentTarget]);
   return (
     <div ref={rootRef} data-plan-viewer={docId} className="flex min-w-0 flex-col">
@@ -370,6 +373,7 @@ function FileViewer({
   useEffect(() => {
     if (target === null) return;
     clearDocumentTarget();
+    if (target.key === '') return;
     if (Date.now() - target.at > TARGET_TTL_MS) return;
     if (hadContent.current) load();
     setAwaiting(target);
@@ -421,12 +425,7 @@ function FileViewer({
   const openInBrowser = (): void => {
     if (sessionId === undefined) return;
     setError(null);
-    void window.mage
-      .browserNavigate({ sessionId, url: file.path })
-      // Import dinámico, como en browserStore: panelLayoutStore importa el registro de paneles.
-      .then(() => import('../panelLayoutStore'))
-      .then((m) => m.usePanelLayoutStore.getState().revealPanelById('browser'))
-      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
+    void openInBrowserPanel(sessionId, file.path).catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
 
   return (

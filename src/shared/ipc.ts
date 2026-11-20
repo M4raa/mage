@@ -3,7 +3,8 @@
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
 import type { UsageHistory } from './usageHistory';
-import type { BrowserBounds, BrowserEntryState, BrowserPenCapture, BrowserPenResult, BrowserPenStroke } from './browser';
+import type { HostClientView, HostPairAnswer, HostPairRequestView } from './hostClients';
+import type { BrowserBounds, BrowserEntryState, BrowserPenCapture, BrowserPenResult, BrowserPenStroke, BrowserZoomStep } from './browser';
 import type { ConversationLockParams, ConversationLockRef, ConversationLockStatus } from './conversationLock';
 import type { ResolvedUiLanguage } from './i18n/language';
 import type { LocalizedText } from './i18n/localizedText';
@@ -12,11 +13,12 @@ import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResul
 import type { PrCatalogEntry, PrCatalogLinkParams, PrCatalogUnlinkParams, PrDetail, PrListParams, PrListResult, PrMigrateParams, PrReadParams, PrWriteParams, PrWriteResult } from './pr';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
 import type { DesktopScheduledTaskFile, TaskDraft, TaskRecord } from './tasks';
-import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
+import type { AccountCreateParams, AccountInfo, AccountLoginState, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
+import type { AccountArtifacts, ArtifactPage, ArtifactsListParams, ArtifactsMoreParams, ArtifactsOpenParams, ArtifactsVisibilityParams, ArtifactVisibility } from './artifactLibrary';
 import type { MentionPreview, MentionPreviewParams, MentionResolution, MentionResolveParams, MentionSearchParams, MentionSearchResult } from './mentions';
 import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, QueuedMessage, SendMode, SendReceipt } from './coordination';
 import type { UsageInfo } from './usage';
@@ -113,6 +115,8 @@ export const IpcChannel = {
   SessionDiverge: 'session:diverge',
   SessionSetModel: 'session:setModel',
   SessionSetEffort: 'session:setEffort',
+  // Enciende o apaga «Continuar al restablecerse» de una sesión viva (solo Claude por suscripción).
+  SessionSetResumeOnReset: 'session:setResumeOnReset',
   SessionSetPermissionMode: 'session:setPermissionMode',
   // Parar UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
   SessionStopTask: 'session:stopTask',
@@ -125,6 +129,9 @@ export const IpcChannel = {
   // U17: sesiones del host (terminal/MCP) sin ventana, y adoptar una como pestaña.
   SessionsAdoptable: 'sessions:adoptable',
   SessionAttach: 'session:attach',
+  // Tarjeta «Lanzar» de una sesión delegada pedida sin modelo o sin esfuerzo: arrancarla con lo elegido o descartarla.
+  DelegationLaunch: 'delegation:launch',
+  DelegationCancelLaunch: 'delegation:cancelLaunch',
   SessionGetScratchDir: 'session:getScratchDir',
   // La RAIZ de los borradores, sin crear nada (a diferencia de la de arriba, que acuña una carpeta).
   SessionGetScratchRoot: 'session:getScratchRoot',
@@ -158,6 +165,8 @@ export const IpcChannel = {
   AccountsList: 'accounts:list',
   // Renueva el token caducado de una cuenta de Claude con su propio CLI (un `initialize` sin turno, P-038).
   AccountsRefreshLogin: 'accounts:refresh-login',
+  // Vuelve a leer del disco el estado de login de una cuenta de Claude por suscripción, sin renovar nada.
+  AccountsReloadLogin: 'accounts:reload-login',
   AccountsCodexConfirm: 'accounts:codex-confirm',
   AccountsCreate: 'accounts:create',
   // Login por el CLI (Fase 9.2): tres pasos, porque el usuario tiene que pegar el *code* en medio.
@@ -322,6 +331,11 @@ export const IpcChannel = {
   ThinkingRead: 'thinking:read',
   EffectiveSettingsRead: 'effectiveSettings:read',
   ArtifactPublisherLookup: 'artifact:publisher',
+  // Todos los artifacts de las cuentas de Claude por suscripcion (creados y compartidos), desde main.
+  ArtifactsList: 'artifacts:list',
+  ArtifactsMore: 'artifacts:more',
+  ArtifactsOpen: 'artifacts:open',
+  ArtifactsVisibility: 'artifacts:visibility',
   // Varias ventanas del workbench sobre la MISMA instancia (peticion del usuario: la app en dos
   // pantallas). No es una duplicacion: ajustes/temas/permisos/carpetas de confianza son los mismos
   // objetos de main para todas; lo que cambia por ventana es el workspace (pestañas, paneles, cuenta
@@ -339,6 +353,12 @@ export const IpcChannel = {
   WindowsDropTab: 'windows:dropTab',
   // Grupo B: la respuesta del dialogo propio de cierre (lo pide main por CLOSE_PROMPT_CHANNEL).
   CloseAnswer: 'close:answer',
+  // Emparejamiento del host local: las peticiones pendientes (para una ventana que carga tarde) y la respuesta.
+  HostPairPending: 'host:pairPending',
+  HostPairAnswer: 'host:pairAnswer',
+  // Clientes emparejados (Configuración › Hooks y permisos): listar y revocar.
+  HostClientsList: 'host:clientsList',
+  HostClientsRevoke: 'host:clientsRevoke',
   // Estado de la actualizacion (para una ventana que carga tarde) e instalarla ya descargada.
   UpdateGetState: 'update:getState',
   UpdateInstall: 'update:install',
@@ -377,7 +397,13 @@ export const IpcChannel = {
   BrowserOpen: 'browser:open',
   BrowserNavigate: 'browser:navigate',
   BrowserBack: 'browser:back',
+  BrowserForward: 'browser:forward',
   BrowserReload: 'browser:reload',
+  BrowserZoom: 'browser:zoom',
+  BrowserOpenExternal: 'browser:open-external',
+  BrowserDevTools: 'browser:devtools',
+  BrowserPopOut: 'browser:pop-out',
+  BrowserPopIn: 'browser:pop-in',
   BrowserClose: 'browser:close',
   BrowserSetBounds: 'browser:set-bounds',
   BrowserTakeControl: 'browser:take-control',
@@ -433,6 +459,9 @@ export interface CreateSessionParams {
   readonly effort?: string;
   // Ultracode (solo Claude): ajuste de arranque de la sesion; ausente/false -> apagado.
   readonly ultracode?: boolean;
+  // «Continuar al restablecerse» (solo Claude por suscripción): se enciende en la sesión recién creada. Main lo ignora
+  // (y lo deja en el log) en cualquier otra cuenta.
+  readonly resumeOnReset?: boolean;
   readonly maxBudgetUsdCents?: number;
   // M2.6: modo de permiso inicial (--permission-mode). Ausente -> 'default'. Solo Claude.
   readonly permissionMode?: PermissionMode;
@@ -446,6 +475,12 @@ export interface CreateSessionParams {
   readonly forkFrom?: { readonly sessionId: string; readonly atUuid: string };
   // F8: id de la tarea cuya PRIMERA sesión es esta (lo manda `startTask`); main enlaza por él. Ausente = no es una tarea, o se reanuda (entonces enlaza `resumeSessionId`).
   readonly taskId?: string;
+}
+
+export interface LaunchDelegatedParams {
+  readonly conversationId: string;
+  readonly model?: string;
+  readonly effort?: string;
 }
 
 // Resultado de crear una sesion: el id y el config dir EFECTIVO con el que se lanzo (la cuenta o su
@@ -535,6 +570,11 @@ export interface SetModelParams {
 export interface SetEffortParams {
   readonly sessionId: string;
   readonly effort: string;
+}
+
+export interface SetResumeOnResetParams {
+  readonly sessionId: string;
+  readonly enabled: boolean;
 }
 
 // Cambio de modo de permiso en caliente (M2.6, solo Claude): control_request set_permission_mode.
@@ -1034,6 +1074,8 @@ export interface MageApi {
   // Cambia el modelo de una sesion viva (M2.4, solo Claude); aplica al siguiente turno.
   setModel(params: SetModelParams): Promise<void>;
   setEffort(params: SetEffortParams): Promise<void>;
+  // «Continuar al restablecerse» de una sesion viva (solo Claude por suscripcion; main lanza si la cuenta no vale).
+  setResumeOnReset(params: SetResumeOnResetParams): Promise<void>;
   // Cambia el modo de permiso de una sesion viva (M2.6, solo Claude): default/acceptEdits/plan.
   setPermissionMode(params: SetPermissionModeParams): Promise<void>;
   // Para UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
@@ -1103,12 +1145,18 @@ export interface MageApi {
   listAdoptableSessions(): Promise<readonly AdoptableSession[]>;
   // Adopta una sesión del host: suscribe esta ventana a sus eventos y devuelve la instantánea (U17).
   attachSession(sessionId: string): Promise<ConversationSnapshot>;
+  // Tarjeta «Lanzar»: arranca la sesión delegada que espera (`conversationId`, el id de su tarjeta) con el modelo y el
+  // esfuerzo elegidos (ausentes = los de la cuenta), o la descarta. Solo la ventana de la creadora.
+  launchDelegated(params: LaunchDelegatedParams): Promise<void>;
+  cancelDelegatedLaunch(conversationId: string): Promise<void>;
   // Aviso de una sesión del host nueva y adoptable; devuelve función para desuscribir (U17).
   onSessionAdoptable(listener: (session: AdoptableSession) => void): () => void;
   // Cuentas: descubrir en disco, crear una nueva, y lanzar el login interactivo (terminal externa).
   listAccounts(): Promise<readonly AccountInfo[]>;
   // «Refrescar sesión»: el CLI de la cuenta renueva su token de acceso con el de renovación, sin gastar un turno.
   refreshLogin(configDir: string): Promise<void>;
+  // «Reintentar»: relee del disco el estado de login de una cuenta de Claude por suscripción (no renueva nada).
+  reloadLogin(configDir: string): Promise<AccountLoginState>;
   confirmCodexAccounts(): Promise<readonly AccountInfo[]>;
   createAccount(name: string): Promise<AccountInfo>;
   // Login por el CLI (Fase 9.2). Tres pasos porque el usuario pega el *code* en medio:
@@ -1231,6 +1279,15 @@ export interface MageApi {
   openArtifact(params: OpenArtifactParams): Promise<void>;
   // Cuenta que publico un artifact, o null si no consta (publicado fuera de Mage, o antes de 2.4).
   lookupArtifactPublisher(url: string): Promise<string | null>;
+  // Creados y compartidos de cada cuenta de Claude por suscripcion; cada lista falla sola.
+  listArtifacts(params: ArtifactsListParams): Promise<readonly AccountArtifacts[]>;
+  // «Cargar más» de una lista. LANZA si falla.
+  moreArtifacts(params: ArtifactsMoreParams): Promise<ArtifactPage>;
+  // Abre un artifact en el visor de Mage (navegador aislado, sin cookies); su vista la coloca la barra del navegador
+  // con el id `ARTIFACT_VIEWER_SESSION_ID`. Devuelve su titulo. LANZA si falla.
+  openArtifactInViewer(params: ArtifactsOpenParams): Promise<{ readonly title: string }>;
+  // Quién puede ver un artifact publicado (de la lista `mine` de la cuenta que lo publicó). null si no consta.
+  artifactVisibility(params: ArtifactsVisibilityParams): Promise<ArtifactVisibility | null>;
   // Instrucciones que aplican a la conversacion (2.9.b): CLAUDE.md de proyecto y de usuario. `content`
   // null = el fichero no existe (no es un error).
   readInstructions(params: ReadInstructionsParams): Promise<readonly InstructionsFile[]>;
@@ -1387,6 +1444,13 @@ export interface MageApi {
   onClosePrompt(listener: () => void): () => void;
   // Respuesta al dialogo de cierre. Lanza si esta ventana no tenia una pregunta pendiente.
   answerClose(answer: CloseAnswer): Promise<void>;
+  // Emparejamiento del host local: lo pendiente ahora, sus cambios (la lista entera) y la respuesta del diálogo.
+  getHostPairRequests(): Promise<readonly HostPairRequestView[]>;
+  onHostPairRequests(listener: (pending: readonly HostPairRequestView[]) => void): () => void;
+  answerHostPair(answer: HostPairAnswer): Promise<void>;
+  listHostClients(): Promise<readonly HostClientView[]>;
+  // Revoca y corta sus conexiones. false si ya no existía.
+  revokeHostClient(clientId: string): Promise<boolean>;
   getUpdateState(): Promise<UpdateState>;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
   // main pide a ESTA ventana el dialogo de «lista para instalar» de la version dada.
@@ -1409,7 +1473,16 @@ export interface MageApi {
   browserOpen(sessionId: string): Promise<readonly BrowserEntryState[]>;
   browserNavigate(params: { readonly sessionId: string; readonly url: string }): Promise<void>;
   browserBack(sessionId: string): Promise<void>;
+  browserForward(sessionId: string): Promise<void>;
   browserReload(sessionId: string): Promise<void>;
+  browserZoom(params: { readonly sessionId: string; readonly step: BrowserZoomStep }): Promise<void>;
+  // Abre en el navegador del usuario la URL ACTUAL del navegador de esa sesión (la lee main; solo https).
+  browserOpenExternal(sessionId: string): Promise<void>;
+  // Solo sin empaquetar (`isDevelopment`); empaquetada, main lo rechaza.
+  browserDevTools(sessionId: string): Promise<void>;
+  // Saca la MISMA vista a una ventana propia de Mage (sin recargar) y la trae de vuelta. `title`: el de la conversación.
+  browserPopOut(params: { readonly sessionId: string; readonly title: string }): Promise<void>;
+  browserPopIn(sessionId: string): Promise<void>;
   browserClose(sessionId: string): Promise<void>;
   browserSetBounds(params: { readonly sessionId: string; readonly bounds: BrowserBounds | null }): Promise<void>;
   browserTakeControl(sessionId: string): Promise<void>;

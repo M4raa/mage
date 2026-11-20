@@ -1,6 +1,6 @@
 import { SUBAGENT_STATUS, type SubagentStatus } from './engineBlocks';
 import { describe, expect, it } from 'vitest';
-import { activityStepLabel, activityTurns, chatRows, currentTurnSummary, isChatBlock, runningStepId, stickResetKey } from './chatVisibility';
+import { activityStepLabel, activityTurns, chatRows, currentTurnSummary, isActivityStep, isChatBlock,runningStepId, stickResetKey } from './chatVisibility';
 import type { Block } from './types';
 
 type ToolBlock = Extract<Block, { kind: 'tool' }>;
@@ -229,5 +229,13 @@ describe('runningStepId', () => {
 
   it('runningStepId_turnoSinPasos_esNull', () => {
     expect(runningStepId(turnOf(), true)).toBeNull();
+  });
+});
+
+describe('ficha de fichero y Actividad', () => {
+  it('isChatBlock_writeOk_vaAlChatYSuPasoSigueEnActividad', () => {
+    const write = tool('w1', { tool: 'Write', filePath: '/p/a.md' });
+
+    expect([isChatBlock(write), isActivityStep(write)]).toEqual([true, true]);
   });
 });

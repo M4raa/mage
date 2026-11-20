@@ -11,10 +11,20 @@ import { TrustRequiredError, UnknownAccountError } from '../host/hostErrors';
 import type { HostCreateRequest } from '../host/hostProtocol';
 import { resolveDelegatedSettings } from './delegatedSettings';
 import type { DelegatedSettings, SessionSettings } from './delegatedSettings';
-import type { DelegationLog, DelegationView } from './delegationLog';
+import { DEFAULT_ON_DONE } from './delegatedCloser';
+import type { DelegatedCloser } from './delegatedCloser';
+import type { DelegatedRelaunch, DelegationLog, DelegationView } from './delegationLog';
+import { sessionResultMessage } from '@shared/systemWrappers';
+import { supportsResumeOnReset } from '@shared/resumeOnReset';
+import type { UsageInfo } from '@shared/usage';
+import { failedUsageEntry, usageEntryOf } from './accountUsage';
+import type { UsageAccount } from './accountUsage';
 import { MagePolicyError, MageValidationError } from './errors';
+import { needsLaunchCard } from './launchCard';
+import type { CreatorFacts } from './launchCard';
+import type { LaunchChoice, PendingLaunches } from './pendingLaunches';
 import { MAX_SESSION_TITLE_CHARS } from './schemas';
-import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput } from './types';
+import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CloseOutput, CreatedBy, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput, UsageAccountEntry } from './types';
 import type { CreateSessionCommand, CreationRequest, CreationTarget, MageSessionsPort, SessionMetadata } from './sessionsPort';
 
 // El puerto REAL del MCP en main: UNO por conexión, con la sesión que llama ya resuelta. Solo ve a sus
@@ -26,15 +36,16 @@ const CANCELLABLE_STATES: ReadonlySet<string> = new Set(['working', 'permission_
 
 export interface HostSessionsPortDeps {
   readonly caller: { readonly sessionId: string; readonly conversationId: string; readonly accountId: string };
-  readonly log: Pick<DelegationLog, 'watch' | 'get' | 'list' | 'messagesAfter' | 'readMessages' | 'recordInstruction' | 'recordQuestion' | 'settleQuestion'>;
-  readonly index: Pick<ConversationIndexStore, 'recordDelegation'>;
-  readonly coordinator: Pick<SessionCoordinator, 'subscribe' | 'snapshot' | 'send' | 'interrupt' | 'answerPermission' | 'announce'>;
+  readonly log: Pick<DelegationLog, 'watch' | 'get' | 'list' | 'messagesAfter' | 'readMessages' | 'recordInstruction' | 'recordQuestion' | 'settleQuestion' | 'reopen'>;
+  readonly index: Pick<ConversationIndexStore, 'recordDelegation' | 'delegationOf' | 'nativeRefOf' | 'loadPrefs' | 'savePrefs'>;
+  readonly coordinator: Pick<SessionCoordinator, 'subscribe' | 'snapshot' | 'send' | 'interrupt' | 'answerPermission' | 'announce' | 'ownerOf'>;
   // Cuentas de Claude y Codex de Mage (M-U4: también las de API).
   readonly accounts: () => readonly { readonly id: string; readonly provider: string }[];
   readonly projects: () => readonly { readonly id: string; readonly cwd: string | null }[];
   // Lanza por la frontera del host (`resolveHostLaunchParams` + `launchHostSession(…, 'mcp', createdBy)`); devuelve el sessionId.
   // `title` es el nombre de la subsesión (el que dio la creadora, o la primera línea del prompt).
-  readonly launch: (request: HostCreateRequest, createdBy: { readonly conversationId: string; readonly sessionId: string }, title: string) => string;
+  // Con `resumeSessionId` reanuda esa conversación (`--resume`) en vez de abrir una nueva.
+  readonly launch: (request: HostCreateRequest, createdBy: { readonly conversationId: string; readonly sessionId: string }, title: string, resumeSessionId?: string) => string;
   readonly setTimer: (fn: () => void, ms: number) => () => void;
   // Lo que main sabe de la creadora (`SessionSettingsRegistry`); null si no la tiene anotada.
   readonly creatorSettings: () => SessionSettings | null;
@@ -42,7 +53,28 @@ export interface HostSessionsPortDeps {
   readonly modelCatalog: (accountId: string) => readonly ProviderModel[];
   // El modo de Codex se fija tras lanzar y antes del primer mensaje (el adapter lo guarda para el siguiente turno).
   readonly setPermissionMode: (sessionId: string, mode: string) => void;
+  // Lo que main sabe de la creadora para decidir si hace falta la tarjeta «Lanzar» (null = desconocida).
+  readonly creatorFacts: () => CreatorFacts | null;
+  // Las sesiones que esperan a que el usuario las lance (una para todas las conexiones).
+  readonly pending: PendingLaunches;
+  readonly newId: () => string;
+  // Cuentas con su forma de pago y el uso de cada una (`usageOfAccount` de main: lanza si no se puede leer).
+  readonly usage: UsageSource;
+  // Enciende «Continuar al restablecerse» en la sesión recién lanzada.
+  readonly setResumeOnReset: (sessionId: string, enabled: boolean) => void;
+  // Una sola para todas las conexiones: cierra las delegadas al acabar (o al pedirlo) según su política.
+  readonly closer: Pick<DelegatedCloser, 'register' | 'closeNow'>;
 }
+
+export interface UsageSource {
+  readonly accounts: () => readonly UsageAccount[];
+  readonly read: (accountId: string) => Promise<UsageInfo | null>;
+}
+
+// Lo que recibe la creadora cuando el usuario descarta la tarjeta (lo lee el modelo: castellano, como el resto).
+export const NOT_LAUNCHED_TEXT = 'El usuario no lanzó la sesión.';
+
+type Delegation = CreateSessionCommand & { readonly createdBy: CreatedBy };
 
 export class HostSessionsPort implements MageSessionsPort {
   constructor(private readonly deps: HostSessionsPortDeps) {}
@@ -56,51 +88,47 @@ export class HostSessionsPort implements MageSessionsPort {
     return { projectId: project?.id ?? NO_PROJECT_ID, accountId: this.pickAccount(provider, accountId), provider, cwd };
   }
 
+  // Sin modelo o sin esfuerzo, y con el usuario delante, la sesión no arranca: espera a su tarjeta «Lanzar».
   async createSession(cmd: CreateSessionCommand): Promise<CreateOutput> {
-    const { caller, coordinator, index, log, launch } = this.deps;
-    const { target, prompt, requestId } = cmd;
+    const { caller } = this.deps;
     if (cmd.createdBy === undefined) throw new Error(`createdBy es obligatorio para delegar desde ${caller.conversationId}`);
-    const settings = resolveDelegatedSettings({
-      creator: this.deps.creatorSettings(), targetProvider: target.provider,
-      requested: { model: cmd.model, effort: cmd.effort, permissionMode: cmd.permissionMode }, catalog: this.deps.modelCatalog(target.accountId),
-    });
-    const title = cmd.title ?? titleOf(prompt);
-    const sessionId = this.launchTranslated(launch, launchRequestOf(cmd, settings), title);
-    if (target.provider === 'codex') this.setCodexMode(sessionId, settings.permissionMode);
-    const conversationId = await this.waitForConversationId(sessionId);
-    index.recordDelegation(conversationId, { createdBy: cmd.createdBy, creatorChain: cmd.creatorChain });
-    log.watch({
-      sessionId, conversationId, creatorSessionId: caller.sessionId, creatorConversationId: caller.conversationId, title,
-      provider: target.provider, accountId: target.accountId, projectId: target.projectId, createdBy: cmd.createdBy, creatorChain: cmd.creatorChain,
-    });
-    coordinator.send({ sessionId, text: prompt, commandId: requestId });
-    log.recordInstruction(sessionId, prompt);
-    coordinator.announce(caller.sessionId, { kind: 'delegation_created', childId: conversationId, requestId });
-    this.announceMessage(sessionId, conversationId, 'instruction', prompt);
-    return { conversationId, state: 'running' };
+    if (cmd.resumeOnReset === true) this.assertResumeSupported(cmd.target);
+    const delegation: Delegation = { ...cmd, createdBy: cmd.createdBy };
+    const requested = { model: cmd.model, effort: cmd.effort };
+    const settings = this.settingsFor(delegation, requested);
+    if (needsLaunchCard({ requested, creator: this.deps.creatorFacts() })) return this.holdForLaunch(delegation, settings);
+    return { conversationId: await this.start(delegation, settings), state: 'running' };
   }
 
   async listSessions(_input: ListInput): Promise<readonly SessionMetadata[]> {
-    return this.deps.log.list().filter((view) => this.isDescendant(view)).map(metadataOf);
+    const live = this.deps.log.list().filter((view) => this.isDescendant(view)).map(metadataOf);
+    const parked = this.deps.pending.list().map(({ launch }) => this.parked(launch.id)?.metadata ?? null);
+    return [...live, ...parked.filter((metadata): metadata is SessionMetadata => metadata !== null)];
   }
 
   async getSession(conversationId: string): Promise<SessionMetadata> {
-    return metadataOf(this.descendant(conversationId));
+    return this.parked(conversationId)?.metadata ?? metadataOf(this.descendant(conversationId));
   }
 
   async getStatus(conversationId: string): Promise<StatusOutput> {
+    const parked = this.parked(conversationId);
+    if (parked !== null) return { state: parked.metadata.state, turnCount: 0, lastEventAt: parked.since };
     const { state, turnCount, lastEventAt } = this.descendant(conversationId);
     return { state, turnCount, lastEventAt };
   }
 
   async readResult(input: { conversationId: string; afterSeq: number }): Promise<readonly PublicMessage[]> {
+    if (this.parked(input.conversationId) !== null) return [];
     this.descendant(input.conversationId);
     return this.deps.log.readMessages(input.conversationId, input.afterSeq);
   }
 
   async send(input: SendInput): Promise<SendOutput> {
-    const view = this.descendant(input.conversationId);
-    if (view.closed) return { receipt: 'rejected', reason: 'session_closed' };
+    const parked = this.parked(input.conversationId);
+    if (parked !== null) return { receipt: 'rejected', reason: parked.metadata.state === 'awaiting_launch' ? 'awaiting_launch' : 'session_closed' };
+    const found = this.descendant(input.conversationId);
+    const view = found.closed ? await this.reopen(found) : found;
+    if (view === null || view.closed) return { receipt: 'rejected', reason: 'session_closed' };
     const { sessionId } = view.child;
     const pending = this.deps.coordinator.snapshot(sessionId).pending;
     const question = pending.find(isQuestionPermission);
@@ -111,11 +139,22 @@ export class HostSessionsPort implements MageSessionsPort {
     return this.deliver(view, input);
   }
 
+  // Una que espera a lanzarse no tiene turno que parar (la descarta el usuario desde su tarjeta).
   async cancel(input: CancelInput): Promise<CancelOutput> {
+    if (this.parked(input.conversationId) !== null) return { cancelled: false };
     const view = this.descendant(input.conversationId);
     if (!CANCELLABLE_STATES.has(view.state)) return { cancelled: false };
     this.deps.coordinator.interrupt(view.child.sessionId);
     return { cancelled: true };
+  }
+
+  // Una que espera a lanzarse no tiene proceso que parar, y una ya cerrada tampoco: `closed: false`, sin error.
+  async closeSession(input: { readonly conversationId: string }): Promise<CloseOutput> {
+    if (this.parked(input.conversationId) !== null) return { closed: false };
+    const view = this.descendant(input.conversationId);
+    if (view.closed) return { closed: false };
+    this.deps.closer.closeNow(view.child.sessionId);
+    return { closed: true };
   }
 
   // U26: solo una delegada (está en el registro) pregunta a su creadora; cualquier otra sesión, `not_delegated`.
@@ -125,6 +164,147 @@ export class HostSessionsPort implements MageSessionsPort {
     if (view === null) throw new MagePolicyError(`not_delegated: ${caller.conversationId}`);
     if (log.recordQuestion(view.child.sessionId, input.text) === 'creator_closed') throw new MagePolicyError(`creator_closed: ${view.child.creatorConversationId}`);
     return { receipt: 'accepted' };
+  }
+
+  // Lo que se le pide a una sesión recién lanzada (o reabierta): «Continuar al restablecerse» y su política al acabar.
+  private prepareLaunched(sessionId: string, policy: Pick<DelegatedRelaunch, 'onDone' | 'resumeOnReset'>): void {
+    if (policy.resumeOnReset) this.deps.setResumeOnReset(sessionId, true);
+    this.deps.closer.register(sessionId, policy.onDone);
+  }
+
+  // Una cerrada a propósito vuelve a vivir con `--resume` por el camino de siempre; null si no se puede (no la cerramos
+  // nosotros, o no se sabe con qué se lanzó).
+  private async reopen(view: DelegationView): Promise<DelegationView | null> {
+    const { child } = view;
+    const { relaunch } = child;
+    const nativeId = this.deps.index.nativeRefOf(child.conversationId)?.nativeId;
+    if (view.retired !== true || relaunch === undefined || nativeId === undefined) return null;
+    const request = { ...relaunch.request, commandId: this.deps.newId() };
+    const sessionId = this.launchTranslated(request, { conversationId: child.creatorConversationId, sessionId: child.creatorSessionId }, child.title, nativeId);
+    if (child.provider === 'codex') this.setCodexMode(sessionId, relaunch.permissionMode);
+    this.prepareLaunched(sessionId, relaunch);
+    await this.waitForConversationId(sessionId);
+    this.deps.log.reopen(child.sessionId, sessionId);
+    return this.deps.log.get(child.conversationId);
+  }
+
+  // Rechazo ANTES de crear nada: la opción solo existe en Claude por suscripción (el error lleva lo recibido).
+  private assertResumeSupported(target: CreationTarget): void {
+    const billing = this.deps.usage.accounts().find((account) => account.id === target.accountId)?.billing;
+    if (!supportsResumeOnReset(target.provider, billing)) {
+      throw new MageValidationError(`resume_on_reset_unsupported: ${target.provider}/${billing ?? 'unknown'}`);
+    }
+  }
+
+  // Una cuenta que falla al leerse sale con su error y sin ventanas; las demás no se enteran. Orden: el pedido.
+  async getUsage(input: { readonly accountIds: readonly string[] }): Promise<readonly UsageAccountEntry[]> {
+    const known = new Map(this.deps.usage.accounts().map((account) => [account.id, account]));
+    const wanted = input.accountIds.flatMap((accountId) => known.get(accountId) ?? []);
+    return Promise.all(wanted.map((account) => this.usageOf(account)));
+  }
+
+  private async usageOf(account: UsageAccount): Promise<UsageAccountEntry> {
+    try {
+      return usageEntryOf(account, await this.deps.usage.read(account.id));
+    } catch (error) {
+      return failedUsageEntry(account, error);
+    }
+  }
+
+  // Modelo, esfuerzo y modo con que nacería: lo pedido (o lo elegido en la tarjeta) validado contra el catálogo de la cuenta.
+  private settingsFor(cmd: Delegation, choice: LaunchChoice): DelegatedSettings {
+    return resolveDelegatedSettings({
+      creator: this.deps.creatorSettings(), targetProvider: cmd.target.provider,
+      requested: { model: choice.model, effort: choice.effort, permissionMode: cmd.permissionMode }, catalog: this.deps.modelCatalog(cmd.target.accountId),
+    });
+  }
+
+  // El camino de creación de siempre; devuelve el id real de la conversación. `launchId`: el que ya tiene la creadora.
+  private async start(cmd: Delegation, settings: DelegatedSettings, launchId?: string): Promise<string> {
+    const { caller, coordinator, index, log } = this.deps;
+    const { target, prompt, requestId } = cmd;
+    const title = cmd.title ?? titleOf(prompt);
+    const request = launchRequestOf(cmd, settings);
+    const relaunch: DelegatedRelaunch = { request, permissionMode: settings.permissionMode, onDone: cmd.onDone ?? DEFAULT_ON_DONE, resumeOnReset: cmd.resumeOnReset === true };
+    const sessionId = this.launchTranslated(request, { conversationId: caller.conversationId, sessionId: caller.sessionId }, title);
+    if (target.provider === 'codex') this.setCodexMode(sessionId, settings.permissionMode);
+    this.prepareLaunched(sessionId, relaunch);
+    const conversationId = await this.waitForConversationId(sessionId);
+    index.recordDelegation(conversationId, { createdBy: cmd.createdBy, creatorChain: cmd.creatorChain });
+    log.watch({
+      sessionId, conversationId, creatorSessionId: caller.sessionId, creatorConversationId: caller.conversationId, title,
+      provider: target.provider, accountId: target.accountId, projectId: target.projectId, createdBy: cmd.createdBy, creatorChain: cmd.creatorChain,
+      relaunch, ...(launchId === undefined ? {} : { launchId }),
+    });
+    coordinator.send({ sessionId, text: prompt, commandId: requestId });
+    log.recordInstruction(sessionId, prompt);
+    coordinator.announce(caller.sessionId, { kind: 'delegation_created', childId: conversationId, requestId });
+    this.announceMessage(sessionId, conversationId, 'instruction', prompt);
+    return conversationId;
+  }
+
+  // Deja la sesión pendiente (sin CLI) y pinta la tarjeta en la creadora. El índice la apunta como delegada sin sesión
+  // nativa: si Mage se reinicia antes de lanzarla, `parked` la contesta como interrumpida y nada la arranca.
+  private holdForLaunch(cmd: Delegation, settings: DelegatedSettings): CreateOutput {
+    const { caller, pending, coordinator, index } = this.deps;
+    const existing = pending.byRequest(caller.conversationId, cmd.requestId);
+    if (existing !== null) return { conversationId: existing.id, state: 'awaiting_launch' };
+    const id = this.deps.newId();
+    const title = cmd.title ?? titleOf(cmd.prompt);
+    index.recordDelegation(id, { createdBy: cmd.createdBy, creatorChain: cmd.creatorChain });
+    index.savePrefs(id, { provider: cmd.target.provider, accountId: cmd.target.accountId });
+    pending.add({
+      id, creatorSessionId: caller.sessionId, requestId: cmd.requestId, since: cmd.createdBy.at, metadata: pendingMetadata(id, cmd, title),
+      start: (choice) => this.launchPending(id, cmd, choice), discard: () => this.discardPending(id, title),
+    });
+    const models = this.deps.modelCatalog(cmd.target.accountId).map((model) => ({ id: model.id, label: model.label, efforts: model.supportedEfforts ?? [] }));
+    coordinator.announce(caller.sessionId, {
+      kind: 'delegation_launch', childId: id, title, provider: cmd.target.provider, accountId: cmd.target.accountId,
+      model: settings.model ?? null, effort: settings.effort ?? null, models,
+    });
+    return { conversationId: id, state: 'awaiting_launch' };
+  }
+
+  // ponytail: la entrada del índice de una pendiente ya lanzada se queda (unos cien bytes); tras reiniciar contesta
+  // `interrupted`, que es lo que es. Borrarla al lanzar si algún día pesa.
+  private async launchPending(id: string, cmd: Delegation, choice: LaunchChoice): Promise<void> {
+    const settings = this.settingsFor(cmd, choice);
+    const conversationId = await this.start(cmd, settings, id);
+    this.deps.coordinator.announce(this.deps.caller.sessionId, {
+      kind: 'delegation_launch_settled', childId: id,
+      outcome: { launched: true, model: settings.model ?? null, effort: settings.effort ?? null, conversationId },
+    });
+  }
+
+  // La creadora recibe el resultado como el de cualquier otra sesión, con el texto de que no se lanzó.
+  private discardPending(id: string, title: string): void {
+    const { coordinator, caller } = this.deps;
+    if (coordinator.ownerOf(caller.sessionId) === undefined) return;
+    coordinator.announce(caller.sessionId, { kind: 'delegation_launch_settled', childId: id, outcome: { launched: false } });
+    coordinator.send({ sessionId: caller.sessionId, text: sessionResultMessage({ title, conversationId: id, text: NOT_LAUNCHED_TEXT }) });
+  }
+
+  // Una descendiente sin sesión viva: esperando a lanzarse, descartada, o pendiente de antes de reiniciar Mage.
+  private parked(conversationId: string): { readonly metadata: SessionMetadata; readonly since: string } | null {
+    if (this.deps.log.get(conversationId) !== null) return null;
+    const found = this.deps.pending.find(conversationId);
+    if (found === null) return this.leftover(conversationId);
+    if (!found.launch.metadata.creatorChain.includes(this.deps.caller.conversationId)) return null;
+    const state = found.status === 'cancelled' ? 'interrupted' : 'awaiting_launch';
+    return { metadata: { ...found.launch.metadata, state }, since: found.launch.since };
+  }
+
+  private leftover(conversationId: string): { readonly metadata: SessionMetadata; readonly since: string } | null {
+    const { index, caller } = this.deps;
+    if (index.nativeRefOf(conversationId) !== null) return null;
+    const { createdBy, creatorChain } = index.delegationOf(conversationId);
+    if (createdBy === null || !creatorChain.includes(caller.conversationId)) return null;
+    const prefs = index.loadPrefs(conversationId);
+    const metadata: SessionMetadata = {
+      conversationId, title: '', provider: prefs?.provider ?? 'claude', state: 'interrupted', projectId: NO_PROJECT_ID,
+      accountId: prefs?.accountId ?? caller.accountId, isPrivate: false, createdBy, creatorChain,
+    };
+    return { metadata, since: createdBy.at };
   }
 
   private pickAccount(provider: string, accountId: string | undefined): string {
@@ -148,9 +328,10 @@ export class HostSessionsPort implements MageSessionsPort {
     }
   }
 
-  private launchTranslated(launch: HostSessionsPortDeps['launch'], request: HostCreateRequest, title: string): string {
+  // `creator`: la sesión que la creó (al reabrir una cerrada no es la llamante, que puede ser una antepasada).
+  private launchTranslated(request: HostCreateRequest, creator: { readonly conversationId: string; readonly sessionId: string }, title: string, resumeSessionId?: string): string {
     try {
-      return launch(request, { conversationId: this.deps.caller.conversationId, sessionId: this.deps.caller.sessionId }, title);
+      return resumeSessionId === undefined ? this.deps.launch(request, creator, title) : this.deps.launch(request, creator, title, resumeSessionId);
     } catch (error) {
       if (error instanceof TrustRequiredError) throw new MageValidationError(`trust_required: ${error.cwd}`, { cause: error });
       if (error instanceof UnknownAccountError) throw new MageValidationError(`unknown_account: ${error.accountId}`, { cause: error });
@@ -226,6 +407,8 @@ export class ExternalSessionsPort implements MageSessionsPort {
   send(): Promise<never> { return reject(); }
   cancel(): Promise<never> { return reject(); }
   askCreator(): Promise<never> { return reject(); }
+  getUsage(): Promise<never> { return reject(); }
+  closeSession(): Promise<never> { return reject(); }
 }
 function reject(): Promise<never> {
   return Promise.reject(new MagePolicyError('mage_external_caller: las herramientas de Mage solo funcionan desde una sesión lanzada por Mage'));
@@ -252,10 +435,18 @@ const titleOf = (prompt: string): string => (prompt.split('\n')[0] ?? '').trim()
 function isQuestionPermission(pending: PendingRequest): pending is PendingRequest & { kind: 'permission' } {
   return pending.kind === 'permission' && parseAskUserQuestion(pending.request.input) !== null;
 }
+function pendingMetadata(id: string, cmd: Delegation, title: string): SessionMetadata {
+  const { target } = cmd;
+  return {
+    conversationId: id, title, provider: target.provider, state: 'awaiting_launch', projectId: target.projectId, accountId: target.accountId,
+    isPrivate: false, createdBy: cmd.createdBy, creatorChain: cmd.creatorChain,
+  };
+}
+// La creadora ve a cada una con el id que recibió (el de su tarjeta, si esperó a lanzarse).
 function metadataOf(view: DelegationView): SessionMetadata {
   const { child } = view;
   return {
-    conversationId: child.conversationId, title: child.title, provider: child.provider, state: view.state, projectId: child.projectId,
+    conversationId: child.launchId ?? child.conversationId, title: child.title, provider: child.provider, state: view.state, projectId: child.projectId,
     accountId: child.accountId, isPrivate: false, createdBy: child.createdBy, creatorChain: child.creatorChain,
   };
 }

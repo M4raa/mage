@@ -12,6 +12,9 @@ import { MAGE_MCP_OFF_NOTICE, mageMcpLaunch, mageMcpServer, withMageReadOnlyAllo
 import { McpRegistrationService, type McpRegistrationDeps } from './mcpServer/registrationService';
 import { DelegationLog } from './mcpServer/delegationLog';
 import { HostSessionsPort } from './mcpServer/hostSessionsPort';
+import type { CreatorFacts } from './mcpServer/launchCard';
+import { registerLaunchCardIpc } from './mcpServer/launchCardIpc';
+import { PendingLaunches } from './mcpServer/pendingLaunches';
 import { SessionSettingsRegistry, settingsOfLaunch } from './mcpServer/sessionSettingsRegistry';
 import { MemoryIdempotencyStore } from './mcpServer/idempotencyStore';
 import { createMcpConnector as createHostMcpConnector } from './mcpServer/mcpConnector';
@@ -42,7 +45,7 @@ import { homedir, tmpdir } from 'node:os';
 import { accountsFetchFor, accountsHomeFrom, decideTestHome } from './os/testHome';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isUnderCliScratchpad as isUnderCliScratchpadPure } from './files/cliScratchpad';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
@@ -127,7 +130,8 @@ import type { MenuItemConstructorOptions } from 'electron';
 import { BACKGROUND_TEST_SWITCHES, isBackgroundTestRun, offScreenPosition } from './windows/backgroundTestWindow';
 import { DebugChannel } from '@shared/debug';
 import type { RendererLogInput } from '@shared/debug';
-import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
+import { supportsResumeOnReset } from '@shared/resumeOnReset';
+import type { AccountAuthKind, AccountCreateParams, AccountInfo, AccountLoginState, AccountProviderId, AgyLoginStart, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
 import { BASE_ARGS as CLAUDE_BASE_ARGS, ClaudeAdapter } from './engine/claudeAdapter';
 import { probeModelCatalog, probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
 import { registerMcpIpc } from './config/mcpIpc';
@@ -140,7 +144,7 @@ import { registerCapabilitiesIpc } from './capabilities/overview/capabilitiesIpc
 import { managedSettingsDir, readCapabilitiesOverview, readPluginCatalog } from './capabilities/overview/capabilitiesOverview';
 import { readSkillFile } from './capabilities/overview/skillFiles';
 import { runNativeCommand } from './capabilities/nativeRunner';
-import { BROWSER_STATE_CHANNEL } from '@shared/browser';
+import { BROWSER_STATE_CHANNEL, type BrowserEntryState } from '@shared/browser';
 import { registerBrowserIpc } from './browser/browserIpc';
 import { BROWSER_SWEEP_INTERVAL_MS, BrowserRegistry } from './browser/browserRegistry';
 import { createBrowserAgent } from './browser/browserAgent';
@@ -148,6 +152,7 @@ import { createParkingWindow, electronBrowserDeps, electronImageDeps } from './b
 import { IsolatedBrowser } from './browser/isolatedBrowser';
 import { PenSessions } from './browser/penSession';
 import { createParkingHost, ViewPlacement } from './browser/viewPlacement';
+import { BrowserPopouts, type PopoutWindow } from './browser/browserPopout';
 import { libraryStatePath, loadLibraryState } from './capabilities/library/libraryState';
 import { LibraryService, type LibraryAccount } from './capabilities/library/libraryService';
 import { decideTestLibraryClaudeDir, testLibraryAccounts } from './capabilities/library/testLibraryAccount';
@@ -248,7 +253,7 @@ import { UsageHistoryService, type TranscriptRoot } from './usage/usageHistorySe
 import { listTranscriptsOf, parseUsageHistoryCache, readRange } from './usage/usageHistoryFs';
 import type { UsageInfo } from '@shared/usage';
 import { StatusService } from './status/statusService';
-import { claudeUserAgent } from './os/claudeVersion';
+import { claudeUserAgent, resolveClaudeVersion } from './os/claudeVersion';
 import { LogBus } from './debug/logBus';
 import { DebugWindowController } from './debug/debugWindow';
 import { TranscriptService, type BranchReadOptions } from './transcripts/transcriptService';
@@ -257,6 +262,12 @@ import { MemoryService, resolveMemoryDir } from './memory/memoryService';
 import { WorkspaceStore } from './state/workspaceStore';
 import { CommandCatalogStore } from './state/commandCatalogStore';
 import { openArtifactWindow } from './artifacts/artifactWindow';
+import { FrameClient } from './artifacts/frameClient';
+import { ArtifactsService, artifactAccountIds } from './artifacts/artifactsService';
+import { registerArtifactsIpc } from './artifacts/artifactsIpc';
+import { ArtifactReader } from './artifacts/artifactReader';
+import { ArtifactViewer } from './artifacts/artifactViewer';
+import { ARTIFACT_VIEWER_SESSION_ID } from '@shared/artifactLibrary';
 import { InstructionsService } from './instructions/instructionsService';
 import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type BridgeFs, type BridgeSpec } from './instructions/instructionsBridge';
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
@@ -287,9 +298,14 @@ import { resolveMentions, type MentionResolverDeps } from './mentions/mentionRes
 import { registerMentionsIpc } from './mentions/mentionsIpc';
 import { nodeReaddir, readHeadBytes, statBytes, walkFiles } from './mentions/walkFiles';
 import { SessionCoordinator } from './coordination/sessionCoordinator';
+import { ResumeOnReset } from './coordination/resumeOnReset';
+import { DelegatedCloser } from './mcpServer/delegatedCloser';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
 import { resolvedPath } from './os/resolvedPath';
-import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
+import { readSnapshot, writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
+import { HOST_CLIENTS_FILE, HostClientStore, parseClientId } from './host/hostClients';
+import { HostPairing, parseHostPairAnswer } from './host/hostPairing';
+import { HOST_PAIR_REQUESTS_CHANNEL } from '@shared/hostClients';
 import { SettingsStore } from './state/settingsStore';
 import { INSTALLER_LANGUAGE_FILE, readInstallerLanguage } from './i18n/installerLanguage';
 import { UiLanguageService } from './i18n/uiLanguageService';
@@ -728,6 +744,11 @@ const sessionCoordinator = new SessionCoordinator({
     },
     release: (sessionId) => getConversationLocks().releaseWhere((holder) => holder === `session:${sessionId}`),
   },
+  // El navegador de Mage vive lo que su sesión: se cierra con ella (y su ventana propia), sin esperar al barrido.
+  onReleased: (sessionId) => { resumeOnReset.forget(sessionId); delegatedCloser.forget(sessionId); void browserRegistry.close(sessionId); },
+  // «Continuar al restablecerse»: main reacciona a los `rate_limit` de cada sesión y a cualquier envío que se adelante.
+  onSessionEvent: (sessionId, event) => resumeOnReset.onEvent(sessionId, event),
+  onSend: (sessionId) => { resumeOnReset.onUserSend(sessionId); delegatedCloser.cancel(sessionId); },
   // A8: el corte pendiente de un rewind de Claude se borra en cuanto sale el siguiente mensaje.
   onUserMessageSent: (ref) => { if (ref.provider === 'claude') getRewindState().clearPendingCut(ref.nativeId); },
   // Keep-alive de la cache (F4.6). Para saber si una cuenta es de API basta su ficha: no se lee la clave de la boveda.
@@ -878,7 +899,6 @@ function buildAdapter(provider: string): ProviderAdapter {
     return new ClaudeAdapter({
       writeMcpConfig,
       resolveApiKey: claudeApiKeyFor,
-      artifactEnabled: () => getSettingsStore().load().artifactEnabled,
       testBaseUrl: () => process.env[TEST_ANTHROPIC_BASE_URL_ENV],
       isPackaged: () => app.isPackaged,
       log: mainLog,
@@ -1475,6 +1495,18 @@ const usageService = new UsageService({
   // Dev no añade otro renovador de Mage a los tokens de HOME compartidos con la instalada.
   refreshSession: isDev ? undefined : (configDir) => tokenRefreshService.refresh(configDir),
 });
+// Artifacts de las cuentas de Claude por suscripcion (lista y lectura), con la misma credencial y renovacion que el
+// uso. El token solo sale de main en la cabecera hacia api.anthropic.com; con el HOME de prueba, la red esta cerrada.
+const frameClient = new FrameClient({
+  fetch: accountsFetch,
+  readAccessToken: (configDir) => readAccessToken(configDir),
+  refreshSession: isDev ? undefined : (configDir) => tokenRefreshService.refresh(configDir),
+  get cliVersion() {
+    return resolveClaudeVersion();
+  },
+  sessionId: randomUUID(),
+});
+const artifactsService = new ArtifactsService({ client: frameClient, now: () => Date.now() });
 const apiUsageStore = new ApiUsageStore({
   read: () => {
     const path = join(app.getPath('userData'), 'api-usage.json');
@@ -2977,23 +3009,128 @@ const hostOwnership = new HostOwnership({
 });
 // D-M6: credencial por sesion que identifica al hijo ante `mage mcp`.
 const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordinator.ownerOf(id) !== undefined });
-// Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel o, sin panel, en la de aparcamiento (D-S3, Z01).
-const viewPlacement = new ViewPlacement(createParkingHost(createParkingWindow));
-const browserRegistry = new BrowserRegistry({
-  createBrowser: (instanceId, sessionId) => new IsolatedBrowser(instanceId, electronBrowserDeps, sessionCoordinator.rewindContext(sessionId).cwd),
+// Clientes emparejados del host (la terminal) y las peticiones de emparejar que esperan respuesta en la ventana.
+const hostClientStore = new HostClientStore({
+  readFile: () => readSnapshot(fileSystemDeps(), hostClientsFile()),
+  writeFile: (content) => writeAtomic(fileSystemDeps(), hostClientsFile(), content),
+  randomBytes,
   newId: randomUUID,
-  isLive: (sessionId) => sessionCoordinator.ownerOf(sessionId) !== undefined,
-  onChange: (states) => windowManager.broadcast(BROWSER_STATE_CHANNEL, states),
-  onOpened: (_sessionId, handle) => viewPlacement.ensureHosted(handle),
-  onClosed: (sessionId, handle) => { viewPlacement.forget(handle); penSessions.discard(sessionId); },
+  now: () => new Date().toISOString(),
   log: mainLog,
 });
+const hostPairing = new HostPairing({
+  canAsk: showWindowForPairing,
+  // A todas: cualquier ventana puede contestar, y las demás tienen que cerrar su diálogo.
+  publish: (pending) => windowManager.broadcast(HOST_PAIR_REQUESTS_CHANNEL, pending),
+  setTimer: (fn, ms) => {
+    const timer = setTimeout(fn, ms);
+    return () => clearTimeout(timer);
+  },
+  newId: randomUUID,
+});
+
+function hostClientsFile(): string {
+  return join(app.getPath('userData'), HOST_CLIENTS_FILE);
+}
+
+// Sin interfaz no hay dónde autorizar. Con ella, la ventana principal sale al frente (recreada si estaba en la bandeja):
+// quien pide emparejar está en la terminal y el diálogo tiene que verse.
+function showWindowForPairing(): boolean {
+  if (runsHeadless) return false;
+  // `verify:gui` en segundo plano: la ventana existe fuera de la pantalla y no se activa.
+  if (backgroundTestRun) windowManager.ensureMain();
+  else focusMainWindow();
+  return true;
+}
+// Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel o, sin panel, en la de aparcamiento (D-S3, Z01).
+const viewPlacement = new ViewPlacement<PopoutWindow>(createParkingHost(createParkingWindow));
+// El visor de artifacts es una entrada más del registro, con su id reservado (ver `artifactViewer.ts`).
+const browserRegistry: BrowserRegistry = new BrowserRegistry({
+  createBrowser: (instanceId, sessionId) => sessionId === ARTIFACT_VIEWER_SESSION_ID
+    ? artifactViewer.createBrowser(instanceId)
+    : new IsolatedBrowser(instanceId, electronBrowserDeps, sessionCoordinator.rewindContext(sessionId).cwd),
+  newId: randomUUID,
+  isLive: (sessionId) => sessionId === ARTIFACT_VIEWER_SESSION_ID ? artifactViewer.isOpen() : sessionCoordinator.ownerOf(sessionId) !== undefined,
+  onChange: broadcastBrowserStates,
+  onOpened: (_sessionId, handle) => viewPlacement.ensureHosted(handle),
+  onClosed: (sessionId, handle) => {
+    browserPopouts.forget(handle);
+    penSessions.discard(sessionId);
+    if (sessionId === ARTIFACT_VIEWER_SESSION_ID) artifactViewer.forget();
+  },
+  isPoppedOut: (handle) => viewPlacement.detachedWindowOf(handle) !== null,
+  log: mainLog,
+});
+// Visor de artifacts: lee el artifact desde main (boot + ficheros, sin cookies) a una cache bajo los datos de Mage y lo
+// abre en un navegador aislado con esa carpeta como raiz. SIN la segunda raiz del navegador normal (el scratchpad del
+// CLI): una pagina ajena no lee nada de fuera de su carpeta. Sus enlaces http(s) van al navegador del sistema.
+const artifactReader = new ArtifactReader({
+  client: frameClient,
+  get userDataDir() {
+    return app.getPath('userData');
+  },
+  fs: {
+    exists: existsSync,
+    mkdir: (target) => mkdirSync(target, { recursive: true }),
+    writeFile: (target, bytes) => writeFileSync(target, bytes),
+    rename: renameSync,
+    rmrf: (target) => rmSync(target, { recursive: true, force: true, maxRetries: RMRF_RETRIES, retryDelay: RMRF_RETRY_DELAY_MS }),
+  },
+  newId: randomUUID,
+});
+const artifactViewer: ArtifactViewer = new ArtifactViewer({
+  reader: artifactReader,
+  registry: () => browserRegistry,
+  createBrowser: (instanceId, root) =>
+    new IsolatedBrowser(instanceId, { ...electronBrowserDeps, isAllowedOutsideRoot: undefined }, root, openViewerLinkOutside),
+  toFileUrl: (filePath) => pathToFileURL(filePath).href,
+});
+
+// Un enlace del artifact hacia fuera: al navegador del sistema (su guarda solo deja https). Un fallo se registra.
+function openViewerLinkOutside(url: string): void {
+  openWithService.openExternal(url).catch((error: unknown) => {
+    // Solo el esquema y el host: la URL entera de una pagina ajena puede llevar cosas en la query.
+    const { protocol, host } = new URL(url);
+    mainLog('warn', 'No se pudo abrir fuera un enlace del visor de artifacts', { target: `${protocol}//${host}`, error: error instanceof Error ? error.message : String(error) });
+  });
+}
+// Ventanas propias del navegador (una por navegador como mucho), por el id de su webContents: la IPC del navegador
+// las reconoce como ventanas de Mage y reciben su estado. No son del workbench: no salen en `windowManager`.
+const browserPopoutWindows = new Map<number, BrowserWindow>();
+const browserPopouts = new BrowserPopouts({ registry: browserRegistry, placement: viewPlacement, createWindow: createBrowserPopoutWindow });
 const penSessions = new PenSessions({ registry: browserRegistry, imageDeps: electronImageDeps, newId: randomUUID });
 const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinator, eventChannel: EVENT_CHANNEL });
 // D-M11: registro de main de las delegadas del MCP (uno para todas las conexiones).
-const delegationLog = new DelegationLog({ coordinator: sessionCoordinator, now: Date.now });
+const delegationLog = new DelegationLog({ coordinator: sessionCoordinator, now: Date.now, onTurnDone: (child, resultDelivered) => delegatedCloser.turnDone(child.sessionId, resultDelivered) });
+// Cierra las delegadas al acabar (o a petición) según su `onDone`; una cerrada deja de ser adoptable hasta que un envío la reabra.
+const delegatedCloser = new DelegatedCloser({
+  now: Date.now,
+  setTimer: (fn, ms) => {
+    const timer = setTimeout(fn, ms);
+    return () => clearTimeout(timer);
+  },
+  retire: (sessionId) => delegationLog.retire(sessionId),
+  close: (sessionId) => { sessionCoordinator.closeByMage(sessionId); adoptableSessions.remove(sessionId); },
+  excludeFromKeepAlive: (sessionId) => sessionCoordinator.excludeFromKeepAlive(sessionId),
+  log: logBus.loggerFor('engine'),
+});
+// «Continuar al restablecerse» (solo Claude por suscripción): el booleano vive en el coordinador; esto programa el «continúa».
+const resumeOnReset = new ResumeOnReset({
+  store: { get: (sessionId) => sessionCoordinator.resumeOnResetOf(sessionId), set: (sessionId, enabled) => sessionCoordinator.setResumeOnReset(sessionId, enabled) },
+  usage: (sessionId) => usageOfAccount(sessionCoordinator.rewindContext(sessionId).accountDir),
+  send: (sessionId, text) => { sessionCoordinator.send({ sessionId, text }); },
+  notify: (sessionId, text) => sessionCoordinator.announce(sessionId, { kind: 'notice', localized: text }),
+  setTimer: (fn, ms) => {
+    const timer = setTimeout(fn, ms);
+    return () => clearTimeout(timer);
+  },
+  now: Date.now,
+  log: logBus.loggerFor('engine'),
+});
 // Modelo, esfuerzo y modo de cada sesión viva: lo hereda una delegada (mage_create_session).
 const sessionSettings = new SessionSettingsRegistry();
+// Delegadas pedidas sin modelo o sin esfuerzo que esperan a la tarjeta «Lanzar» de su creadora (una para todas las conexiones).
+const pendingLaunches = new PendingLaunches();
 // D-M11: UN almacén de idempotencia para todas las conexiones MCP.
 const mcpIdempotency = new MemoryIdempotencyStore();
 
@@ -3041,7 +3178,33 @@ function recordClaudeFork(childId: string, parentId: string): void {
 }
 
 function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: CreateSessionParams): CreateSessionResult {
-  return launchSession(params, event.sender);
+  const result = launchSession(params, event.sender);
+  if (params.resumeOnReset === true) enableResumeOnResetOnCreate(result.sessionId);
+  return result;
+}
+
+// Facturación de una cuenta de Claude: las de API están en el registro de cuentas; la principal y las de login, no.
+function claudeBillingOf(accountDir: string): AccountAuthKind {
+  return getProviderAccounts().find('claude', accountDir)?.authKind === 'api-key' ? 'api-key' : 'subscription';
+}
+
+// «Continuar al restablecerse» solo existe en Claude por suscripción: en cualquier otra sesión se rechaza con el motivo.
+function setResumeOnResetChecked(sessionId: string, enabled: boolean): void {
+  if (enabled) {
+    const { provider, accountDir } = sessionCoordinator.rewindContext(sessionId);
+    const billing = provider === 'claude' ? claudeBillingOf(accountDir) : undefined;
+    if (!supportsResumeOnReset(provider, billing)) throw new Error(`«Continuar al restablecerse» solo existe en Claude por suscripción (recibido: ${provider}/${billing ?? 'sin cuenta de Claude'})`);
+  }
+  resumeOnReset.set(sessionId, enabled);
+}
+
+// Al crear una pestaña con la opción encendida: si la cuenta no la admite se ignora, y queda dicho en el log.
+function enableResumeOnResetOnCreate(sessionId: string): void {
+  try {
+    setResumeOnResetChecked(sessionId, true);
+  } catch (error) {
+    mainLog('warn', 'Se ignora «Continuar al restablecerse» al crear la sesión', { sessionId, error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 function registerIpcHandlers(): void {
@@ -3183,6 +3346,12 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerSettingsIpc1(deps);
   registerThinkingIpc1();
   registerArtifactIpc1(deps);
+  registerArtifactsIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    service: artifactsService,
+    viewer: artifactViewer,
+    accountIds: () => artifactAccountIds(listAllAccounts()),
+  });
   registerProjectIpc1(deps);
   registerSharedIpc1();
   registerPromptIpc1(deps);
@@ -3192,7 +3361,16 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerMcpRegistrationIpc();
 }
 
+// Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
+function windowControlsSession(senderId: number, sessionId: string): boolean {
+  return canControlSession({
+    ownerOf: (id) => sessionCoordinator.ownerOf(id),
+    isMainWindow: (webContentsId) => windowManager.windowIdOf(webContentsId) === MAIN_WINDOW_ID,
+  }, senderId, sessionId);
+}
+
 function registerSessionIpc1(): void {
+  registerLaunchCardIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), pending: pendingLaunches, canControl: windowControlsSession });
   registerSessionIpc({
     handle: (channel, listener) => ipcMain.handle(channel, listener),
     sessions: trackedSessionCommands(),
@@ -3207,11 +3385,7 @@ function registerSessionIpc1(): void {
       attachments: windowAttachments,
       coordinator: { subscriberCount: (id) => sessionCoordinator.subscriberCount(id) - delegationLog.watchCount(id) - hostOwnership.watchCount(id), close: (id) => sessionCoordinator.close(id) },
     }, event.sender.id, sessionId),
-    // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
-    canControl: (senderId, sessionId) => canControlSession({
-      ownerOf: (id) => sessionCoordinator.ownerOf(id),
-      isMainWindow: (webContentsId) => windowManager.windowIdOf(webContentsId) === MAIN_WINDOW_ID,
-    }, senderId, sessionId),
+    canControl: windowControlsSession,
     // Carpeta scratch AISLADA por conversacion (subdir unico y vacio): asi crear un archivo nuevo
     // funciona a la primera, sin el "read first" de Claude Code por ficheros preexistentes.
     newScratchDir: () => {
@@ -3229,6 +3403,7 @@ function trackedSessionCommands(): SessionCommands {
     setEffort: (id, effort) => { sessionManager.setEffort(id, effort); sessionSettings.apply(id, 'effort', effort); },
     setPermissionMode: (id, mode) => { sessionManager.setPermissionMode(id, mode); sessionSettings.apply(id, 'permissionMode', mode); },
     stopTask: (id, taskId) => sessionManager.stopTask(id, taskId),
+    setResumeOnReset: setResumeOnResetChecked,
   };
 }
 
@@ -3333,6 +3508,17 @@ function registerEditIpc1(): void {
   );
 }
 
+// «Reintentar» y fin de turno: relee del disco el login de una cuenta de Claude por suscripción. Ni CLI ni endpoint:
+// recoge lo que haya escrito otra instalación. Una cuenta por clave de API no tiene login que releer.
+function reloadAccountLogin(configDir: unknown): AccountLoginState {
+  if (typeof configDir !== 'string') throw new Error(`Cuenta inválida al releer la sesión: ${JSON.stringify(configDir)}`);
+  if (getProviderAccounts().find('claude', configDir)?.authKind === 'api-key') {
+    throw new Error(`Una cuenta de Claude por clave de API no tiene sesión que releer: ${configDir}`);
+  }
+  const { status, expiresAt } = accountService.readLoginStatus(configDir);
+  return { loginStatus: status, expiresAt };
+}
+
 function registerAccountsIpc1(): void {
   // Cuentas: listar (datos seguros), crear (dir + enlaces + settings) y lanzar login interactivo
   // en terminal externa (headless no puede loguear). El binario se resuelve por SO.
@@ -3344,6 +3530,7 @@ function registerAccountsIpc1(): void {
     const models = await probeModelCatalog(MODEL_PROBE_DEPS, account.configDir);
     if (models !== null && models.length > 0) cacheModelCatalog(account.configDir, models);
   });
+  ipcMain.handle(IpcChannel.AccountsReloadLogin, (_e, configDir: unknown) => reloadAccountLogin(configDir));
   ipcMain.handle(IpcChannel.AccountsCodexConfirm, () => getCodexAccountCatalog().confirm(getProviderAccounts().list(accountService.listAccounts())));
   ipcMain.handle(IpcChannel.AccountsCreate, (_e, name: string): AccountInfo =>
     accountService.createAccount(name),
@@ -3497,6 +3684,13 @@ function registerDialogIpc1(): void {
   ipcMain.handle(IpcChannel.UiLanguageGet, () => getUiLanguageService().current());
   // Grupo B: dialogos propios de cierre y de actualizacion.
   ipcMain.handle(IpcChannel.CloseAnswer, (event, answer: unknown) => answerClosePrompt(event, answer));
+  ipcMain.handle(IpcChannel.HostPairPending, () => hostPairing.pending());
+  ipcMain.handle(IpcChannel.HostPairAnswer, (_event, answer: unknown) => {
+    const { requestId, approve } = parseHostPairAnswer(answer);
+    hostPairing.answer(requestId, approve);
+  });
+  ipcMain.handle(IpcChannel.HostClientsList, () => hostClientStore.list());
+  ipcMain.handle(IpcChannel.HostClientsRevoke, (_event, clientId: unknown) => hostClientStore.revoke(parseClientId(clientId)));
   ipcMain.handle(IpcChannel.UpdateGetState, () => getUpdateState());
   ipcMain.handle(IpcChannel.UpdateInstall, () => installUpdate());
   ipcMain.handle(IpcChannel.UpdateCheck, () => checkForUpdatesNow());
@@ -4240,8 +4434,61 @@ function registerBrowserIpcFromMain(): void {
     registry: browserRegistry,
     placement: viewPlacement,
     pens: penSessions,
-    windowOf: (id) => { const windowId = windowManager.windowIdOf(id); return windowId === null ? null : windowManager.get(windowId); },
+    windowOf: browserIpcWindowOf,
+    openExternal: (url) => openWithService.openExternal(url),
+    isPackaged: app.isPackaged,
+    popouts: browserPopouts,
   });
+}
+
+// Quien habla con la IPC del navegador: una ventana del workbench o una ventana propia del navegador.
+function browserIpcWindowOf(webContentsId: number): BrowserWindow | null {
+  const windowId = windowManager.windowIdOf(webContentsId);
+  if (windowId !== null) return windowManager.get(windowId);
+  const popout = browserPopoutWindows.get(webContentsId);
+  return popout === undefined || popout.isDestroyed() ? null : popout;
+}
+
+function broadcastBrowserStates(states: readonly BrowserEntryState[]): void {
+  windowManager.broadcast(BROWSER_STATE_CHANNEL, states);
+  for (const popout of browserPopoutWindows.values()) {
+    if (!popout.isDestroyed()) popout.webContents.send(BROWSER_STATE_CHANNEL, states);
+  }
+}
+
+// Tamaño de la ventana propia del navegador al abrirse.
+const BROWSER_POPOUT_SIZE = { width: 1100, height: 800, minWidth: 480, minHeight: 360 } as const;
+
+// La ventana propia del navegador: una ventana de Mage (su preload, su sandbox y su CSP) que carga el renderer en su
+// modo «solo navegador» de una sesión (`?browserWindow=`). Sin barra de pestañas ni chat; la barra de título es la del SO.
+function createBrowserPopoutWindow(sessionId: string, title: string): BrowserWindow {
+  const window = new BrowserWindow({
+    ...BROWSER_POPOUT_SIZE,
+    show: false,
+    backgroundColor: resolveThemeBackgroundColor(),
+    webPreferences: { additionalArguments: isDev ? ['--mage-development'] : [], preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  const contentsId = window.webContents.id;
+  browserPopoutWindows.set(contentsId, window);
+  window.on('closed', () => browserPopoutWindows.delete(contentsId));
+  installNavigationGuard(window.webContents, (url) => isRendererUrl(url, { devUrl: process.env['ELECTRON_RENDERER_URL'], rendererDir }), logBlockedNavigation);
+  window.on('ready-to-show', () => showBrowserPopout(window));
+  const query = { browserWindow: sessionId, title };
+  const devUrl = process.env['ELECTRON_RENDERER_URL'];
+  if (devUrl) void window.loadURL(`${devUrl}?${new URLSearchParams(query).toString()}`);
+  else void window.loadFile(join(currentDir, '../renderer/index.html'), { query });
+  return window;
+}
+
+// Como las ventanas del workbench: en las pruebas, fuera de la pantalla y sin robar el foco.
+function showBrowserPopout(window: BrowserWindow): void {
+  if (!backgroundTestRun) {
+    window.show();
+    return;
+  }
+  const { x, y } = offScreenPosition(screen.getAllDisplays().map((display) => display.bounds), window.getBounds().width);
+  window.setPosition(x, y);
+  window.showInactive();
 }
 
 function registerPromptIpc2(deps: IpcDependencies): void {
@@ -4601,7 +4848,8 @@ export function createHostSessionsPort(callerSessionId: string): HostSessionsPor
     accounts: () => listAllAccounts().filter((account) => (HOST_SESSION_PROVIDERS as readonly string[]).includes(account.providerId))
       .map((account) => ({ id: account.configDir, provider: account.providerId })),
     projects: () => getSettingsStore().load().chatProjects,
-    launch: (request, createdBy, title) => launchHostSession(resolveHostLaunchParams(deps, request, { cliDefaultModel: true }), 'mcp', createdBy, title),
+    launch: (request, createdBy, title, resumeSessionId) => launchHostSession(
+      { ...resolveHostLaunchParams(deps, request, { cliDefaultModel: true }), ...(resumeSessionId === undefined ? {} : { resumeSessionId }) }, 'mcp', createdBy, title),
     creatorSettings: () => sessionSettings.get(callerSessionId),
     modelCatalog: (accountDir) => getCommandCatalogStore().loadModels(accountDir),
     setPermissionMode: (sessionId, mode) => { sessionManager.setPermissionMode(sessionId, mode); sessionSettings.apply(sessionId, 'permissionMode', mode); },
@@ -4609,7 +4857,26 @@ export function createHostSessionsPort(callerSessionId: string): HostSessionsPor
       const timer = setTimeout(fn, ms);
       return () => clearTimeout(timer);
     },
+    creatorFacts: () => creatorFactsOf(callerSessionId, conversationId),
+    pending: pendingLaunches,
+    newId: randomUUID,
+    usage: {
+      accounts: () => listAllAccounts().map((account) => ({ id: account.configDir, provider: account.providerId, name: account.name, billing: account.authKind })),
+      read: usageOfAccount,
+    },
+    setResumeOnReset: (sessionId, enabled) => resumeOnReset.set(sessionId, enabled),
+    closer: delegatedCloser,
   });
+}
+
+// Lo que main sabe de una creadora para decidir la tarjeta «Lanzar»: el índice (tarea y cadena) y su arranque (Ultracode).
+function creatorFactsOf(sessionId: string, conversationId: string): CreatorFacts {
+  const index = getConversationIndexStore();
+  return {
+    isTaskRun: index.taskRunOf(conversationId) !== undefined,
+    creatorChain: index.delegationOf(conversationId).creatorChain,
+    ultracode: sessionSettings.get(sessionId)?.ultracode === true,
+  };
 }
 // Motivo por el que el host no arrancó (null si escucha): el renderer lo enseña como aviso persistente (H1, devolución 16).
 let hostFailure: Promise<LocalizedText | null> = Promise.resolve(null);
@@ -4639,6 +4906,9 @@ function startHost(mode: HostMode): Promise<void> {
       now: () => new Date().toISOString(),
       log: mainLog,
     }),
+    isMageCaller: (credential) => mcpCallers.resolve(credential) !== null,
+    clients: hostClientStore,
+    pairing: hostPairing,
     hostVersion: app.getVersion(),
     log: mainLog,
     newId: randomUUID,

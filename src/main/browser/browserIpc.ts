@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { IpcChannel } from '@shared/ipc';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { describeIssues } from '../capabilities/capabilityPackage';
-import { BrowserControlError, type BrowserRegistry } from './browserRegistry';
+import { BrowserControlError, type BrowserHandle, type BrowserRegistry } from './browserRegistry';
+import type { BrowserPopouts } from './browserPopout';
 import { parseStrokes } from './captureAnnotation';
 import { PenCaptureExpiredError, type PenSessions } from './penSession';
 import type { PlacementWindow, ViewPlacement } from './viewPlacement';
@@ -17,6 +18,11 @@ export interface BrowserIpcDeps {
   readonly placement: ViewPlacement;
   readonly pens: PenSessions;
   readonly windowOf: (webContentsId: number) => PlacementWindow | null;
+  // `openWithService.openExternal`: su guarda https manda (un `file:` o `http:` da su error de siempre).
+  readonly openExternal: (url: string) => Promise<void>;
+  // `app.isPackaged`: empaquetada no hay herramientas de desarrollo del navegador.
+  readonly isPackaged: boolean;
+  readonly popouts: Pick<BrowserPopouts, 'popOut' | 'popIn'>;
 }
 
 const MAX_SESSION_ID_CHARS = 200;
@@ -24,6 +30,7 @@ const MAX_URL_CHARS = 2048;
 const MAX_CAPTURE_ID_CHARS = 100;
 const MAX_BOUNDS_VALUE = 100_000;
 const MAX_PREVIEW_CHARS = 200;
+const MAX_TITLE_CHARS = 200;
 
 const sessionIdSchema = z.string().min(1).max(MAX_SESSION_ID_CHARS);
 const boundsValueSchema = z.number().int().min(0).max(MAX_BOUNDS_VALUE);
@@ -37,6 +44,11 @@ const boundsSchema = z
       .nullable(),
   })
   .strict();
+const zoomSchema = z
+  .object({ sessionId: sessionIdSchema, step: z.union([z.literal(-1), z.literal(0), z.literal(1)]) })
+  .strict();
+// El título de la conversación, solo para el de la ventana propia.
+const popOutSchema = z.object({ sessionId: sessionIdSchema, title: z.string().max(MAX_TITLE_CHARS) }).strict();
 // Los trazos se validan aparte con `parseStrokes` (S01), que ya conoce sus límites.
 const composeSchema = z
   .object({ sessionId: sessionIdSchema, captureId: z.string().min(1).max(MAX_CAPTURE_ID_CHARS), strokes: z.unknown() })
@@ -80,12 +92,30 @@ async function navigateAsUser(deps: BrowserIpcDeps, sessionId: string, url: stri
   }
 }
 
+function requireBrowser(deps: BrowserIpcDeps, sessionId: string): BrowserHandle {
+  const handle = deps.registry.get(sessionId);
+  if (handle === null) throw new BrowserControlError('browser_not_open', `No hay navegador abierto en la sesión ${sessionId}`);
+  return handle;
+}
+
+// La URL la pone main (la actual del navegador), nunca el renderer.
+function openExternally(deps: BrowserIpcDeps, sessionId: string): Promise<void> {
+  return deps.openExternal(requireBrowser(deps, sessionId).state().url);
+}
+
+function openDevTools(deps: BrowserIpcDeps, sessionId: string): void {
+  if (deps.isPackaged) {
+    throw new Error(`Las herramientas de desarrollo del navegador solo existen sin empaquetar (sesión ${sessionId})`);
+  }
+  requireBrowser(deps, sessionId).openDevTools();
+}
+
 function setBounds(deps: BrowserIpcDeps, window: PlacementWindow, raw: unknown): void {
   const { sessionId, bounds } = parseWith(boundsSchema, raw);
   // El panel puede informar de su hueco antes de que exista el navegador.
   const handle = deps.registry.get(sessionId);
   if (handle === null) return;
-  if (bounds === null) deps.placement.hide(handle);
+  if (bounds === null) deps.placement.hide(handle, window);
   else deps.placement.show(handle, window, bounds);
 }
 
@@ -113,9 +143,21 @@ export function registerBrowserIpc(deps: BrowserIpcDeps): void {
     return navigateAsUser(deps, sessionId, url);
   });
   bySession(IpcChannel.BrowserBack, (sessionId) => void registry.beginUserAction(sessionId).back());
+  bySession(IpcChannel.BrowserForward, (sessionId) => void registry.beginUserAction(sessionId).forward());
   bySession(IpcChannel.BrowserReload, (sessionId) => registry.beginUserAction(sessionId).reload());
+  route(IpcChannel.BrowserZoom, (arg) => {
+    const { sessionId, step } = parseWith(zoomSchema, arg);
+    return void registry.beginUserAction(sessionId).zoom(step);
+  });
+  bySession(IpcChannel.BrowserOpenExternal, (sessionId) => openExternally(deps, sessionId));
+  bySession(IpcChannel.BrowserDevTools, (sessionId) => openDevTools(deps, sessionId));
   bySession(IpcChannel.BrowserClose, async (sessionId) => void (await registry.close(sessionId)));
   route(IpcChannel.BrowserSetBounds, (arg, window) => setBounds(deps, window, arg));
+  route(IpcChannel.BrowserPopOut, (arg) => {
+    const { sessionId, title } = parseWith(popOutSchema, arg);
+    deps.popouts.popOut(sessionId, title);
+  });
+  bySession(IpcChannel.BrowserPopIn, (sessionId) => deps.popouts.popIn(sessionId));
   bySession(IpcChannel.BrowserTakeControl, (sessionId) => registry.takeControl(sessionId));
   bySession(IpcChannel.BrowserReturnControl, (sessionId) => registry.returnControl(sessionId));
   bySession(IpcChannel.BrowserPenCapture, (sessionId) => pens.capture(sessionId));

@@ -34,8 +34,8 @@ describe('withLegacyText', () => {
 });
 
 describe('HOST_PROTOCOL', () => {
-  it('hostProtocol_version_is16', () => {
-    expect(HOST_PROTOCOL).toBe('1.7');
+  it('hostProtocol_version_is18', () => {
+    expect(HOST_PROTOCOL).toBe('1.8');
   });
 
   it('mcpMessageSchema_nonObjectMessage_rejected', () => {

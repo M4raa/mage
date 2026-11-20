@@ -1,6 +1,6 @@
 import type { Session, WebContents, WebContentsView } from 'electron';
 import type { RawCapture } from './annotatedCapture';
-import { hardenContents, hardenSession, type ServeFile } from './browserHardening';
+import { hardenContents, hardenSession, type ExternalLinkHandler, type ServeFile } from './browserHardening';
 import { deriveDeviceScale } from './deviceScale';
 import { buildDomReadScript } from './domReadScript';
 import { parseDomSnapshot, resolveReadDomOptions, type ReadDomOptions } from './domSnapshot';
@@ -8,6 +8,10 @@ import { ElementRegistry, type DomElement } from './elementRegistry';
 import { createFileAccess, type FileAccess, type FileAccessDeps } from './fileAccess';
 import { partitionNameFor } from './isolationConfig';
 import { normalizeNavigationUrl } from './navigationPolicy';
+import { zoomStepForKey } from '@shared/browser';
+import { nextZoom, type ZoomStep } from './zoomSteps';
+
+const PERCENT = 100;
 
 export interface BrowserDeps extends FileAccessDeps {
   createSession(partition: string): Session;
@@ -39,7 +43,9 @@ export interface BrowserPageState {
   readonly url: string;
   readonly title: string;
   readonly canGoBack: boolean;
+  readonly canGoForward: boolean;
   readonly loading: boolean;
+  readonly zoomPercent: number;
 }
 
 // La de la medición I1.
@@ -63,11 +69,15 @@ export class IsolatedBrowser {
   private readonly stateListeners = new Set<() => void>();
   private closed = false;
 
-  /** `fileRoot`: carpeta de trabajo de la conversación; sus .html se pueden abrir (P-040). null: ningún fichero. */
+  /**
+   * `fileRoot`: carpeta de trabajo de la conversación; sus .html se pueden abrir. null: ningún fichero.
+   * `onExternalLink`: solo el visor de artifacts; los enlaces http(s) de la página salen por ahí en vez de navegar aquí.
+   */
   constructor(
     instanceId: string,
     private readonly deps: BrowserDeps,
     fileRoot: string | null,
+    onExternalLink?: ExternalLinkHandler,
   ) {
     const partition = partitionNameFor(instanceId);
     this.files = createFileAccess(fileRoot, deps);
@@ -77,10 +87,17 @@ export class IsolatedBrowser {
     }
     hardenSession(this.session, this.files, deps.serveFile);
     this.view = deps.createView(this.session);
-    hardenContents(this.view.webContents, this.files);
+    hardenContents(this.view.webContents, this.files, onExternalLink);
     for (const event of STATE_EVENTS) {
       this.view.webContents.on(event as 'did-navigate', () => this.notifyStateChange());
     }
+    // Ctrl/Cmd + `+`, `-`, `0` con el foco en la página: el zoom de ESTE navegador, no el de Mage.
+    this.view.webContents.on('before-input-event', (event, input) => {
+      const step = input.type === 'keyDown' ? zoomStepForKey(input) : null;
+      if (step === null) return;
+      event.preventDefault();
+      this.zoom(step);
+    });
   }
 
   private notifyStateChange(): void {
@@ -164,8 +181,25 @@ export class IsolatedBrowser {
       url: this.contents.getURL(),
       title: this.contents.getTitle(),
       canGoBack: this.contents.navigationHistory.canGoBack(),
+      canGoForward: this.contents.navigationHistory.canGoForward(),
       loading: this.contents.isLoading(),
+      zoomPercent: Math.round(this.contents.getZoomFactor() * PERCENT),
     };
+  }
+
+  /** Aplica el siguiente paso de zoom (`nextZoom`) y lo devuelve en %. Chromium lo guarda; aquí no se duplica. */
+  zoom(step: ZoomStep): number {
+    this.assertOpen();
+    const next = nextZoom(Math.round(this.contents.getZoomFactor() * PERCENT), step);
+    this.contents.setZoomFactor(next / PERCENT);
+    this.notifyStateChange();
+    return next;
+  }
+
+  /** Solo sin empaquetar: lo decide quien llama (la frontera IPC), no el navegador. */
+  openDevTools(): void {
+    this.assertOpen();
+    this.contents.openDevTools({ mode: 'detach' });
   }
 
   /** Avisa de cualquier cambio de URL, título o carga; devuelve la función que quita el oyente. */
@@ -216,6 +250,15 @@ export class IsolatedBrowser {
     if (!history.canGoBack()) return false;
     this.elements.clear();
     history.goBack();
+    return true;
+  }
+
+  forward(): boolean {
+    this.assertOpen();
+    const history = this.contents.navigationHistory;
+    if (!history.canGoForward()) return false;
+    this.elements.clear();
+    history.goForward();
     return true;
   }
 

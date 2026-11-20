@@ -24,7 +24,12 @@ import { describeError } from './describeError';
 // main por IPC (loadPanelLayout). Imprescindible: `PANEL_REGISTRY` trae `render` (una funcion) en cada
 // entrada, y el algoritmo de structured clone que usa Electron para IPC NO PUEDE serializar funciones
 // — mandar el registro completo tal cual lanzaria un DataCloneError en cuanto se abriera la app.
-const PANEL_PLACEMENT_REGISTRY: readonly PanelPlacement[] = PANEL_REGISTRY.map(({ id, defaultAnchor, defaultZone }) => ({ id, defaultAnchor, defaultZone }));
+const PANEL_PLACEMENT_REGISTRY: readonly PanelPlacement[] = PANEL_REGISTRY.map(({ id, defaultAnchor, defaultZone, defaultHidden }) => ({
+  id,
+  defaultAnchor,
+  defaultZone,
+  ...(defaultHidden === true ? { defaultHidden } : {}),
+}));
 
 // Store DEDICADO (F6 Fase 4, PLAN-F6-PANELES.md §3/§6/§7) para el layout de paneles EN VIVO: a
 // diferencia de Fase 3 (que cableo LeftDock/RightDock contra los booleanos preexistentes
@@ -87,6 +92,23 @@ function persist(layout: PanelLayoutState): void {
     .catch((err: unknown) => reportActionError(t('menu.panelLayout.saveError'), err, 'persist', 'save-failed:layout'));
 }
 
+// Coloca un panel escondido en su borde y zona por defecto y lo deja abierto (lo piden los botones que
+// abren Uso, Permisos, PR…: sin esto no harían nada). Lanza si el id no está en el registro.
+function placeFromRegistry(layout: PanelLayoutState, panelId: PanelId): PanelLayoutState {
+  const def = PANEL_REGISTRY.find((p) => p.id === panelId);
+  if (def === undefined) throw new Error(`placeFromRegistry: el panel "${panelId}" no existe en el registro`);
+  return placePanelInZone(layout, panelId, def.defaultAnchor, def.defaultZone);
+}
+
+type StoreGet = () => PanelLayoutStoreState;
+type StoreSet = (partial: Partial<PanelLayoutStoreState>) => void;
+
+function placeHidden(get: StoreGet, set: StoreSet, panelId: PanelId): void {
+  const layout = placeFromRegistry(get().layout, panelId);
+  set({ layout });
+  persist(layout);
+}
+
 export const usePanelLayoutStore = create<PanelLayoutStoreState>((set, get) => ({
   // Layout SINCRONO desde el registro (mismos defaults que hoy, §5.3 "migracion") mientras la carga
   // real por IPC esta en vuelo: el primer pintado ya reproduce el layout correcto sin esperar al main.
@@ -115,13 +137,13 @@ export const usePanelLayoutStore = create<PanelLayoutStoreState>((set, get) => (
 
   togglePanelById: (panelId) => {
     const loc = locatePanel(get().layout, panelId);
-    if (loc === undefined) return; // no deberia pasar tras reconciliar; no hay zona que alternar
+    if (loc === undefined) return placeHidden(get, set, panelId); // escondido: se coloca y se abre
     get().togglePanel(loc.anchor, loc.zone, panelId);
   },
 
   revealPanelById: (panelId) => {
     const loc = locatePanel(get().layout, panelId);
-    if (loc === undefined) return; // el panel esta escondido: no hay zona donde revelarlo
+    if (loc === undefined) return placeHidden(get, set, panelId); // escondido: se coloca y se abre
     if (get().layout.stripes[loc.anchor][loc.zone].activePanelId === panelId) return; // ya se esta viendo
     get().togglePanel(loc.anchor, loc.zone, panelId);
   },

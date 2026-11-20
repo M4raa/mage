@@ -2,11 +2,12 @@ import {
   materializeSecrets,
   referencesSecret,
   secretRef,
-  secretVarName,
   type ResolvedMcpServer,
   type ResolvedRemoteServer,
   type ResolvedStdioServer,
 } from './mcpResolved';
+import { mergeClaudeSettings } from '@shared/externalActionAsk';
+import { MAGE_MCP_CALLER_ENV } from '../host/mcpCallers';
 
 // Traduccion del formato neutro (`mcpResolved.ts`) al de cada CLI. PURO. Lo medido que sostiene cada
 // traductor esta en `spike/mcp-providers-spike.mjs` (agy 1.2.14, codex-cli 0.144.4) y en
@@ -14,73 +15,63 @@ import {
 
 // --- Claude: un fichero para `--mcp-config` (forma de `.mcp.json`) ------------------------------
 //
-// El fichero NO lleva ningun valor de env ni de cabecera: cada uno se escribe como `${MAGE_MCP_SECRET_…}`
-// y el valor viaja en el entorno del hijo. MEDIDO en 2.1.286 (CLAUDE_CONFIG_DIR vacio, sin turno,
-// `mcp_status` + un servidor stdio que vuelca lo que recibe y uno http que registra la cabecera): el CLI
-// expande `${VAR}` del entorno en `args`, `env` y `headers` de un fichero de `--mcp-config`.
-// Un valor que YA es una referencia (`${HOME}`, `Bearer ${TOKEN}` o los sensibles de una extension)
-// se deja tal cual: el CLI lo expande igual.
+// El fichero lleva ESCRITOS los valores de env y de cabecera, tambien los de la boveda, y NO pone ninguno en
+// el entorno del CLI. MEDIDO en 2.1.319 (`spike/mcp-secrets-env-spike.mjs`, servidor falso, sin turno real):
+// el CLI hereda su entorno entero a los comandos que lanza el agente con Bash (un `env` lo enseña), mientras
+// que el `env` de un servidor del fichero solo le llega a ese servidor. Por eso el fichero vive en la carpeta
+// de Mage, solo legible por el usuario (`claudeConfigWriter`, mcpServices.ts).
+// Un valor que YA es una referencia a una variable del usuario (`${HOME}`, `Bearer ${TOKEN}`) se deja tal
+// cual: el CLI la expande de su entorno (medido en 2.1.286 en `args`, `env` y `headers`).
+// Unica referencia que Mage pone a proposito: la credencial de la sesion ante `mage mcp`. Es de CADA sesion y
+// el fichero es de la CUENTA (dos sesiones a la vez se lo pisarian), y no debe tocar disco; el adapter ya la
+// pone en el entorno del hijo.
 
 export interface ClaudeMcpConfig {
   readonly config: { readonly mcpServers: Record<string, unknown> };
-  // Variables que necesita el hijo para expandir las referencias (secretos de la boveda incluidos).
-  readonly env: Readonly<Record<string, string>>;
 }
 
 export function toClaudeMcpConfig(servers: readonly ResolvedMcpServer[]): ClaudeMcpConfig {
-  const env: Record<string, string> = {};
-  const mcpServers = Object.fromEntries(servers.map((server) => [server.name, toClaudeEntry(server, env)]));
-  return { config: { mcpServers }, env };
+  return { config: { mcpServers: Object.fromEntries(servers.map((server) => [server.name, toClaudeEntry(server)])) } };
 }
 
-function toClaudeEntry(server: ResolvedMcpServer, env: Record<string, string>): Record<string, unknown> {
-  Object.assign(env, server.secrets);
+function toClaudeEntry(server: ResolvedMcpServer): Record<string, unknown> {
+  const plain = (text: string): string => materializeSecrets(text, server.secrets);
   if (server.transport === 'stdio') {
-    const values = asReferences(server.name, 'ENV', server.env, env);
+    const env = withCallerReference(plainValues(server.env, server.secrets));
     return {
       type: 'stdio',
-      command: server.command,
-      ...(server.args.length > 0 ? { args: server.args } : {}),
-      ...(Object.keys(values).length > 0 ? { env: values } : {}),
-      ...(server.cwd === null ? {} : { cwd: server.cwd }),
+      command: plain(server.command),
+      ...(server.args.length > 0 ? { args: server.args.map(plain) } : {}),
+      ...(Object.keys(env).length > 0 ? { env } : {}),
+      ...(server.cwd === null ? {} : { cwd: plain(server.cwd) }),
       ...server.extra,
     };
   }
-  const headers = asReferences(server.name, 'H', server.headers, env);
-  return { type: server.transport, url: server.url, ...(Object.keys(headers).length > 0 ? { headers } : {}), ...server.extra };
+  const headers = plainValues(server.headers, server.secrets);
+  return { type: server.transport, url: plain(server.url), ...(Object.keys(headers).length > 0 ? { headers } : {}), ...server.extra };
 }
 
-function asReferences(server: string, kind: string, values: Readonly<Record<string, string>>, env: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(values).map(([key, value]) => {
-      if (value.includes('${')) return [key, value];
-      const name = secretVarName(server, kind, key);
-      env[name] = value;
-      return [key, secretRef(name)];
-    }),
-  );
+function withCallerReference(env: Record<string, string>): Record<string, string> {
+  return env[MAGE_MCP_CALLER_ENV] === undefined ? env : { ...env, [MAGE_MCP_CALLER_ENV]: secretRef(MAGE_MCP_CALLER_ENV) };
 }
 
-// Flags y entorno de Claude a partir de lo compartido. `writeMcpConfig` escribe el fichero (sin
-// valores) y devuelve su ruta. El fragmento de `--settings` (hooks y permisos comunes) va en linea: no
-// lleva secretos.
+// Flags de Claude a partir de lo compartido. `writeMcpConfig` escribe el fichero (con los valores) y
+// devuelve su ruta. El fragmento de `--settings` (hooks y permisos comunes) va en linea: no lleva secretos.
 export function toClaudeArgs(
   servers: readonly ResolvedMcpServer[],
   settingsFragment: Readonly<Record<string, unknown>> | null,
   writeMcpConfig: (text: string) => string,
   extraSettings: Readonly<Record<string, unknown>> = {},
-): { readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> } {
+): { readonly args: readonly string[] } {
   const args: string[] = [];
-  let env: Readonly<Record<string, string>> = {};
   if (servers.length > 0) {
-    const translated = toClaudeMcpConfig(servers);
-    env = translated.env;
-    args.push('--mcp-config', writeMcpConfig(`${JSON.stringify(translated.config, null, 2)}\n`));
+    args.push('--mcp-config', writeMcpConfig(`${JSON.stringify(toClaudeMcpConfig(servers).config, null, 2)}\n`));
   }
-  // UN solo `--settings`: el fragmento comun fusionado con los ajustes de arranque de la sesion (p. ej. ultracode).
-  const settings = { ...(settingsFragment ?? {}), ...extraSettings };
+  // UN solo `--settings`: el fragmento comun fusionado con los ajustes de arranque de la sesion (p. ej. ultracode o
+  // las reglas `ask` de acciones externas). Los `permissions` de los dos se mezclan: no se pierde nada del usuario.
+  const settings = mergeClaudeSettings(settingsFragment ?? {}, extraSettings);
   if (settingsFragment !== null || Object.keys(extraSettings).length > 0) args.push('--settings', JSON.stringify(settings));
-  return { args, env };
+  return { args };
 }
 
 // Escribe el fichero de `--mcp-config` de UNA cuenta y devuelve su ruta (lo inyecta main).
@@ -97,8 +88,8 @@ export function claudeSharedLaunch(
   if (shared === undefined) {
     return Object.keys(extraSettings).length === 0 ? { args: [], env: {} } : { args: ['--settings', JSON.stringify(extraSettings)], env: {} };
   }
-  const { args, env } = toClaudeArgs(shared.mcpServers, shared.settingsFragment, (text) => writer(accountDir, text), extraSettings);
-  return { args, env: shared.claudeAiConnectors ? env : { ...env, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } };
+  const { args } = toClaudeArgs(shared.mcpServers, shared.settingsFragment, (text) => writer(accountDir, text), extraSettings);
+  return { args, env: shared.claudeAiConnectors ? {} : { ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } };
 }
 
 // Por defecto (tests, usos sin disco): sin servidores no hace falta; con alguno es un error de cableado.
@@ -169,7 +160,7 @@ function codexStdio(server: ResolvedStdioServer): CodexEntry {
   return { fields, env: plainValues(server.env, server.secrets) };
 }
 
-// Los valores con las referencias a la boveda ya sustituidas (van al ENTORNO, nunca a un fichero).
+// Los valores con las referencias a la boveda ya sustituidas (Codex: al entorno; Claude y agy: a su fichero).
 function plainValues(values: Readonly<Record<string, string>>, secrets: Readonly<Record<string, string>>): Record<string, string> {
   return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, materializeSecrets(value, secrets)]));
 }

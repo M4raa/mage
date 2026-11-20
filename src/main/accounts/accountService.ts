@@ -183,6 +183,16 @@ export class AccountService {
     this.deps.log('info', `Login adoptado: "${source}" -> "${target}"`);
   }
 
+  // Vuelve a leer del disco el estado de login de UNA cuenta («Reintentar» y fin de turno). Solo lee el
+  // fichero de credenciales: no renueva nada ni habla con ningun endpoint. Asi se recoge una sesion que
+  // otra instalacion de Claude Code escribio despues de la ultima lectura.
+  readLoginStatus(configDir: string): { status: LoginStatus; expiresAt: number | null } {
+    const dir = configDir.trim();
+    const known = (this.isMainDir(dir) || this.isManagedAccountDir(dir)) && this.deps.isDirectory(dir);
+    if (!known) throw new Error(`Cuenta de Claude desconocida al releer su sesion: ${JSON.stringify(configDir)}`);
+    return this.resolveLoginStatus(dir);
+  }
+
   // --- Interno --------------------------------------------------------------------------------
 
   // Lee un lado para la convergencia. Solo saca metadata (existe / expiresAt / si hay tokens); el

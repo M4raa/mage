@@ -70,33 +70,48 @@ describe('mergeServerLists + selectForTarget', () => {
 
 describe('Claude', () => {
   it('toClaudeMcpConfig_devuelveLaFormaDeMcpJsonConExtra', () => {
-    const { config, env } = toClaudeMcpConfig([resolveServerConfig('x', { command: 'node', timeout: 5 }, 'common', null), remote]);
-
+    // Arrange
+    const servers = [resolveServerConfig('x', { command: 'node', timeout: 5 }, 'common', null), remote];
+    // Act
+    const { config } = toClaudeMcpConfig(servers);
+    // Assert
     expect(config.mcpServers.x).toEqual({ type: 'stdio', command: 'node', timeout: 5 });
-    expect(config.mcpServers.api).toMatchObject({ type: 'http', url: 'https://api.dev/mcp', headers: { Authorization: '${MAGE_MCP_SECRET_API_H_AUTHORIZATION}' } });
-    expect(env).toEqual({ MAGE_MCP_SECRET_API_H_AUTHORIZATION: 'Bearer secreto-api' });
+    expect(config.mcpServers.api).toMatchObject({ type: 'http', url: 'https://api.dev/mcp', headers: { Authorization: 'Bearer secreto-api' } });
   });
 
   it('toClaudeMcpConfig_valorQueYaEsReferencia_seDejaTalCual', () => {
-    const { config, env } = toClaudeMcpConfig([resolveServerConfig('x', { command: 'n', env: { T: 'Bearer ${TOKEN}' } }, 'common', null)]);
-
+    // Arrange
+    const server = resolveServerConfig('x', { command: 'n', env: { T: 'Bearer ${TOKEN}' } }, 'common', null);
+    // Act
+    const { config } = toClaudeMcpConfig([server]);
+    // Assert
     expect((config.mcpServers.x as { env: Record<string, string> }).env.T).toBe('Bearer ${TOKEN}');
-    expect(env).toEqual({});
   });
 
-  // Regla de la boveda: un valor que viene de ella NUNCA aparece en el fichero generado.
-  it('toClaudeArgs_extensionConSecretoDeLaBoveda_elFicheroNoLoLleva', () => {
+  // Medido en 2.1.319: el entorno del CLI llega al Bash del agente; el `env` de un servidor del fichero, no.
+  it('toClaudeArgs_extensionConSecretoDeLaBoveda_vaAlFicheroSinReferencias', () => {
+    // Arrange
     const ext = { ...stdio({ name: 'ext', env: { KEY: '${MAGE_MCP_SECRET_EXT_KEY}' }, args: ['--k', '${MAGE_MCP_SECRET_EXT_KEY}'] }), secrets: { MAGE_MCP_SECRET_EXT_KEY: 'valor-de-la-boveda' } };
     let written = '';
-
-    const { args, env } = toClaudeArgs([ext], null, (text) => {
+    // Act
+    const { args } = toClaudeArgs([ext], null, (text) => {
       written = text;
       return '/gen/x.json';
     });
-
-    expect(written).not.toContain('valor-de-la-boveda');
+    // Assert
+    expect(JSON.parse(written).mcpServers.ext).toMatchObject({ args: ['--k', 'valor-de-la-boveda'], env: { KEY: 'valor-de-la-boveda' } });
+    expect(written).not.toContain('MAGE_MCP_SECRET_');
     expect(args.join(' ')).not.toContain('valor-de-la-boveda');
-    expect(env.MAGE_MCP_SECRET_EXT_KEY).toBe('valor-de-la-boveda');
+  });
+
+  it('toClaudeMcpConfig_credencialDeSesionDeMage_quedaComoReferencia', () => {
+    // Arrange
+    const mage = stdio({ name: 'mage', env: { ELECTRON_RUN_AS_NODE: '1', MAGE_MCP_CALLER: 'cred-123' } });
+    // Act
+    const { config } = toClaudeMcpConfig([mage]);
+    // Assert
+    expect((config.mcpServers.mage as { env: Record<string, string> }).env).toEqual({ ELECTRON_RUN_AS_NODE: '1', MAGE_MCP_CALLER: '${MAGE_MCP_CALLER}' });
+    expect(JSON.stringify(config)).not.toContain('cred-123');
   });
 
   it('toClaudeArgs_sinServidoresNiSettings_sinFlagsYSinEscribir', () => {
@@ -104,7 +119,7 @@ describe('Claude', () => {
       throw new Error('no debe escribir');
     });
 
-    expect(args).toEqual({ args: [], env: {} });
+    expect(args).toEqual({ args: [] });
   });
 
   it('toClaudeArgs_conFragmentoYExtra_unSoloSettingsFusionado', () => {
@@ -129,17 +144,28 @@ describe('Claude', () => {
     expect(claudeSharedLaunch(undefined, '/c', () => '', { ultracode: true })).toEqual({ args: ['--settings', '{"ultracode":true}'], env: {} });
   });
 
-  it('toClaudeArgs_conServidores_ningunValorEnElFicheroNiEnLaLinea', () => {
+  it('toClaudeArgs_conServidores_valoresEnElFicheroYNuncaEnLaLinea', () => {
+    // Arrange
     let written = '';
-    const { args, env } = toClaudeArgs([stdio()], { hooks: {} }, (text) => {
+    // Act
+    const { args } = toClaudeArgs([stdio(), remote], { hooks: {} }, (text) => {
       written = text;
       return '/gen/x.json';
     });
-
+    // Assert
     expect(args).toEqual(['--mcp-config', '/gen/x.json', '--settings', '{"hooks":{}}']);
-    expect(written).not.toContain('secreto');
+    expect(JSON.parse(written).mcpServers).toMatchObject({ db: { env: { DB_TOKEN: 'secreto-db' } }, api: { headers: { Authorization: 'Bearer secreto-api' } } });
     expect(args.join(' ')).not.toContain('secreto');
-    expect(env).toEqual({ MAGE_MCP_SECRET_DB_ENV_DB_TOKEN: 'secreto-db' });
+  });
+
+  it('claudeSharedLaunch_conSecretosDeStdioYHttp_elEntornoDelCliNoLosLleva', () => {
+    // Arrange
+    const shared = { mcpServers: [stdio(), remote], settingsFragment: null, claudeAiConnectors: false };
+    // Act
+    const { env } = claudeSharedLaunch(shared, '/c', () => '/gen/x.json');
+    // Assert
+    expect(env).toEqual({ ENABLE_CLAUDEAI_MCP_SERVERS: 'false' });
+    expect(JSON.stringify(env)).not.toContain('secreto');
   });
 
   it('claudeSharedLaunch_sinCompartido_nada', () => {

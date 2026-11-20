@@ -87,14 +87,15 @@ describe('resolveLibraryMcp', () => {
     expect(result.warnings.join(' ')).not.toContain(SECRET);
   });
 
-  it('resolveLibraryMcp_traducidoAClaude_ficheroSinLaClave', () => {
+  // La clave va al `env` del servidor en el fichero, nunca al entorno del CLI (que hereda el Bash del agente).
+  it('resolveLibraryMcp_traducidoAClaude_laClaveVaAlFichero', () => {
     // Arrange
     const { servers } = resolveLibraryMcp([record()], TARGET, withKey());
     // Act
-    const { config, env } = toClaudeMcpConfig(servers);
+    const { config } = toClaudeMcpConfig(servers);
     // Assert
-    expect(JSON.stringify(config)).not.toContain(SECRET);
-    expect(Object.values(env)).toContain(SECRET);
+    expect(JSON.stringify(config)).toContain(SECRET);
+    expect(JSON.stringify(config)).not.toContain('MAGE_MCP_SECRET_');
   });
 
   it('resolveLibraryMcp_traducidoACodex_argumentosSinLaClave', () => {

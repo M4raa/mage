@@ -7,7 +7,7 @@ import type { ScopeSnapshot } from './scope';
 import type { MageSessionsPort, SessionMetadata } from './sessionsPort';
 import { createResultPage } from './resultPage';
 import * as schemas from './schemas';
-import type { AskCreatorInput, CancelInput, CreateInput, ListInput, ReadInput, SendInput, StatusInput } from './types';
+import type { AskCreatorInput, CancelInput, CloseInput, CreateInput, ListInput, ReadInput, SendInput, StatusInput, UsageInput } from './types';
 
 export interface HandlerContext {
   readonly port: MageSessionsPort;
@@ -48,6 +48,8 @@ export class MageToolHandlers {
       const createdBy = scope.caller === undefined ? undefined : { conversationId: scope.caller.conversationId, requestId: input.requestId, at };
       const result = await callPort('createSession', () => port.createSession({
         target: validatedTarget, prompt: input.prompt, model: input.model, effort: input.effort, permissionMode: input.permissionMode, title: input.title,
+        ...(input.resumeOnReset === undefined ? {} : { resumeOnReset: input.resumeOnReset }),
+        ...(input.onDone === undefined ? {} : { onDone: input.onDone }),
         requestId: input.requestId, createdBy, creatorChain,
       }));
       return schemas.createOutputSchema.parse({ conversationId: result.conversationId, state: result.state });
@@ -75,11 +77,28 @@ export class MageToolHandlers {
     const result = await callPort('cancel', () => this.context.port.cancel(input));
     return schemas.cancelOutputSchema.parse({ cancelled: result.cancelled });
   }
+  // Mismo control de alcance que `mage_cancel`; idempotente por `requestId`.
+  async close(input: CloseInput) {
+    await this.authorize(input.conversationId);
+    return this.context.store.execute(this.request('close_session', input.requestId, input), async () => {
+      const result = await callPort('closeSession', () => this.context.port.closeSession({ conversationId: input.conversationId }));
+      return schemas.closeOutputSchema.parse({ closed: result.closed });
+    });
+  }
   async askCreator(input: AskCreatorInput) {
     return this.context.store.execute(this.request('ask_creator', input.requestId, input), async () => {
       const result = await callPort('askCreator', () => this.context.port.askCreator(input));
       return schemas.askCreatorOutputSchema.parse({ receipt: result.receipt });
     });
+  }
+  // Solo lectura: sin idempotencia. La cuenta se valida contra el alcance igual que al crear una sesión.
+  async usage(input: UsageInput) {
+    const { port, scope } = this.context;
+    if (input.accountId !== undefined && !scope.accountIds.has(input.accountId)) scopeDenied();
+    const accountIds = input.accountId === undefined ? [...scope.accountIds] : [input.accountId];
+    const accounts = await callPort('getUsage', () => port.getUsage({ accountIds }));
+    if (input.accountId !== undefined && accounts.length === 0) throw new MagePolicyError(`unknown_account: ${input.accountId}`);
+    return schemas.usageOutputSchema.parse({ accounts });
   }
   private async authorize(conversationId: string): Promise<void> {
     const session = await callPort('getSession', () => this.context.port.getSession(conversationId));

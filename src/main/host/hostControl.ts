@@ -3,6 +3,7 @@ import type { AccountCreateParams, AccountInfo } from '@shared/accounts';
 import type { ConversationId } from '@shared/coordination';
 import type { CreateSessionParams } from '@shared/ipc';
 import type { ChatProject } from '@shared/settings';
+import { grantsFullAccess } from '../mcpServer/delegatedSettings';
 import { BypassPermissionsBlockedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError } from './hostErrors';
 import type { HostAccountCreateRequest, HostCreateRequest, HostOptionKey } from './hostProtocol';
 
@@ -54,7 +55,6 @@ export interface HostControlDeps {
 // Recibos de `session.create` recordados para deduplicar reintentos: los últimos, no todos.
 export const MAX_CREATE_RECEIPTS = 100;
 export const EFFORT_KEY_SUFFIX = '#effort';
-const BLOCKED_HOST_PERMISSION_MODE = 'bypassPermissions';
 
 const toHostAccount = (account: AccountInfo): HostAccount => ({ id: account.configDir, name: account.name, provider: account.providerId, billing: account.authKind });
 const nonEmpty = (value: string | undefined): string | undefined => (value === undefined || value.length === 0 ? undefined : value);
@@ -82,10 +82,10 @@ function createOnce(deps: HostControlDeps, receipts: Map<string, HostCreateResul
   return result;
 }
 
-// Frontera de la terminal (no del MCP, que pasa por `resolveHostLaunchParams` sin esto): sin «Omitir permisos» y,
-// al crear, el modo solo en Claude.
+// Frontera de la terminal (no del MCP, que pasa por `resolveHostLaunchParams` sin esto): sin acceso total sin
+// aprobación, en ningún proveedor, y al crear, el modo solo en Claude.
 function guardHostCreate(request: HostCreateRequest): HostCreateRequest {
-  if (request.permissionMode === BLOCKED_HOST_PERMISSION_MODE) throw new BypassPermissionsBlockedError();
+  if (request.permissionMode !== undefined && grantsFullAccess(request.permissionMode)) throw new BypassPermissionsBlockedError();
   if (request.permissionMode !== undefined && request.provider !== 'claude') {
     throw new Error(`El modo de permiso solo se elige al crear en Claude (pedido en ${request.provider})`);
   }
@@ -93,7 +93,7 @@ function guardHostCreate(request: HostCreateRequest): HostCreateRequest {
 }
 
 function guardHostOption(key: HostOptionKey, value: string): string {
-  if (key === 'permissionMode' && value === BLOCKED_HOST_PERMISSION_MODE) throw new BypassPermissionsBlockedError();
+  if (key === 'permissionMode' && grantsFullAccess(value)) throw new BypassPermissionsBlockedError();
   return value;
 }
 

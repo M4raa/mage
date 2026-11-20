@@ -12,6 +12,8 @@ export interface SessionSettings {
   readonly model?: string;
   readonly effort?: string;
   readonly permissionMode?: string;
+  // Ultracode es de arranque: cambiarlo relanza la sesión y se vuelve a anotar.
+  readonly ultracode?: boolean;
 }
 
 export interface DelegatedSettingsRequest {
@@ -62,6 +64,15 @@ export function permissionRank(provider: string, mode: string): number | null {
   if (provider !== 'codex') return null;
   const canonical = canonicalCodexMode(mode);
   return canonical === null ? null : (CODEX_RANK[canonical] ?? UNKNOWN_PROFILE_RANK);
+}
+
+// Rango de «Omitir permisos» en la escala común: acceso total sin aprobación.
+export const FULL_ACCESS_RANK = 5;
+
+// ¿Da el modo acceso total en algún proveedor? bypassPermissions en Claude; :danger-full-access en Codex, pregunte o
+// no; y un perfil de Codex desconocido, que la escala ya cuenta como el más permisivo.
+export function grantsFullAccess(mode: string): boolean {
+  return permissionRank('claude', mode) === FULL_ACCESS_RANK || permissionRank('codex', mode) === FULL_ACCESS_RANK;
 }
 
 // El modo del destino más permisivo que no pasa de `rank`.

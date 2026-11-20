@@ -55,7 +55,7 @@ function MentionChip({ mention, provider, failure, previews, onRemove }: Mention
         <Icon name={MENTION_KIND_ICON[mention.kind]} size={12} className="text-mg-sec" />
       )}
       <span className="font-mono">{name}</span>
-      {mention.kind === 'pdf' && <span className="text-mg-muted">{t('prompt.mentions.pdf', { size: formatSize(mention.bytes) })}</span>}
+      <span className="text-mg-muted">{formatSize(mention.bytes)}</span>
       {pathOnly && (
         <span data-mention-path-only="true" className="rounded-[4px] bg-mg-hover px-[4px] text-[9.5px] text-mg-sec">
           {t('prompt.mentions.pathOnly')}

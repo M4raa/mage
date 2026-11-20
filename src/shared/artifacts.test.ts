@@ -40,6 +40,22 @@ describe('isArtifactUrl', () => {
     expect(isArtifactUrl('https://claude.ai/code/artifact/477497ff-717a-4375-a39e-a47e383648a8')).toBe(true);
   });
 
+  it('isArtifactUrl_formaCortaDelCli2_1_319_esValida', () => {
+    expect(isArtifactUrl('https://claude.ai/artifact/ApBG3JewJ2xSMoUq4UFmkW')).toBe(true);
+  });
+
+  it('isArtifactUrl_formaCortaDeOtroHostOVacia_noLoEs', () => {
+    expect(isArtifactUrl('https://claude.ai.evil.com/artifact/ApBG3JewJ2xSMoUq4UFmkW')).toBe(false);
+    expect(isArtifactUrl('https://claude.ai/artifact/')).toBe(false);
+    expect(isArtifactUrl('https://claude.ai/x/artifact/abc')).toBe(false);
+  });
+
+  it('completeArtifactPublication_formaCorta_daTarjeta', () => {
+    const draft = parseArtifactDraft('Artifact', { file_path: 'C:\\t\\informe.html', title: 'Informe' })!;
+    expect(completeArtifactPublication(draft, 'Published C:\\t\\informe.html at https://claude.ai/artifact/ApBG3JewJ2xSMoUq4UFmkW')?.url)
+      .toBe('https://claude.ai/artifact/ApBG3JewJ2xSMoUq4UFmkW');
+  });
+
   it('isArtifactUrl_otrasUrls_noLoSon', () => {
     expect(isArtifactUrl('https://claude.ai/code/artifact/')).toBe(false);
     expect(isArtifactUrl('https://claude.ai/chat/abc')).toBe(false);

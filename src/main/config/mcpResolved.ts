@@ -37,7 +37,7 @@ interface ResolvedBase {
   readonly extra: Readonly<Record<string, unknown>>;
   // Valores que vienen de la BOVEDA (los `sensitive` de una extension). En los campos de arriba solo
   // aparecen como referencia `${MAGE_MCP_SECRET_…}`; el valor viaja aqui y cada traductor decide como
-  // entregarlo sin escribirlo en un fichero (Claude: entorno del hijo, que el CLI expande).
+  // entregarlo (Claude: en el `env` del servidor de su `--mcp-config`; Codex: entorno del proceso).
   readonly secrets: Readonly<Record<string, string>>;
 }
 
@@ -67,8 +67,7 @@ const MANAGED_KEYS: ReadonlySet<string> = new Set(['type', 'command', 'args', 'e
 const OAUTH_SECRET_PREFIX = 'mcp-oauth-client-secret:';
 const OAUTH_TOKEN_PREFIX = 'mcp-oauth-token:';
 
-// Prefijo de las variables con las que viajan los valores sensibles (de la boveda o de los env/headers
-// de un comun) hacia el CLI de Claude.
+// Prefijo de las referencias con que el formato neutro marca un valor de la boveda.
 export const MCP_SECRET_VAR_PREFIX = 'MAGE_MCP_SECRET_';
 
 export function secretVarName(...parts: readonly string[]): string {

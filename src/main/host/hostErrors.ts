@@ -39,6 +39,30 @@ export class BypassPermissionsBlockedError extends UserFacingError {
   }
 }
 
+// El cliente se presentó solo con el token de arranque (o su sesión de Mage ya no vive) y pidió algo que exige estar
+// emparejado: crear, enviar, cambiar opciones, contestar, el túnel MCP…
+export class NotPairedError extends UserFacingError {
+  constructor() {
+    super(localized('errors.host.notPaired'));
+    this.name = 'NotPairedError';
+  }
+}
+
+// `host.pair` sin permiso: el usuario dijo «Rechazar», no contestó a tiempo o no hay ventana a la que preguntar.
+export type PairingRefusal = 'rejected' | 'timeout' | 'noWindow';
+const REFUSAL_KEYS = {
+  rejected: 'errors.host.pairRejected',
+  timeout: 'errors.host.pairTimeout',
+  noWindow: 'errors.host.pairNoWindow',
+} as const satisfies Readonly<Record<PairingRefusal, string>>;
+
+export class PairingRefusedError extends UserFacingError {
+  constructor(readonly reason: PairingRefusal) {
+    super(localized(REFUSAL_KEYS[reason]));
+    this.name = 'PairingRefusedError';
+  }
+}
+
 // Revisión de seguridad, H1 (opción b): contestar permisos desde un cliente del host está apagado salvo que el usuario lo
 // encienda en Configuración. Un agente que lea el token del host no puede aprobarse sus propios permisos.
 export class PermissionAnswersDisabledError extends UserFacingError {

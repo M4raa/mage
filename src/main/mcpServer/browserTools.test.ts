@@ -11,7 +11,7 @@ import { startMageMcpServer } from './server';
 const NOW = '2026-11-04T12:00:00.000Z';
 const URL = 'http://localhost:4000/';
 const PNG = Buffer.from('png').toString('base64');
-const SEVEN = ['mage_ask_creator', 'mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_list_sessions', 'mage_read_result', 'mage_send'];
+const SEVEN = ['mage_ask_creator', 'mage_cancel', 'mage_close_session', 'mage_create_session', 'mage_get_status', 'mage_get_usage', 'mage_list_sessions', 'mage_read_result', 'mage_send'];
 const BROWSER_TOOLS = ['mage_browser_back', 'mage_browser_click', 'mage_browser_close', 'mage_browser_navigate', 'mage_browser_read_dom', 'mage_browser_screenshot', 'mage_browser_type'];
 
 function fakeBrowser() {

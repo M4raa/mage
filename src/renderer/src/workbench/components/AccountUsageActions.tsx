@@ -97,15 +97,36 @@ function SessionButtons({ account }: { readonly account: Account }): React.JSX.E
       .catch((err: unknown) => reportActionError(t('accountsUsage.refreshLoginFailed'), err, 'accounts'))
       .finally(() => setRefreshing(false));
   };
+  const retry = useRetryLogin(account.id);
+  const loggedOut = claudeSubscription && account.loginStatus === 'logged_out';
   return (
     <div className="flex flex-col items-end gap-[6px]">
       <div className="flex gap-[6px]">
-        {claudeSubscription && account.loginStatus === 'logged_out' && <button className={BUTTON} onClick={() => login.begin(account.id, account.email)} disabled={login.phase === 'starting' || login.phase === 'submitting'}>{t('accountsUsage.login')}</button>}
+        {loggedOut && <button className={BUTTON} onClick={() => login.begin(account.id, account.email)} disabled={login.phase === 'starting' || login.phase === 'submitting'}>{t('accountsUsage.login')}</button>}
+        {loggedOut && <button className={BUTTON} onClick={retry.run} disabled={retry.busy} data-retry-login={account.id}>{t('accountsUsage.retryLogin')}</button>}
         {claudeSubscription && account.loginStatus === 'expired' && <button className={BUTTON} onClick={runRefresh} disabled={refreshing} data-refresh-login={account.id} data-tip={t('accountsUsage.refreshLoginTip')}>{refreshing ? t('accountsUsage.refreshLoginBusy') : t('accountsUsage.refreshLogin')}</button>}
       </div>
+      {loggedOut && retry.done && <span data-retry-login-result={account.id} className="max-w-[260px] text-right text-[10.5px] text-mg-muted">{t('accountsUsage.retryLoginNoSession')}</span>}
       <CliLoginPanel login={login} />
     </div>
   );
+}
+
+// «Reintentar»: relee del disco el login de la cuenta (no renueva nada). `done` queda a true tras la primera relectura,
+// así la línea de «sin sesión» solo sale si la cuenta SIGUE sin sesión después de reintentar.
+function useRetryLogin(accountId: string): { readonly run: () => void; readonly busy: boolean; readonly done: boolean } {
+  const t = useT();
+  const reloadLogin = useWorkbenchStore((s) => s.reloadLogin);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const run = (): void => {
+    setBusy(true);
+    reloadLogin(accountId)
+      .then(() => setDone(true))
+      .catch((err: unknown) => reportActionError(t('accountsUsage.retryLoginFailed'), err, 'accounts'))
+      .finally(() => setBusy(false));
+  };
+  return { run, busy, done };
 }
 
 type Popover = 'none' | 'menu' | 'rename' | 'color';

@@ -91,6 +91,13 @@ export type ScratchRetention = (typeof SCRATCH_RETENTIONS)[number];
 export const CLOSE_BEHAVIORS = ['ask', 'background', 'quit'] as const;
 export type CloseBehavior = (typeof CLOSE_BEHAVIORS)[number];
 
+// Qué hace cerrar una pestaña con trabajo vivo (turno en marcha o permiso pendiente).
+//   'ask'        — pregunta (DEFAULT) hasta que el usuario marque «No volver a preguntar».
+//   'background' — la deja en segundo plano: termina sola y sale en Conversaciones.
+//   'stop'       — la cierra y para su sesión.
+export const RUNNING_TAB_CLOSE_BEHAVIORS = ['ask', 'background', 'stop'] as const;
+export type RunningTabCloseBehavior = (typeof RUNNING_TAB_CLOSE_BEHAVIORS)[number];
+
 // Carpeta con la que nace «Nuevo chat» (P-028, punto 16).
 //   'scratch'     — una carpeta temporal propia (DEFAULT, lo de siempre).
 //   'lastProject' — la carpeta de la conversacion compartida mas reciente del historial; si no hay
@@ -175,6 +182,7 @@ export interface AppSettings {
   // Cerrar la ventana principal (P-028, 17). Lo escribe tambien MAIN (el «Recordar mi decisión» del
   // dialogo nativo) y lo difunde a todas las ventanas. Default 'ask'.
   readonly closeBehavior: CloseBehavior;
+  readonly runningTabClose: RunningTabCloseBehavior;
   // Carpeta de «Nuevo chat» (P-028, 16). Default 'scratch'.
   readonly newConversationFolder: NewConversationFolder;
   // Tope (en caracteres) del historial que arranca una conversación importada de otro proveedor.
@@ -214,9 +222,6 @@ export interface AppSettings {
   // `ENABLE_CLAUDEAI_MCP_SERVERS=false` (medido en 2.1.285: 0 conectores). No se escribe nada en su
   // config dir. Default []: todas los usan, como siempre.
   readonly claudeAiConnectorsOff: readonly string[];
-  // D5 (#53): permitir la herramienta Artifact de Claude Code, que publica en claude.ai. Apagada por defecto;
-  // se aplica al siguiente arranque de cada sesión.
-  readonly artifactEnabled: boolean;
   // Aviso «PR: instala gh / inicia sesión en gh» (grupo D, DA-3) descartado para siempre. Ajustes ›
   // General lo vuelve a encender. Default false.
   readonly ghNoticeDismissed: boolean;
@@ -248,6 +253,8 @@ export interface AppSettings {
   readonly delegation: DelegationSettings;
   // Revisión de seguridad, H1 (b): `mage chat` puede contestar permisos. Default false.
   readonly hostPermissionAnswers: boolean;
+  // Enlaces del chat: true = el clic normal abre en el navegador del sistema y Ctrl/clic central en el de Mage.
+  readonly linksOpenExternally: boolean;
 }
 
 export interface DelegationSettings {
@@ -332,6 +339,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   distrustedFolders: [],
   scratchRetention: 'never',
   closeBehavior: 'ask',
+  runningTabClose: 'ask',
   newConversationFolder: 'scratch',
   importedContextMaxChars: IMPORTED_CONTEXT_LIMITS.default,
   onboardingCompletedVersion: 0,
@@ -344,7 +352,6 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   adminMode: false,
   hiddenAccounts: [],
   claudeAiConnectorsOff: [],
-  artifactEnabled: false,
   ghNoticeDismissed: false,
   autoArchiveOnPrClose: false,
   agyCommandRules: EMPTY_AGY_COMMAND_RULES,
@@ -355,4 +362,5 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   idleCloseMinutes: IDLE_CLOSE_LIMITS.default,
   delegation: DEFAULT_DELEGATION,
   hostPermissionAnswers: false,
+  linksOpenExternally: false,
 };

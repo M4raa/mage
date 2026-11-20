@@ -26,6 +26,9 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Dependencias de producción con avisos altos o críticos: falla la integración (las de desarrollo no viajan en el instalador).
+      - if: runner.os == 'Linux'
+        run: pnpm audit --prod --audit-level high
       # `check` = typecheck (node + web) + tests + avisos de terceros al dia (B.2/B.3: publicar
       # binarios con THIRD-PARTY-NOTICES.txt desfasado incumple las licencias de las dependencias).
       # `build` ademas atrapa fallos de bundle, que el typecheck no ve: es como se descubrio que zod

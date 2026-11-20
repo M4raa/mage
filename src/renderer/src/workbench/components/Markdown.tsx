@@ -8,6 +8,13 @@ import { useCopyToClipboard } from '../useCopyToClipboard';
 import { inlinesToText, tableToMarkdown, tableToTsv } from '../tableCopy';
 import { useT } from '../../i18n/uiLanguage';
 import { extractReferenceTokens, type DocAnchor } from '../planReferences';
+import { usePaneTabId } from '../paneContext';
+import { useWorkbenchStore } from '../workbenchStore';
+import { linkDestination } from '../linkTarget';
+import { linkOpener } from '../linkOpener';
+import { openInBrowserPanel } from '../browser/openInBrowserPanel';
+import { reportActionError } from '../notificationStore';
+import { LinkContextMenu } from './LinkContextMenu';
 
 // Referencias del chat al plan (F5.6, #31). Sin contexto (todos los Markdown salvo el del chat) el texto
 // se pinta tal cual; con el, cada referencia que resuelve a UN punto de un documento asociado es un boton.
@@ -334,12 +341,69 @@ function InlineNode({ node }: { readonly node: MdInline }): React.JSX.Element {
       return <code className="rounded-[4px] bg-mg-sel px-[5px] py-px font-mono text-mg-sel-ink text-[11.5px] break-words">{node.text}</code>;
     case 'link':
       return (
-        <a href={node.href} target="_blank" rel="noreferrer noopener" className="text-mg-focus underline underline-offset-2 hover:opacity-80">
-          {/* Un boton dentro de un enlace no es HTML valido: dentro de un enlace no se enlaza nada. */}
-          <ReferenceContext.Provider value={null}>
-            <Inlines nodes={node.children} />
-          </ReferenceContext.Provider>
-        </a>
+        <ChatLink href={node.href}>
+          <Inlines nodes={node.children} />
+        </ChatLink>
       );
   }
+}
+
+// Un enlace del chat. El clic normal va al navegador de Mage; Ctrl/Cmd o el clic central, al del sistema; el botón derecho
+// abre un menú con los dos. El ajuste `linksOpenExternally` invierte clic normal y Ctrl/central (ver linkTarget.ts).
+// Se conserva `target="_blank"`: sin interceptar, `externalLinks.ts` de main lo manda fuera.
+function ChatLink({ href, children }: { readonly href: string; readonly children: React.ReactNode }): React.JSX.Element {
+  const t = useT();
+  const tabId = usePaneTabId();
+  const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[tabId]);
+  const invert = useWorkbenchStore((s) => s.settings.linksOpenExternally);
+  const [menu, setMenu] = useState<{ readonly x: number; readonly y: number } | null>(null);
+  const reportFailure = (err: unknown): void => reportActionError(t('app.prBar.openLinkFailed'), err, 'chat-link');
+  const openInternal = (): void => {
+    if (sessionId === undefined) return;
+    openInBrowserPanel(sessionId, href).catch(reportFailure);
+  };
+  const openExternal = (): void => void linkOpener.external(href).catch(reportFailure);
+  const open = (modifier: boolean): void => {
+    const destination = linkDestination({ href, modifier, invert, hasSession: sessionId !== undefined });
+    if (destination === 'internal') openInternal();
+    else openExternal();
+  };
+  return (
+    <>
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer noopener"
+        data-chat-link="true"
+        className="text-mg-focus underline underline-offset-2 hover:opacity-80"
+        onClick={(e) => {
+          e.preventDefault();
+          open(e.ctrlKey || e.metaKey);
+        }}
+        onAuxClick={(e) => {
+          if (e.button !== 1) return;
+          e.preventDefault();
+          open(true);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
+      >
+        {/* Un boton dentro de un enlace no es HTML valido: dentro de un enlace no se enlaza nada. */}
+        <ReferenceContext.Provider value={null}>{children}</ReferenceContext.Provider>
+      </a>
+      {menu !== null && (
+        <LinkContextMenu
+          href={href}
+          x={menu.x}
+          y={menu.y}
+          canOpenInternal={sessionId !== undefined && linkDestination({ href, modifier: false, invert: false, hasSession: true }) === 'internal'}
+          onClose={() => setMenu(null)}
+          onOpenInternal={openInternal}
+          onOpenExternal={openExternal}
+        />
+      )}
+    </>
+  );
 }

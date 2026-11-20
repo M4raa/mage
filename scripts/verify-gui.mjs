@@ -26,6 +26,7 @@
 //   pnpm verify:gui --turn=real  # el turno minimo contra Claude aunque la guarda de uso avise
 //   pnpm verify:gui --slow-frames --only=Preguntas: # estresa Motion con frames de un segundo
 //   pnpm verify:gui --trace-layout # guarda geometria/animaciones antes y despues de cada caso
+//   pnpm verify:gui --perf-review [--prod] # SOLO mide: arranque, bloqueo de main, frames, memoria e IPC (perf-review.json)
 //   pnpm verify:gui --inspect-running # lee el estado de la tanda en curso, sin otra instancia
 //   pnpm verify:gui --initial-close-prompt --only=2.7: # prueba el aislamiento con la pregunta de cierre
 //   pnpm verify:gui --dump-dom-text=f.jsonl # SOLO F3 (T4): texto del DOM al final de cada caso, para compare-dom-text
@@ -57,12 +58,13 @@ import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuar
 import { withGuiState } from './lib/guiState.mjs';
 import { closeCheckOverlays, runGuiCheck } from './lib/guiCheckState.mjs';
 import { runPerfBaseline } from './lib/perfBaseline.mjs';
+import { runPerfReview, seedPerfConversationIndex, seedPerfHistory } from './lib/perfReview.mjs';
 import { writeLongTranscript } from './lib/longTranscriptFixture.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
 import { classifyTextFit, collectTextFit } from './lib/textFit.mjs';
 import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
-import { seededAppSettings, seedTestAccounts } from './lib/profileSeed.mjs';
+import { seededAppSettings, seedTestAccounts, TEST_ACCOUNT_DIRS } from './lib/profileSeed.mjs';
 import { ui, uiIn, uiPlural, uiPrefix, uiRegExp, uiSegment, escapeRegExp, cssAttr, getUiLanguage, setUiLanguage, parseUiLangArg } from './lib/uiText.mjs';
 
 // Línea resumen del dock de subagentes (agentsDock.ts): «N en ejecución · M terminados», sin la parte que vale cero.
@@ -97,8 +99,13 @@ const PROD_BUILD = process.argv.includes('--prod');
 // Por defecto la app de prueba corre en SEGUNDO PLANO: fuera de la pantalla, sin robar el foco y con el foco simulado
 // por CDP (MAGE_TEST_BACKGROUND, ver src/main/windows/backgroundTestWindow.ts). `--foreground` la deja a la vista,
 // como antes; la línea base de rendimiento también, porque mide la cadencia real de frames.
-const FOREGROUND = process.argv.includes('--foreground') || process.argv.includes('--perf-baseline') || process.argv.includes('--keep');
-if (PROD_BUILD && !process.argv.includes('--perf-baseline')) throw new Error('--prod solo se admite con --perf-baseline');
+// `--perf-review`: la revisión de rendimiento de scripts/lib/perfReview.mjs. Como la línea base, a la vista y también
+// con `--prod`. Abre el inspector de main en 127.0.0.1:MAIN_INSPECT_PORT (solo esta app sin empaquetar).
+const PERF_REVIEW = process.argv.includes('--perf-review');
+const MAIN_INSPECT_PORT = 9339;
+const PERF_MODE = PERF_REVIEW || process.argv.includes('--perf-baseline');
+const FOREGROUND = process.argv.includes('--foreground') || PERF_MODE || process.argv.includes('--keep');
+if (PROD_BUILD && !PERF_MODE) throw new Error('--prod solo se admite con --perf-baseline o --perf-review');
 
 // H3 de la devolución 17: la carpeta de locks de conversación (#55) de las instancias que lanza esta tanda. La real del
 // usuario la comparte con su Mage instalado y el harness no la toca. Se borra al salir.
@@ -2299,6 +2306,56 @@ const CHECKS = [
     },
   },
   {
+    // «Reintentar» relee del disco el login de una cuenta de Claude sin sesión (no renueva nada). Se escribe en el HOME de
+    // prueba el fichero que deja el CLI al fallar un refresh (bloque vacío) y luego uno válido con tokens falsos, como si
+    // otra instalación lo hubiera renovado. No pulsa «Iniciar sesión» ni spawnea ningún CLI. Restaura el fichero.
+    name: 'Cuentas: una cuenta sin sesión ofrece Reintentar y recoge una sesión escrita después',
+    async run(page) {
+      if (HARNESS_HOME === os.homedir()) return { ok: false, notRunnable: true, detail: 'HOME real: no se escribe en él' };
+      const cuenta = path.join(HARNESS_HOME, TEST_ACCOUNT_DIRS[1]);
+      const fichero = path.join(cuenta, '.credentials.json');
+      const original = fs.readFileSync(fichero, 'utf-8');
+      const escribir = (oauth) => fs.writeFileSync(fichero, JSON.stringify({ claudeAiOauth: { ...oauth, scopes: [] } }), 'utf-8');
+      const loginDe = () => page.evaluate((id) => window.__mageDev.store.getState().accounts.find((a) => a.id === id)?.loginStatus ?? null, cuenta);
+      const medido = {};
+      try {
+        escribir({ accessToken: '', refreshToken: '', expiresAt: 0 });
+        await page.evaluate(() => window.__mageDev.store.getState().refreshAccounts());
+        medido.antes = await loginDe();
+        await page.locator('[data-usage-summary]').first().click();
+        const dialogo = page.locator('[data-accounts-usage]');
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialogo.locator(`[data-account-row="${cssAttr(cuenta)}"]`).click();
+        const ficha = dialogo.locator(`[data-account-card="${cssAttr(cuenta)}"]`);
+        await ficha.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const reintentar = ficha.locator(`[data-retry-login="${cssAttr(cuenta)}"]`);
+        medido.iniciar = await ficha.getByRole('button', { name: ui('accountsUsage.login'), exact: true }).count();
+        medido.reintentar = await reintentar.count();
+        // Sin nada nuevo en el disco: sigue sin sesión y lo dice bajo los botones.
+        await reintentar.click();
+        const aviso = ficha.locator(`[data-retry-login-result="${cssAttr(cuenta)}"]`);
+        await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.aviso = (await aviso.textContent())?.trim() === ui('accountsUsage.retryLoginNoSession');
+        // Otra instalación renueva: tokens falsos que caducan dentro de una hora.
+        escribir({ accessToken: 'x', refreshToken: 'x', expiresAt: Date.now() + 60 * 60 * 1000 });
+        await reintentar.click();
+        await reintentar.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        medido.despues = await loginDe();
+        medido.botonesDespues = await ficha.locator('[data-retry-login], [data-retry-login-result]').count();
+      } finally {
+        fs.writeFileSync(fichero, original, 'utf-8');
+        await page.evaluate(async () => {
+          const store = window.__mageDev.store.getState();
+          store.closeAccountsUsage();
+          await store.refreshAccounts();
+        });
+      }
+      const ok = medido.antes === 'logged_out' && medido.iniciar === 1 && medido.reintentar === 1 && medido.aviso === true
+        && medido.despues === 'logged_in' && medido.botonesDespues === 0;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
     // Grupo H (respuesta 38): en una pestaña de Codex o agy, Inspector › Instrucciones dice que el CLAUDE.md
     // del proyecto se le pasa como AGENTS.md / GEMINI.md, y deja de decirlo cuando el proyecto tiene el suyo.
     // Conversacion temporal SIN mensaje (no se lanza ningun CLI); el CLAUDE.md va en su carpeta temporal.
@@ -3462,6 +3519,71 @@ const CHECKS = [
         await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
         await page.evaluate(() => { delete window.__vg92Abiertas; });
         fs.rmSync(carpeta, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      }
+    },
+  },
+  {
+    // Una sesión pedida con `mage_create_session` sin modelo ni esfuerzo espera a la tarjeta «Lanzar» de su creadora. Se
+    // siembra el bloque de la herramienta y el evento `delegation_launch` que manda main (por el reductor real), se mide la
+    // tarjeta con lo heredado en sus dos selectores y se pulsa «Cancelar» con el IPC sustituido por un espía: tiene que
+    // llegarle el id de la sesión y la tarjeta queda como «No lanzada». Sin Enter, sin CLI y sin llegar nada a main.
+    name: 'Delegación: sin modelo ni esfuerzo sale la tarjeta Lanzar y Cancelar la descarta',
+    state: { tabs: 1 },
+    async run(page, { runDir }) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        window.__vgLaunchIpc = { ...window.__mageDev.launchCardIpc };
+        window.__vgLaunchCalls = [];
+        window.__mageDev.launchCardIpc.cancel = (id) => { window.__vgLaunchCalls.push(['cancel', id]); return Promise.resolve(); };
+        window.__mageDev.launchCardIpc.launch = (params) => { window.__vgLaunchCalls.push(['launch', params]); return Promise.resolve(); };
+        return { blocksByChat: s.blocksByChat, launchCards: s.launchCards };
+      });
+      try {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const s = store.getState();
+          const herramienta = {
+            kind: 'tool', id: 'vglanzar-t0', toolUseId: 'u-vglanzar-0', tool: 'mcp__mage__mage_create_session', toolClass: 'command', command: '', meta: 'ok',
+            isError: false, output: [], filePath: null, diff: null, writtenContent: null, artifact: null, artifactDraft: null,
+            delegation: { title: 'VG lanzar', conversationId: 'vglanzar-pend' }, delegationDraft: { title: 'VG lanzar' }, parentToolUseId: null,
+          };
+          const evento = {
+            kind: 'delegation_launch', childId: 'vglanzar-pend', title: 'VG lanzar', provider: 'claude', accountId: s.activeAccountId, model: 'sonnet', effort: 'high',
+            models: [{ id: 'haiku', label: 'Haiku', efforts: ['low', 'high'] }, { id: 'sonnet', label: 'Sonnet', efforts: ['low', 'high'] }],
+          };
+          store.setState({ blocksByChat: { ...s.blocksByChat, [s.activeTabId]: [herramienta] } });
+          store.setState((actual) => window.__mageDev.reduceEvent(actual, actual.activeTabId, evento));
+        });
+        const tarjeta = page.locator('[data-launch-card="vglanzar-pend"]');
+        await tarjeta.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await tarjeta.evaluate((n) => ({
+          tarjetas: document.querySelectorAll('[data-launch-card]').length,
+          modelo: n.querySelector('[data-launch-model]')?.getAttribute('data-launch-model') ?? null,
+          modeloTexto: n.querySelector('[data-launch-model]')?.textContent?.trim() ?? null,
+          esfuerzo: n.querySelector('[data-launch-effort]')?.getAttribute('data-launch-effort') ?? null,
+          esfuerzoTexto: n.querySelector('[data-launch-effort]')?.textContent?.trim() ?? null,
+          botones: [n.querySelector('[data-launch-go]')?.textContent?.trim() ?? null, n.querySelector('[data-launch-cancel]')?.textContent?.trim() ?? null],
+          tarjetaSubsesion: document.querySelectorAll('[data-delegation-card="vglanzar-pend"]').length,
+        }));
+        await page.screenshot({ path: path.join(runDir, 'delegacion-tarjeta-lanzar.png') });
+        await tarjeta.locator('[data-launch-cancel]').click();
+        await page.locator('[data-launch-card="vglanzar-pend"][data-launch-outcome="cancelled"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.llamadas = await page.evaluate(() => window.__vgLaunchCalls);
+        medido.linea = ((await tarjeta.textContent()) ?? '').trim();
+        medido.formularioFuera = await page.locator('[data-launch-card="vglanzar-pend"] [data-launch-go]').count();
+        await page.screenshot({ path: path.join(runDir, 'delegacion-tarjeta-no-lanzada.png') });
+        const ok = medido.tarjetas === 1 && medido.modelo === 'sonnet' && medido.modeloTexto === 'Sonnet' && medido.esfuerzo === 'high' && medido.esfuerzoTexto === 'high'
+          && medido.botones.join('|') === `${ui('chat.launchCard.launch')}|${ui('chat.launchCard.cancel')}` && medido.tarjetaSubsesion === 0
+          && JSON.stringify(medido.llamadas) === JSON.stringify([['cancel', 'vglanzar-pend']])
+          && medido.linea.endsWith(ui('chat.launchCard.notLaunched')) && medido.formularioFuera === 0;
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => {
+          window.__mageDev.store.setState(estado);
+          Object.assign(window.__mageDev.launchCardIpc, window.__vgLaunchIpc);
+          delete window.__vgLaunchIpc;
+          delete window.__vgLaunchCalls;
+        }, previo);
       }
     },
   },
@@ -4971,6 +5093,131 @@ const CHECKS = [
     },
   },
   {
+    // Ficheros en el chat: un fichero creado por el agente y un adjunto del mensaje enviado salen como fichas, y la del
+    // adjunto abre Ficheros. Sin Enter ni CLI: los bloques se siembran en el store.
+    name: 'Chat: fichas de fichero creado y de adjunto enviado abren Ficheros',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      try {
+        await hydrateBlocks(page, [
+          { kind: 'user', id: 'vg-att-u', text: 'mira esto' + '\n\n```\n// notas.md\n# Hola\n```', time: '10:00', attachments: [], nativeId: null },
+          {
+            kind: 'tool', id: 'vg-att-t', toolUseId: 'u-vg-att-t', tool: 'Write', toolClass: 'edit', command: 'informe.md', meta: 'ok', isError: false,
+            output: [], filePath: 'informe.md', diff: null, writtenContent: null, artifact: null, artifactDraft: null, parentToolUseId: null,
+          },
+        ]);
+        const adjunto = page.locator('[data-sent-attachment$="notas.md"]').first();
+        const ficha = page.locator('[data-file-card$="informe.md"]').first();
+        await adjunto.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await ficha.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await adjunto.evaluate((el) => {
+          const burbuja = el.closest('.group');
+          return { burbujaSinContenido: !(burbuja?.textContent ?? '').includes('// notas.md'), texto: el.textContent ?? '' };
+        });
+        const conTamano = /\d+(?:[.,]\d+)? (?:B|kB|MB)/.test(medido.texto);
+        await adjunto.click();
+        const panel = page.locator('[data-files-panel="true"]').first();
+        const abierto = await panel.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+        const hechos = { burbujaSinContenido: medido.burbujaSinContenido, adjuntoConTamano: conTamano, fichaCreado: true, ficheros: abierto };
+        return { ok: Object.values(hechos).every(Boolean), detail: `${JSON.stringify(hechos)} adjunto="${medido.texto}"` };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    // Maquetación del prompt: la caja vacía mide poco más que el botón y bajo la línea de información queda
+    // poco margen. Sin Enter: solo se miden cajas.
+    name: 'Prompt: alto de la caja vacía y hueco bajo la línea de información',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      try {
+        await page.locator(`[data-pane-tab-id="${tabId}"] [data-prompt-editor="true"] .cm-editor`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await clearPrompt(page);
+        const medido = await page.evaluate((id) => {
+          const pane = document.querySelector(`[data-pane-tab-id="${id}"]`);
+          const caja = pane?.querySelector('[data-prompt-editor="true"]')?.closest('.rounded-\\[9px\\]');
+          const barra = pane?.querySelector('[data-chat-info-bar]');
+          const contenedor = caja?.parentElement?.closest('.border-t');
+          const enviar = caja?.querySelectorAll('button');
+          if (!caja || !barra || !contenedor || !enviar || enviar.length === 0) return null;
+          const [c, b, k, e] = [caja, barra, contenedor, enviar[enviar.length - 1]].map((n) => n.getBoundingClientRect());
+          return {
+            altoCaja: c.height,
+            huecoInferior: k.y + k.height - (b.y + b.height),
+            desfase: Math.abs(e.y + e.height / 2 - (c.y + c.height / 2)),
+          };
+        }, tabId);
+        if (medido === null) return { ok: false, detail: 'no se encontraron caja, barra, contenedor o botón de enviar' };
+        const medio = (n) => Math.round(n * 2) / 2;
+        const detail = `altoCaja=${medio(medido.altoCaja)} huecoInferior=${medio(medido.huecoInferior)} desfase=${medio(medido.desfase)}`;
+        // Medidas de partida (evidencias): la caja vacía tiene que bajar ≥5 px, el hueco ≥6 px y los botones seguir centrados.
+        const ALTO_ANTES = 46;
+        const HUECO_ANTES = 12;
+        const ok = medido.altoCaja <= ALTO_ANTES - 5 && medido.huecoInferior <= HUECO_ANTES - 6 && medido.desfase <= 3;
+        return { ok, detail };
+      } finally {
+        await clearPrompt(page);
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    // Los desplegables de «/» y «@» salen ENCIMA de la caja y por encima de cualquier otro contenido (hilo largo
+    // incluido). Sin Enter: solo se escribe el disparador y se mide el desplegable.
+    name: 'Prompt: los desplegables de / y @ salen encima de la caja y por encima del hilo',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const relleno = Array.from({ length: 30 }, (_, n) => ({ kind: 'agent', id: `vg-pop-${n}`, runs: [{ code: false, text: `línea de relleno ${n}` }], streaming: false }));
+      const medir = (selector) =>
+        page.evaluate(({ id, sel }) => {
+          const pane = document.querySelector(`[data-pane-tab-id="${id}"]`);
+          const pop = pane?.querySelector(sel);
+          const caja = pane?.querySelector('[data-prompt-editor="true"]')?.closest('.rounded-\\[9px\\]');
+          if (!pop || !caja) return null;
+          const [p, c] = [pop.getBoundingClientRect(), caja.getBoundingClientRect()];
+          const arriba = document.elementFromPoint(p.left + p.width / 2, p.top + 8);
+          const rect = (r) => ({ top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) });
+          const tapa = arriba && !pop.contains(arriba) ? `${arriba.tagName} ${[...arriba.attributes].filter((a) => a.name.startsWith('data-')).map((a) => a.name).join(',')}` : null;
+          return { encima: p.bottom <= c.top + 1, visible: pop.contains(arriba), tapa, pop: rect(p), caja: rect(c) };
+        }, { id: tabId, sel: selector });
+      const probar = async (disparador, selector) => {
+        await clearPrompt(page);
+        await page.keyboard.type(disparador);
+        const aparece = await page.locator(`[data-pane-tab-id="${tabId}"] ${selector}`).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+        return aparece ? medir(selector) : { abre: false };
+      };
+      try {
+        await page.locator(`[data-pane-tab-id="${tabId}"] [data-prompt-editor="true"] .cm-editor`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await hydrateBlocks(page, relleno);
+        const slash = await probar('hola /', '[role="listbox"]:not([data-mention-popover])');
+        const mencion = await probar('hola @', '[data-mention-popover="true"]');
+        const bien = (m) => m !== null && m.abre !== false && m.encima === true && m.visible === true;
+        return { ok: bien(slash) && bien(mencion), detail: JSON.stringify({ slash, mencion }) };
+      } finally {
+        await clearPrompt(page);
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
     // P-038: el «+» de abajo a la izquierda de la caja agrupa «Adjuntar imagen» (antes un clip suelto) y las acciones
     // del antiguo «⋯». «Abrir carpeta» sigue fuera: la carpeta se abre desde su insignia. Se abre y se cierra con Escape.
     name: 'Menú «+» del prompt: con «Adjuntar archivo» y «Abrir terminal», sin «Abrir carpeta»',
@@ -4990,6 +5237,104 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
       const ok = items.length >= 2 && !items.some((t) => removedPromptMenuItems().test(t)) && items[0] === ui('i2.prompt.attachImage') && items.some((t) => t.includes(ui('prompt.actions.openTerminal')));
       return { ok, detail: `items=${JSON.stringify(items)}` };
+    },
+  },
+  {
+    // «Continuar al restablecerse» (solo Claude por suscripción): la casilla del «+» sale con su marca estable, se enciende
+    // como borrador cuando la pestaña aún no tiene sesión (no toca main ni el CLI), no se pinta en una cuenta de API, y el
+    // aviso con la hora que emite main (`notice`) se lee en el hilo. Sin Enter: la sesión del aviso es sintética.
+    name: 'Prompt: «Continuar al restablecerse» sale en Claude y anuncia la hora de reanudar',
+    state: { tabs: 1 },
+    async run(page) {
+      const SELECTOR = '[data-action="resume-on-reset"]';
+      const abrirMenu = async () => {
+        await page.locator('[data-prompt-actions="true"] [aria-haspopup="menu"]').first().click();
+        await page.locator('[role="menu"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      };
+      const esperarMenuCerrado = () => page.locator('[role="menu"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const medir = () => page.evaluate((selector) => {
+        const nodos = [...document.querySelectorAll(selector)];
+        return { cuenta: nodos.length, rol: nodos[0]?.getAttribute('role') ?? null, marcada: nodos[0]?.getAttribute('aria-checked') ?? null, texto: (nodos[0]?.textContent ?? '').trim() };
+      }, SELECTOR);
+      const borrador = (tabId) => page.evaluate((id) => window.__mageDev.store.getState().tabs.find((t) => t.id === id)?.resumeOnReset ?? null, tabId);
+      const facturacion = (apiBilled) => page.evaluate((api) => {
+        const store = window.__mageDev.store;
+        const { tabs, activeTabId, accounts } = store.getState();
+        const tab = tabs.find((t) => t.id === activeTabId);
+        const base = accounts.find((a) => a.id === tab.accountId) ?? { id: tab.accountId, alias: 'vg', provider: 'Claude', loginStatus: 'logged_in' };
+        store.setState({ accounts: [...accounts.filter((a) => a.id !== tab.accountId), { ...base, providerId: 'claude', apiBilled: api }] });
+        return { id: tab.id, provider: tab.provider };
+      }, apiBilled);
+      const tab = await facturacion(false);
+      // 1) Sale, como casilla y sin marcar; 2) un clic la marca como borrador (sin sesión no hay IPC); 3) otro la quita.
+      await abrirMenu();
+      const inicial = await medir();
+      await page.locator(SELECTOR).click();
+      await esperarMenuCerrado();
+      const trasEncender = await borrador(tab.id);
+      await abrirMenu();
+      const marcada = await medir();
+      await page.locator(SELECTOR).click();
+      await esperarMenuCerrado();
+      const trasApagar = await borrador(tab.id);
+      // 4) Con una cuenta que factura la API no se pinta.
+      await facturacion(true);
+      await abrirMenu();
+      const enApi = await medir();
+      await page.keyboard.press('Escape');
+      await esperarMenuCerrado();
+      await facturacion(false);
+      // 5) El aviso de main («Se reanudará a las 15:02») llega como un `notice` de la sesión de la pestaña.
+      await page.evaluate((id) => {
+        const dev = window.__mageDev;
+        const sessionId = 'vg-resume-session';
+        dev.store.setState((s) => ({ sessionIdByChat: { ...s.sessionIdByChat, [id]: sessionId } }));
+        dev.store.getState().handleEvent(sessionId, { kind: 'notice', localized: { key: 'chat.resumeOnReset.scheduled', values: { time: '15:02' } } });
+      }, tab.id);
+      const aviso = ui('chat.resumeOnReset.scheduled', { time: '15:02' });
+      const enElHilo = await page.locator(`[data-pane-tab-id="${tab.id}"]`).getByText(aviso).first()
+        .waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const ok = tab.provider === 'claude'
+        && inicial.cuenta === 1 && inicial.rol === 'menuitemcheckbox' && inicial.marcada === 'false' && inicial.texto.includes(ui('prompt.actions.resumeOnReset'))
+        && trasEncender === true && marcada.marcada === 'true' && trasApagar === null
+        && enApi.cuenta === 0 && enElHilo;
+      return { ok, detail: JSON.stringify({ provider: tab.provider, inicial, trasEncender, marcada: marcada.marcada, trasApagar, enApi: enApi.cuenta, aviso, enElHilo }) };
+    },
+  },
+  {
+    // Una subsesión que main cierra (al acabar o por `mage_close_session`) con su pestaña abierta: el aviso `closed_by_mage`
+    // llega por el mismo `handleEvent` que usa el producto para los eventos de sesión. La pestaña suelta su sesión de motor,
+    // queda apuntando a su conversación (`resumeSessionId`) y el hilo lo dice, conservando lo que ya tenía. Sin Enter ni CLI:
+    // la sesión es sintética y el aviso lo entrega el puente.
+    name: 'Subsesiones: cerrada por Mage, la pestaña queda reanudable y lo dice',
+    state: { tabs: 1 },
+    async run(page) {
+      const SESSION = 'vg-closed-session';
+      const PREVIA = 'vg: línea previa del hilo';
+      const tab = await page.evaluate(({ session, previa }) => {
+        const store = window.__mageDev.store;
+        const { tabs, activeTabId } = store.getState();
+        const activa = tabs.find((t) => t.id === activeTabId);
+        store.setState((s) => ({
+          tabs: s.tabs.map((t) => (t.id === activa.id ? { ...t, resumeSessionId: undefined } : t)),
+          sessionIdByChat: { ...s.sessionIdByChat, [activa.id]: session },
+          blocksByChat: { ...s.blocksByChat, [activa.id]: [{ kind: 'system', id: 'vg-previa', text: previa }] },
+        }));
+        return { id: activa.id, provider: activa.provider };
+      }, { session: SESSION, previa: PREVIA });
+      const antes = await page.evaluate((id) => window.__mageDev.store.getState().sessionIdByChat[id] ?? null, tab.id);
+      await page.evaluate((session) => window.__mageDev.store.getState().handleEvent(session, { kind: 'closed_by_mage' }), SESSION);
+      const aviso = ui('chat.system.closedByMage');
+      const pane = page.locator(`[data-pane-tab-id="${tab.id}"]`);
+      const enElHilo = await pane.getByText(aviso).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const conservaLaPrevia = await pane.getByText(PREVIA).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const despues = await page.evaluate((id) => {
+        const s = window.__mageDev.store.getState();
+        return { sesion: s.sessionIdByChat[id] ?? null, estado: s.statusByChat[id] ?? null, reanuda: s.tabs.find((t) => t.id === id)?.resumeSessionId ?? null };
+      }, tab.id);
+      const ok = tab.provider === 'claude' && antes === SESSION
+        && despues.sesion === null && despues.reanuda === SESSION && enElHilo && conservaLaPrevia;
+      return { ok, detail: JSON.stringify({ provider: tab.provider, antes, despues, aviso, enElHilo, conservaLaPrevia }) };
     },
   },
   {
@@ -5925,6 +6270,46 @@ const CHECKS = [
     },
   },
   {
+    // Pantalla «Artifacts» (todos los de todas las cuentas) y visibilidad en la tarjeta del chat. Sin red ni CLI: se
+    // siembran las respuestas sustituyendo las funciones de `artifactsSource` (`window.mage` no se puede sustituir) y
+    // se devuelven en `finally`. El visor NO se abre: necesitaría red. «Cambiar en claude.ai» no se pulsa: abriría
+    // el navegador del sistema.
+    name: 'Artifacts: la pantalla lista creados y compartidos de dos cuentas y la tarjeta enseña la visibilidad',
+    state: { tabs: 1 },
+    async run(page, { runDir }) {
+      await sembrarArtifacts(page);
+      try {
+        const pantalla = await medirPantallaArtifacts(page, runDir);
+        await hydrateBlocks(page, [artifactBlock('vg-vis')]);
+        const visibilidad = page.locator('[data-artifact-visibility]');
+        await visibilidad.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const tarjeta = await page.evaluate(() => {
+          const linea = document.querySelector('[data-artifact-visibility]');
+          return {
+            audience: linea?.getAttribute('data-artifact-visibility') ?? null,
+            texto: (linea?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+            esperado: window.__mageDev.t('chat.artifact.audience.owner'),
+            enlace: linea?.querySelector('[data-artifact-change-visibility]')?.textContent?.trim() ?? null,
+            enlaceEsperado: window.__mageDev.t('chat.artifact.changeVisibility'),
+          };
+        });
+        const ok =
+          pantalla.filas.length === 2 &&
+          pantalla.filas.some((f) => f.rel === 'mine' && f.cuenta === 'vg-cuenta-a' && f.titulo === 'vg-artifact-a') &&
+          pantalla.filas.some((f) => f.rel === 'shared' && f.cuenta === 'vg-cuenta-b' && f.titulo === 'vg-artifact-b') &&
+          pantalla.etiquetasCuenta.join('|') === 'vg-cuenta-a|vg-cuenta-b' &&
+          pantalla.visorVacio &&
+          pantalla.cerrada &&
+          tarjeta.audience === 'owner' &&
+          tarjeta.texto.startsWith(tarjeta.esperado) &&
+          tarjeta.enlace === tarjeta.enlaceEsperado;
+        return { ok, detail: JSON.stringify({ pantalla, tarjeta }) };
+      } finally {
+        await restaurarArtifacts(page);
+      }
+    },
+  },
+  {
     // 2.4: sin cuenta publicadora conocida (el indice del perfil aislado esta vacio), NO puede haber un
     // "Abrir" que abriria con una cuenta arbitraria: solo "Abrir con…", que lo elige el usuario.
     name: '2.4: sin cuenta publicadora conocida, el boton ofrece "abrir con…"',
@@ -6000,6 +6385,8 @@ const CHECKS = [
     // contrato de `reconcileLayoutWithRegistry` y lo que evita el "residuo de maquina" de otras rondas.
     name: '2.9.b: las tres vistas nuevas montan y no roban el panel activo',
     async run(page) {
+      // Van escondidos por defecto: se colocan los tres (sin dejar ninguno abierto) y se mide como antes.
+      await revealHiddenPanels(page, ['instructions', 'commands', 'agents']);
       const iconos = [ui('menu.panel.instructions'), ui('menu.panel.commands'), ui('menu.panel.agents')];
       const antes = await page.evaluate(
         (labels) => ({
@@ -6055,6 +6442,28 @@ const CHECKS = [
       const ok = measured.errores === 0 && measured.conHooks && measured.conReglas && measured.conMensaje
         && measured.casillas === 1 && measured.terminalAntes === false && measured.ajusteTrasPulsar === true && measured.ajusteAlFinal === false;
       return { ok, detail: `seccion=${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // Bloque de solo lectura con las reglas `ask` que Mage pasa siempre a Claude. Abre y cierra su diálogo.
+    name: 'Permisos: Ajustes enseña las acciones que siempre preguntan',
+    state: { tabs: 1 },
+    async run(page) {
+      await page.keyboard.press('Control+Comma');
+      await page.locator(MODAL).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await openSection(page, uiRegExp('settings.sections.hooksPermissions.nav'));
+      const block = page.locator('[data-external-action-ask="true"]');
+      await block.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await block.scrollIntoViewIfNeeded();
+      const measured = await block.evaluate((node, heading) => ({
+        filas: [...node.querySelectorAll('li')].map((li) => li.textContent),
+        cabecera: node.querySelector('h3')?.textContent === heading,
+      }), ui('settings.hooks.externalAsk.heading'));
+      measured.bloques = await block.count();
+      await closeDialog(page);
+      const ok = measured.bloques === 1 && measured.cabecera
+        && measured.filas.includes('Bash(git push:*)') && measured.filas.includes('Artifact');
+      return { ok, detail: `bloque=${JSON.stringify(measured)}` };
     },
   },
   // --- Fase E (2.7 y 2.12.1). NINGUNA pulsa `Enter`, y hay una que deliberadamente NO existe: medir
@@ -6353,6 +6762,7 @@ const CHECKS = [
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
       });
       await openTemporaryConversation(page);
+      await revealHiddenPanels(page, ['permissions']);
       const icon = page.getByRole('button', { name: ui('chat.permission.title'), exact: true }).first();
       const abiertoAntes = (await icon.getAttribute('aria-pressed')) === 'true';
       if (!abiertoAntes) {
@@ -6465,6 +6875,7 @@ const CHECKS = [
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
       });
       await openTemporaryConversation(page);
+      await revealHiddenPanels(page, ['permissions']);
       const icon = page.getByRole('button', { name: ui('chat.permission.title'), exact: true }).first();
       const abiertoAntes = (await icon.getAttribute('aria-pressed')) === 'true';
       if (!abiertoAntes) {
@@ -7570,6 +7981,7 @@ const CHECKS = [
         });
       });
       await page.waitForTimeout(CONFIG.settleMs * 2);
+      await revealHiddenPanels(page, ['logs']);
 
       const boton = page.getByRole('button', { name: 'Logs', exact: true }).first();
       const hayPanel = await boton.isVisible().catch(() => false);
@@ -8195,6 +8607,7 @@ const CHECKS = [
       }
 
       // 3) En el PANEL nuevo: las mismas, sin tener que scrollear el hilo.
+      await revealHiddenPanels(page, ['artifacts']);
       const boton = page.getByRole('button', { name: 'Artifacts', exact: true }).first();
       const hayPanel = await boton.isVisible().catch(() => false);
       let enElPanel = null;
@@ -8304,6 +8717,7 @@ const CHECKS = [
         });
       });
       await page.waitForTimeout(CONFIG.settleMs * 2);
+      await revealHiddenPanels(page, ['logs', 'mcp']);
 
       const medido = { paneles: {} };
       const contextName = ui('menu.panel.context');
@@ -8420,6 +8834,7 @@ const CHECKS = [
     async run(page) {
       const previo = page.viewportSize();
       const previoLayout = await page.evaluate(() => JSON.parse(JSON.stringify(window.__mageDev.panelStore.getState().layout)));
+      await revealHiddenPanels(page, ['usage']); // sin él, la zona 'b' del borde izquierdo no tiene ningún panel
       await page.setViewportSize({ width: 900, height: 600 });
       await page.waitForTimeout(CONFIG.settleMs * 3);
       // Las dos zonas del borde izquierdo abiertas y un reparto MAS ALTO que la ventana entera.
@@ -8552,6 +8967,7 @@ const CHECKS = [
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, toolsByChat: s.toolsByChat };
       });
       await openTemporaryConversation(page);
+      await revealHiddenPanels(page, ['tools']);
       await page.evaluate(() => {
         const dev = window.__mageDev;
         if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
@@ -8867,28 +9283,23 @@ const CHECKS = [
     },
   },
   {
-    // F1.12 H1 (D5, #53): «Permitir Artifact» es una opción apagada por defecto que main recibe guardada.
-    // Abre Configuración y la cierra; deja el ajuste como lo encontró.
-    name: 'F1.12 D5: Permitir Artifact está apagado por defecto y se guarda en main',
+    // Un perfil nuevo enseña solo cinco paneles; abrir uno de los escondidos lo coloca en su sitio y lo abre.
+    // Sin Enter. Deja `usage` escondido como lo encontró.
+    name: 'Paneles: un perfil nuevo enseña solo cinco paneles y abrir uno escondido lo coloca',
     async run(page) {
-      await openSettingsDialog(page);
-      await openSection(page, uiRegExp('settings.sections.storage.nav'));
-      const casilla = page.locator('[data-setting="artifact"] input[type="checkbox"]');
-      const porDefecto = await casilla.isChecked();
-      // El guardado lleva debounce: se sondea main hasta que el valor llega (o se agota el plazo).
-      const enMain = (esperado) => page.evaluate(async ({ esperado, plazo }) => {
-        const fin = Date.now() + plazo;
-        let valor = (await window.mage.loadSettings()).artifactEnabled;
-        while (valor !== esperado && Date.now() < fin) { await new Promise((r) => setTimeout(r, 100)); valor = (await window.mage.loadSettings()).artifactEnabled; }
-        return valor;
-      }, { esperado, plazo: CONFIG.actionTimeoutMs });
-      await casilla.check();
-      const encendido = await enMain(true);
-      await casilla.uncheck();
-      const apagado = await enMain(false);
-      await page.keyboard.press('Escape');
-      await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-      return { ok: porDefecto === false && encendido === true && apagado === false, detail: JSON.stringify({ porDefecto, encendido, apagado }) };
+      const visibleIds = () => page.evaluate(() => [...document.querySelectorAll('button[data-stripe-btn="true"][data-panel-id]')].map((b) => b.getAttribute('data-panel-id')).sort());
+      const esperados = ['activity', 'browser', 'context', 'conversations', 'files'];
+      const inicial = await visibleIds();
+      try {
+        await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('usage'));
+        await page.locator('button[data-stripe-btn="true"][data-panel-id="usage"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const tras = await visibleIds();
+        const abierto = await page.evaluate(() => window.__mageDev.panelStore.getState().isPanelOpen('usage'));
+        const ok = JSON.stringify(inicial) === JSON.stringify(esperados) && tras.includes('usage') && abierto === true;
+        return { ok, detail: JSON.stringify({ inicial, tras, usageAbierto: abierto }) };
+      } finally {
+        await page.evaluate(() => window.__mageDev.panelStore.getState().hidePanel('usage'));
+      }
     },
   },
   {
@@ -9017,7 +9428,7 @@ const CHECKS = [
     },
   },
   {
-    name: 'P-038 V3: la fila de la conversación no lleva privacidad y el % de contexto va en la barra de estado',
+    name: 'Chat: la fila de la conversación no lleva privacidad y el % de contexto va a la derecha del modelo',
     async run(page) {
       await openTemporaryConversation(page);
       await page.evaluate(() => {
@@ -9028,13 +9439,20 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
       const medido = await page.evaluate(() => {
         const pane = document.querySelector(`[data-pane-tab-id="${window.__mageDev.store.getState().activeTabId}"]`);
+        const contexto = pane?.querySelector('[data-chat-context]') ?? null;
+        const modelo = pane?.querySelector('[data-model-menu]') ?? null;
+        const [c, m] = [contexto?.getBoundingClientRect(), modelo?.getBoundingClientRect()];
+        // A la derecha del modelo en su misma línea, o en una línea de debajo si la fila se partió.
+        const derechaDelModelo = c !== undefined && m !== undefined && (c.left >= m.right || c.top > m.bottom);
         return {
           sublinea: pane?.querySelector('[data-tab-subline]') !== null,
           privacidad: pane?.querySelector('[data-tab-subline-privacy]') !== null,
-          contexto: document.querySelector('[data-status-context]')?.textContent?.replace('·', '').trim() ?? null,
+          contexto: contexto?.textContent?.trim() ?? null,
+          derechaDelModelo,
+          barraSinContexto: document.querySelector('[data-status-bar] [data-chat-context], [data-status-context]') === null,
         };
       });
-      const ok = medido.sublinea && !medido.privacidad && medido.contexto === ui('tabs.subline.context', { pct: 42 });
+      const ok = medido.sublinea && !medido.privacidad && medido.contexto === ui('tabs.subline.context', { pct: 42 }) && medido.derechaDelModelo && medido.barraSinContexto;
       return { ok, detail: JSON.stringify(medido) };
     },
   },
@@ -9074,6 +9492,19 @@ const CHECKS = [
       }, { tabId: ids.inactiva, x: caja.x + caja.width / 2, y: caja.y + caja.height / 2 });
       const ok = antes.activa === 'visible' && antes.inactiva === 'hidden' && conHover === 'visible';
       return { ok, detail: JSON.stringify({ ...ids, antes, conHover, diagnostico }) };
+    },
+  },
+  {
+    // Sin Enter ni CLI: el trabajo vivo es un estado sembrado con un id de sesión inventado. `window.mage` no se
+    // puede sustituir, así que no se espía `stop`/`closeSession` (van al main real, que contesta «Sesion
+    // inexistente» y el renderer lo trata como ausencia): solo se mide lo que se ve y lo que queda en el store.
+    name: 'Pestañas: cerrar una que trabaja pregunta, Cancelar no la cierra y «Dejar en segundo plano» recordado deja de preguntar',
+    async run(page) {
+      try {
+        return await medirCerrarPestanaQueTrabaja(page);
+      } finally {
+        await page.evaluate(() => window.__mageDev.store.getState().setRunningTabClose('ask'));
+      }
     },
   },
   {
@@ -11034,6 +11465,7 @@ const CHECKS = [
     name: 'Q03: aviso de permiso en el icono del dock',
     state: { tabs: 1 },
     async run(page) {
+      await revealHiddenPanels(page, ['permissions']);
       const previo = await page.evaluate(() => window.__mageDev.store.getState().statusByChat);
       try {
         await page.evaluate(() => {
@@ -11149,6 +11581,7 @@ const CHECKS = [
     name: 'Q10: el icono de Permisos late con un permiso pendiente',
     state: { tabs: 1 },
     async run(page) {
+      await revealHiddenPanels(page, ['permissions']);
       const previo = await page.evaluate(() => window.__mageDev.store.getState().statusByChat);
       try {
         await page.evaluate(() => {
@@ -11662,6 +12095,29 @@ const CHECKS = [
         await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), (await page.evaluate(() => window.__mageDev.store.getState().activeTabId)));
         await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), HOST_TURN_PROVIDER.id);
         await fake.close();
+      }
+    },
+  },
+  {
+    // Emparejamiento del host (1.8). Un cliente de prueba por el endpoint del perfil aislado, sin CLI ni Enter: con el
+    // token de arranque lee y no escribe; `host.pair` saca el diálogo en la ventana y «Autorizar» (un clic) le da un
+    // token; con él, la escritura de menos efecto (cambiar el modelo de una sesión que no existe) llega al coordinador y
+    // responde «sesión inexistente»; «Revocar» en Configuración corta la conexión y, con el mismo token, vuelve «no
+    // emparejado». Abre y cierra su diálogo de Configuración; el cliente queda revocado al acabar.
+    name: 'Host: un cliente sin emparejar solo lee; emparejado y revocado',
+    state: { tabs: 1 },
+    async run(page, { userDataDir, runDir }) {
+      const clients = [];
+      const connect = async (clientToken) => {
+        const link = await connectProbeClient(userDataDir, clientToken);
+        clients.push(link);
+        return link;
+      };
+      try {
+        const medido = await measureHostPairing(page, { connect, runDir });
+        return { ok: hostPairingPassed(medido), detail: JSON.stringify(medido) };
+      } finally {
+        for (const link of clients) link.socket.destroy();
       }
     },
   },
@@ -12462,6 +12918,74 @@ const CHECKS = [
     },
   },
   {
+    // La barra del navegador (Adelante, zoom) y la ventana propia, con una sesión del RUNTIME PROPIO (servidor falso, sin
+    // CLI y sin Enter) y un servidor local de dos páginas que cuenta peticiones: sacar la vista a su ventana y traerla no
+    // puede pedir la página otra vez (el spike midió que `did-start-loading` no sirve para contar recargas). Cierra la
+    // ventana propia, la pestaña, el proveedor y los servidores.
+    name: 'Navegador: adelante, zoom y ventana propia sin recargar',
+    async run(page, { userDataDir, runDir }) {
+      const pages = await startCountingPageServer();
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      let sessionId = null;
+      try {
+        ({ tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: BROWSER_TURN_PROVIDER, model: QUEUE_TURN_MODEL }));
+        sessionId = await page.evaluate((id) => window.__mageDev.store.getState().ensureSession(id), tabId);
+        await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('browser'));
+        await page.locator('[data-browser-panel]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const barra = await measureBrowserForwardAndZoom(page, sessionId, pages);
+        await page.locator('[data-browser-panel]').screenshot({ path: path.join(runDir, 'navegador-barra.png') });
+        const ventana = await measureBrowserPopout(page, sessionId, pages, runDir);
+        const ok = Object.values(barra).every((value) => value === true) && ventana.ok;
+        return { ok, detail: JSON.stringify({ barra, ventana }) };
+      } finally {
+        // Si la medida se cortó con el navegador fuera, se trae de vuelta (cierra su ventana) antes de cerrar la pestaña.
+        if (sessionId !== null) {
+          await page.evaluate(async (sid) => { if (window.__mageBrowserDev.getState().states[sid]?.poppedOut === true) await window.mage.browserPopIn(sid); }, sessionId);
+        }
+        if (tabId !== null) await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), BROWSER_TURN_PROVIDER.id);
+        await fake.close();
+        await pages.close();
+      }
+    },
+  },
+  {
+    // Enlaces del chat: el botón derecho abre un menú con tres elementos y Ctrl+clic va al navegador EXTERNO (`linkOpener.external`
+    // sustituido por un espía vía __mageDev: no se abre nada). Sin Enter ni CLI. No se prueba el clic normal: abriría el integrado con red.
+    name: 'Chat: menú de enlace y Ctrl+clic al navegador externo',
+    state: { tabs: 1 },
+    async run(page) {
+      await hydrateBlocks(page, [{ kind: 'agent', id: 'vg-link', runs: [{ code: false, text: '[enlace](https://example.com/)' }], streaming: false }]);
+      const enlace = page.locator('[data-chat-link]');
+      await enlace.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.evaluate(() => {
+        window.__vgLinkOriginal = window.__mageDev.linkOpener.external;
+        window.__vgLinkCalls = [];
+        window.__mageDev.linkOpener.external = (url) => { window.__vgLinkCalls.push(url); return Promise.resolve(); };
+      });
+      try {
+        await enlace.first().click({ button: 'right' });
+        const items = page.locator('[data-link-menu]');
+        await items.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const elementosDelMenu = await items.count();
+        await page.keyboard.press('Escape');
+        await items.first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const menuCerrado = (await items.count()) === 0;
+        await enlace.first().click({ modifiers: ['Control'] });
+        const llamadas = await page.evaluate(() => window.__vgLinkCalls);
+        const ctrlClicFuera = llamadas.length === 1 && llamadas[0] === 'https://example.com/';
+        return { ok: elementosDelMenu === 3 && menuCerrado && ctrlClicFuera, detail: JSON.stringify({ elementosDelMenu, menuCerrado, ctrlClicFuera, llamadas }) };
+      } finally {
+        await page.evaluate(() => {
+          if (window.__vgLinkOriginal !== undefined) window.__mageDev.linkOpener.external = window.__vgLinkOriginal;
+          delete window.__vgLinkOriginal;
+          delete window.__vgLinkCalls;
+        });
+      }
+    },
+  },
+  {
     // Carril R (R04): la entrada «Tareas programadas» del lateral (sustituye a la sección «Tareas»). Solo mide el DOM:
     // no pulsa Enter ni lanza ningún CLI.
     name: 'R: el lateral tiene la entrada Tareas programadas',
@@ -13212,6 +13736,67 @@ const CHECKS = [
         await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(false));
         await waitForWidgetPages(page, 0);
         await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: false }));
+      }
+    },
+  },
+  {
+    // Sin Enter ni CLI: pestañas inventadas sin sesión; todo se restaura en `finally`.
+    name: 'Pestañas: restaurar con la activa de una cuenta que ya no está deja marcada la pestaña que se pinta',
+    async run(page) {
+      const previo = await snapshotTabsState(page);
+      try {
+        return await medirRestaurarActivaSinCuenta(page);
+      } finally {
+        await restoreTabsState(page, previo);
+      }
+    },
+  },
+  {
+    // La elicitation se inyecta por el reducer real en el panel NO enfocado y se cierra por el mismo camino que main.
+    name: 'Pestañas: una elicitation en el panel no enfocado no se lleva la pestaña activa',
+    async run(page) {
+      const previo = await snapshotTabsState(page);
+      try {
+        const { tabA, tabB } = await openFocusedSplitPair(page);
+        const antes = await medirPestanaDescuadrada(page);
+        const request = { requestId: 'vg-foco-elic', server: 'vg_server', message: 'Foco', mode: 'form', schema: { type: 'object', properties: { nota: { type: 'string', title: 'Nota' } } } };
+        await page.evaluate(({ id, req }) => {
+          const dev = window.__mageDev;
+          dev.store.setState((state) => dev.reduceEvent(state, id, { kind: 'elicitation_request', request: req }));
+        }, { id: tabA, req: request });
+        await waitForDockReady(page, `[data-pane-tab-id="${tabA}"] [data-elicitation-dock="true"]`);
+        const tras = await medirPestanaDescuadrada(page);
+        await page.evaluate((id) => {
+          const dev = window.__mageDev;
+          dev.store.setState((state) => dev.reduceEvent(state, id, { kind: 'elicitation_resolved', requestId: 'vg-foco-elic', action: 'cancel' }));
+        }, tabA);
+        await page.locator('[data-elicitation-dock="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const ok = !pestanaDescuadrada(tras) && antes.activa === tras.activa;
+        return { ok, detail: JSON.stringify({ tabA, tabB, antes, tras }) };
+      } finally {
+        await restoreTabsState(page, previo);
+      }
+    },
+  },
+  {
+    // Sin Enter: la letra sin enviar dice en qué panel está escribiendo de verdad el usuario.
+    name: 'Pestañas: Ctrl+Tab en un split deja el teclado en la pestaña marcada',
+    async run(page) {
+      const previo = await snapshotTabsState(page);
+      try {
+        const { tabA, tabB } = await openFocusedSplitPair(page);
+        await page.keyboard.press('Control+Shift+Tab');
+        await page.waitForTimeout(CONFIG.settleMs);
+        const tras = await medirPestanaDescuadrada(page);
+        await page.keyboard.type('q');
+        await page.waitForTimeout(CONFIG.settleMs);
+        const textos = { a: await editorTextOf(page, tabA), b: await editorTextOf(page, tabB) };
+        const marcada = tras.marcada === tabA ? textos.a : textos.b;
+        const otra = tras.marcada === tabA ? textos.b : textos.a;
+        const ok = !pestanaDescuadrada(tras) && marcada === 'q' && otra !== 'q';
+        return { ok, detail: JSON.stringify({ tabA, tabB, tras, textos }) };
+      } finally {
+        await restoreTabsState(page, previo);
       }
     },
   },
@@ -14948,6 +15533,151 @@ async function restoreSidebar(page, previo) {
   await page.waitForTimeout(CONFIG.settleMs);
 }
 
+// Los paneles `defaultHidden` no están en ninguna barra en un perfil nuevo: una comprobación que mide uno
+// los coloca primero (revelar abre el último de su zona; se cierra para que el icono quede presente y la zona
+// como las comprobaciones esperan: «clic abre, clic cierra»). El layout lo restaura `runGuiCheck` al terminar.
+async function revealHiddenPanels(page, ids) {
+  await page.evaluate((lista) => {
+    const store = window.__mageDev.panelStore;
+    for (const id of lista) store.getState().revealPanelById(id);
+    for (const id of lista) if (store.getState().isPanelOpen(id)) store.getState().togglePanelById(id);
+  }, ids);
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// Abre una temporal con trabajo vivo sembrado y devuelve su id y el localizador de su ✕.
+async function openWorkingTemporaryTab(page, sessionId) {
+  await openTemporaryConversation(page);
+  const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+  const reseed = () => seedWorkingState(page, tabId, sessionId);
+  await reseed();
+  return { tabId, reseed, tab: page.locator(`[role="tab"][data-tab-id="${tabId}"]`), cross: page.locator(`[role="tab"][data-tab-id="${tabId}"] button`).first() };
+}
+
+// Con una sesión inventada, la app acaba pasando la pestaña a `error` a los pocos segundos: se vuelve a sembrar
+// justo antes de cada pulsación para que el trabajo siga «vivo» en el momento de cerrar.
+function seedWorkingState(page, tabId, sessionId) {
+  return page.evaluate(({ id, session }) => {
+    window.__mageDev.store.setState((s) => ({ sessionIdByChat: { ...s.sessionIdByChat, [id]: session }, statusByChat: { ...s.statusByChat, [id]: 'streaming' } }));
+  }, { id: tabId, session: sessionId });
+}
+
+// El cuerpo de la comprobación «cerrar una pestaña que trabaja»: diálogo, Cancelar, recordar y sin diálogo.
+async function medirCerrarPestanaQueTrabaja(page) {
+  const dialog = page.locator('[data-close-tab-dialog]');
+  const first = await openWorkingTemporaryTab(page, 'vg-close-s');
+  await page.evaluate(() => window.__mageDev.store.getState().setRunningTabClose('ask'));
+  await first.reseed();
+  await first.cross.click();
+  await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  const tabSurvivesEscape = (await first.tab.count()) === 1;
+  await first.reseed();
+  await first.cross.click();
+  await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await dialog.locator('input[type="checkbox"]').check();
+  await dialog.locator('[data-close-tab-action="background"]').click();
+  await first.tab.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  const stored = await page.evaluate(() => window.__mageDev.store.getState().settings.runningTabClose);
+  const second = await openWorkingTemporaryTab(page, 'vg-close-s2');
+  await second.reseed();
+  await second.cross.click();
+  await second.tab.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  const dialogAfterRemembered = await dialog.count();
+  const ok = tabSurvivesEscape && stored === 'background' && dialogAfterRemembered === 0;
+  return { ok, detail: JSON.stringify({ tabSurvivesEscape, stored, dialogAfterRemembered }) };
+}
+
+// Pestaña descuadrada. `marcada`: la seleccionada que la barra NO atenúa; `pintada`: el panel con el marco de enfocado
+// (o el único); `foco`: el panel con el foco del DOM; `subrayadas`: las seleccionadas con el subrayado visible.
+function medirPestanaDescuadrada(page) {
+  return page.evaluate(() => {
+    const s = window.__mageDev.store.getState();
+    const idDe = (el) => el?.getAttribute('data-tab-id') ?? null;
+    const seleccionadas = [...document.querySelectorAll('[role="tab"][aria-selected="true"]')];
+    const paneles = [...document.querySelectorAll('[data-pane-tab-id]')];
+    const enmarcado = paneles.find((el) => getComputedStyle(el).outlineStyle !== 'none') ?? (paneles.length === 1 ? paneles[0] : undefined);
+    const subrayada = (el) => {
+      const raya = el.querySelector(':scope > span[class~="h-[2px]"]');
+      return raya !== null && Number(getComputedStyle(raya).opacity) > 0.5;
+    };
+    return {
+      marcada: idDe(seleccionadas.find((el) => el.classList.contains('text-mg-text'))),
+      pintada: enmarcado?.getAttribute('data-pane-tab-id') ?? null,
+      activa: s.activeTabId,
+      cuenta: s.activeAccountId,
+      foco: document.activeElement?.closest('[data-pane-tab-id]')?.getAttribute('data-pane-tab-id') ?? null,
+      seleccionadas: seleccionadas.map(idDe),
+      subrayadas: seleccionadas.filter(subrayada).map(idDe),
+      paneles: paneles.length,
+    };
+  });
+}
+
+function pestanaDescuadrada(m) {
+  return m.marcada !== m.pintada || m.activa !== m.pintada;
+}
+
+function snapshotTabsState(page) {
+  return page.evaluate(() => {
+    const s = window.__mageDev.store.getState();
+    return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, activeAccountId: s.activeAccountId, draftByChat: s.draftByChat };
+  });
+}
+
+async function restoreTabsState(page, previo) {
+  await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// `window.mage` no se puede sustituir (no escribible ni configurable), así que `restoreWorkspace` no se puede alimentar
+// desde aquí: se pasa por el `restoreTabs` real un workspace guardado con la activa de una cuenta que ya no está (la
+// hoja ordena las demás distinto que `tabs`) y su resultado entra en el store igual que en `restoreWorkspace`.
+async function medirRestaurarActivaSinCuenta(page) {
+  await openTemporaryConversation(page);
+  await page.evaluate(() => {
+    const dev = window.__mageDev;
+    const s = dev.store.getState();
+    const base = s.tabs.find((t) => t.id === s.activeTabId);
+    const tab = (id, accountId) => ({ id, accountId, accountAlias: base.accountAlias, cwd: base.cwd, model: base.model, provider: base.provider, title: id });
+    const persisted = {
+      version: 1,
+      activeTabId: 'vg-desc-1',
+      tabs: [tab('vg-desc-2', base.accountId), tab('vg-desc-3', base.accountId), tab('vg-desc-1', 'vg-cuenta-que-no-existe')],
+      splitLayout: { kind: 'leaf', tabIds: ['vg-desc-3', 'vg-desc-1', 'vg-desc-2'], activeTabId: 'vg-desc-1' },
+    };
+    const { tabs, activeTabId, splitLayout } = dev.restoreTabs(persisted, new Set(s.accounts.map((a) => a.id)));
+    dev.store.setState({ tabs, activeTabId, splitLayout });
+  });
+  await page.waitForTimeout(CONFIG.settleMs);
+  const tras = await medirPestanaDescuadrada(page);
+  // Clic real en la pestaña que el store cree activa: si la barra no la marca, el clic tendría que arreglarlo.
+  const enBarra = page.locator(`[role="tab"][data-tab-id="${tras.activa}"]`);
+  if ((await enBarra.count()) !== 1) return { ok: false, detail: JSON.stringify({ tras, activaEnLaBarra: false, store: await page.evaluate(() => window.__mageDev.store.getState().splitLayout) }) };
+  await enBarra.click();
+  await page.waitForTimeout(CONFIG.settleMs);
+  const trasClic = await medirPestanaDescuadrada(page);
+  return { ok: !pestanaDescuadrada(tras) && !pestanaDescuadrada(trasClic), detail: JSON.stringify({ tras, trasClic }) };
+}
+
+// Dos temporales divididas: A sola a la izquierda, B a la derecha y enfocada con un clic real en su input.
+async function openFocusedSplitPair(page) {
+  await openTemporaryConversation(page);
+  const tabA = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+  await openTemporaryConversation(page);
+  const tabB = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+  await page.evaluate((a) => window.__mageDev.store.getState().movePaneTab(a, [], 'left'), tabA);
+  await page.waitForTimeout(CONFIG.settleMs);
+  await page.locator(`[data-pane-tab-id="${tabB}"] [data-prompt-editor="true"]`).click();
+  await page.waitForTimeout(CONFIG.settleMs);
+  return { tabA, tabB };
+}
+
+function editorTextOf(page, tabId) {
+  return page.evaluate((id) => document.querySelector(`[data-pane-tab-id="${id}"] [data-prompt-editor="true"]`)?.textContent ?? null, tabId);
+}
+
 async function openTemporaryConversation(page) {
   // CAMBIO DEL 2026-09-18: `Ctrl+N` ya NO abre el formulario de "Nueva conversacion" — abre la
   // conversacion directamente, en carpeta temporal y con los valores por defecto, que es lo que el
@@ -15127,6 +15857,60 @@ const REAL_ARTIFACT = {
   },
   url: 'https://claude.ai/code/artifact/477497ff-717a-4375-a39e-a47e383648a8',
 };
+
+// Pantalla «Artifacts»: siembra dos cuentas (una con un creado, otra con un compartido), la publicadora de cualquier
+// tarjeta (vg-cuenta-a) y su visibilidad (`owner`). Lo original queda en `window.__vgArtifactsOriginal`.
+async function sembrarArtifacts(page) {
+  await page.evaluate(() => {
+    const src = window.__mageDev.artifactsSource;
+    window.__vgArtifactsOriginal = { list: src.list, publisher: src.publisher, visibility: src.visibility };
+    const item = (accountId, id, rel, title, audience) => ({
+      accountId, id, kind: 'page', rel, title, openUrl: `https://claude.ai/artifact/${id}`, audience,
+      sortTime: Date.parse('2026-11-19T22:44:00Z'), external: false,
+    });
+    const page = (accountId, rel, items) => ({ ok: true, page: { accountId, rel, items, nextPageToken: null } });
+    src.list = async () => [
+      { accountId: 'vg-cuenta-a', mine: page('vg-cuenta-a', 'mine', [item('vg-cuenta-a', 'vgCreadoA', 'mine', 'vg-artifact-a', 'owner')]), shared: page('vg-cuenta-a', 'shared', []) },
+      { accountId: 'vg-cuenta-b', mine: page('vg-cuenta-b', 'mine', []), shared: page('vg-cuenta-b', 'shared', [item('vg-cuenta-b', 'vgCompartidoB', 'shared', 'vg-artifact-b', 'users')]) },
+    ];
+    src.publisher = async () => 'vg-cuenta-a';
+    src.visibility = async () => ({ audience: 'owner', openUrl: 'https://claude.ai/artifact/vgCreadoA' });
+  });
+}
+
+async function restaurarArtifacts(page) {
+  await page.evaluate(() => {
+    const original = window.__vgArtifactsOriginal;
+    if (original !== undefined) Object.assign(window.__mageDev.artifactsSource, original);
+    delete window.__vgArtifactsOriginal;
+    window.__mageDev.store.getState().closeArtifactsLibrary();
+  });
+  await page.locator('[data-artifacts-library]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+}
+
+// Abre la pantalla, mide sus filas (rel, título y cuenta de su sección) y el visor vacío, la captura y la cierra con
+// Escape (que la cierra de verdad: espera al desmontaje).
+async function medirPantallaArtifacts(page, runDir) {
+  await page.evaluate(() => window.__mageDev.store.getState().openArtifactsLibrary());
+  const filas = page.locator('[data-artifacts-library] [data-artifact-row]');
+  await filas.nth(1).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const medida = await page.evaluate(() => {
+    const raiz = document.querySelector('[data-artifacts-library]');
+    return {
+      filas: [...raiz.querySelectorAll('[data-artifact-row]')].map((fila) => ({
+        rel: fila.getAttribute('data-artifact-rel'),
+        titulo: fila.querySelector('span')?.textContent?.trim() ?? '',
+        cuenta: fila.closest('[data-artifacts-account]')?.getAttribute('data-artifacts-account') ?? null,
+      })),
+      etiquetasCuenta: [...raiz.querySelectorAll('[data-artifacts-account-label]')].map((n) => n.textContent?.trim() ?? ''),
+      visorVacio: raiz.querySelector('[data-artifacts-viewer]')?.getAttribute('data-artifacts-viewer') === 'empty',
+    };
+  });
+  await page.locator('[data-artifacts-library]').screenshot({ path: path.join(runDir, 'artifacts-pantalla-sembrada.png') });
+  await page.keyboard.press('Escape');
+  await page.locator('[data-artifacts-library]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  return { ...medida, cerrada: true };
+}
 
 // Bloque de tool que YA publico un artifact, con la forma que produce el reducer.
 function artifactBlock(id = 'a1') {
@@ -15649,6 +16433,136 @@ async function startBrowserPageServer() {
   };
 }
 
+// Dos páginas locales (`/a` y `/b`) sin caché que cuentan sus peticiones: una recarga se ve como una petición más.
+async function startCountingPageServer() {
+  const { createServer } = await import('node:http');
+  const hits = new Map();
+  const server = createServer((req, res) => {
+    if (req.url !== '/a' && req.url !== '/b') {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    hits.set(req.url, (hits.get(req.url) ?? 0) + 1);
+    const name = req.url.slice(1);
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Página ${name}</title></head><body><h1>Página ${name}</h1></body></html>`);
+  });
+  const port = await listenLoopback(server);
+  return {
+    url: (route) => `http://127.0.0.1:${port}${route}`,
+    hits: (route) => hits.get(route) ?? 0,
+    close: () => new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }),
+  };
+}
+
+// Espera a que el estado del navegador de la sesión (el que manda main) tenga esos valores y no esté cargando.
+// `urlEndsWith` compara el final de la URL; el resto de claves, el campo del mismo nombre. false si no llega a tiempo.
+async function waitBrowserState(page, sessionId, expected) {
+  return page.waitForFunction(({ sid, expected }) => {
+    const state = window.__mageBrowserDev.getState().states[sid];
+    if (state === undefined || state.loading) return false;
+    return Object.entries(expected).every(([key, value]) => (key === 'urlEndsWith' ? state.url.endsWith(value) : state[key] === value));
+  }, { sid: sessionId, expected }, { polling: 100, timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+}
+
+// Abre /a y /b por la barra de direcciones, vuelve Atrás y mide que Adelante se habilita y lleva a /b; luego zoom + dos veces.
+async function measureBrowserForwardAndZoom(page, sessionId, pages) {
+  const address = page.locator('[data-browser-address]');
+  const go = async (route) => {
+    await address.fill(pages.url(route));
+    await address.press('Enter');
+    return waitBrowserState(page, sessionId, { urlEndsWith: route });
+  };
+  const medido = { abreA: await go('/a'), abreB: await go('/b') };
+  await page.locator('[data-browser-back]').click();
+  medido.atras = await waitBrowserState(page, sessionId, { urlEndsWith: '/a', canGoForward: true });
+  medido.adelanteHabilitado = await page.locator('[data-browser-forward]').isEnabled();
+  await page.locator('[data-browser-forward]').click();
+  medido.adelanteLlevaAB = await waitBrowserState(page, sessionId, { urlEndsWith: '/b' });
+  await page.locator('[data-browser-zoom-in]').click();
+  medido.zoom110 = await waitBrowserState(page, sessionId, { zoomPercent: 110 });
+  await page.locator('[data-browser-zoom-in]').click();
+  medido.zoom125 = await waitBrowserState(page, sessionId, { zoomPercent: 125 });
+  medido.etiquetaZoom125 = (await page.locator('[data-browser-zoom-reset]').getAttribute('data-browser-zoom-reset')) === '125';
+  return medido;
+}
+
+// La ventana propia del navegador de esa sesión (el renderer con `?browserWindow=`), o null si no aparece.
+async function browserPopoutPageOf(page, sessionId) {
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  while (Date.now() < deadline) {
+    const found = page.context().browser().contexts().flatMap((context) => context.pages()).find((candidate) => candidate.url().includes(`browserWindow=${encodeURIComponent(sessionId)}`));
+    if (found !== undefined) {
+      await found.waitForLoadState('domcontentloaded');
+      return found;
+    }
+    await page.waitForTimeout(200);
+  }
+  return null;
+}
+
+// Lo que tarda la vista en llegar a su ventana (el primer hueco que esta informa) o en volver al panel.
+const BROWSER_POPOUT_SETTLE_MS = 1000;
+
+// Saca el navegador a su ventana propia y lo trae: el panel enseña «Traer aquí», la URL sigue en /b, la página no se
+// vuelve a pedir ni pasa por `loading`, y al traerla la vista vuelve al panel y la ventana se cierra.
+async function measureBrowserPopout(page, sessionId, pages, runDir) {
+  const peticionesB = pages.hits('/b');
+  await page.evaluate((sid) => {
+    window.__vgLoadingSeen = false;
+    window.__vgLoadingOff = window.__mageBrowserDev.subscribe((s) => { if (s.states[sid]?.loading === true) window.__vgLoadingSeen = true; });
+  }, sessionId);
+  // La propia página de la vista, si CDP la lista: una marca en su `window` sobrevive solo si no se recarga, y su ancho
+  // dice en qué hueco está (el del panel o el de la ventana propia).
+  const vista = page.context().browser().contexts().flatMap((context) => context.pages()).find((candidate) => candidate.url() === pages.url('/b')) ?? null;
+  const anchoEnPanel = vista === null ? null : await vista.evaluate(() => { window.__vgMark = 42; return window.innerWidth; });
+  try {
+    const medido = await popOutAndMeasure(page, sessionId, runDir);
+    medido.vistaExpuesta = vista !== null;
+    medido.anchoEnPanel = anchoEnPanel;
+    medido.vistaFuera = vista === null ? null : await vista.evaluate(() => ({ marca: window.__vgMark ?? null, ancho: window.innerWidth }));
+    medido.recargasAlSacar = pages.hits('/b') - peticionesB;
+    await page.locator('[data-browser-pop-in]').click();
+    medido.vuelveAlPanel = await page.locator('[data-browser-host]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+    medido.dentroEnEstado = await waitBrowserState(page, sessionId, { poppedOut: false, urlEndsWith: '/b' });
+    medido.ventanaCerrada = medido.ventana === null ? false : await medido.ventana.waitForEvent('close', { timeout: CONFIG.actionTimeoutMs }).then(() => true, () => medido.ventana.isClosed());
+    await page.waitForTimeout(BROWSER_POPOUT_SETTLE_MS);
+    medido.recargasTotal = pages.hits('/b') - peticionesB;
+    medido.pasoPorLoading = await page.evaluate(() => window.__vgLoadingSeen);
+    medido.vistaDentro = vista === null ? null : await vista.evaluate(() => ({ marca: window.__vgMark ?? null, ancho: window.innerWidth }));
+    delete medido.ventana;
+    // Sin la página expuesta por CDP, mandan las peticiones al servidor y el `loading` del estado.
+    const vistaConservada = vista === null || (medido.vistaFuera.marca === 42 && medido.vistaDentro.marca === 42
+      && medido.vistaFuera.ancho > anchoEnPanel && medido.vistaDentro.ancho === anchoEnPanel);
+    const ok = medido.panelTraerAqui && medido.ventanaAbierta && medido.tituloVentana.includes(' · ') && medido.fueraEnEstado
+      && medido.recargasAlSacar === 0 && medido.vuelveAlPanel && medido.dentroEnEstado && medido.ventanaCerrada
+      && medido.recargasTotal === 0 && !medido.pasoPorLoading && vistaConservada;
+    return { ok, ...medido };
+  } finally {
+    await page.evaluate(() => { window.__vgLoadingOff?.(); delete window.__vgLoadingOff; delete window.__vgLoadingSeen; });
+  }
+}
+
+async function popOutAndMeasure(page, sessionId, runDir) {
+  await page.locator('[data-browser-pop-out]').click();
+  const medido = {};
+  medido.panelTraerAqui = await page.locator('[data-browser-pop-in]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+  medido.ventana = await browserPopoutPageOf(page, sessionId);
+  medido.ventanaAbierta = medido.ventana !== null;
+  medido.tituloVentana = '';
+  if (medido.ventana !== null) {
+    await medido.ventana.locator('[data-browser-host]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+    await medido.ventana.waitForFunction(() => document.title.includes(' · '), null, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+    medido.tituloVentana = await medido.ventana.title();
+    await medido.ventana.screenshot({ path: path.join(runDir, 'navegador-ventana-propia.png') });
+  }
+  medido.fueraEnEstado = await waitBrowserState(page, sessionId, { poppedOut: true, urlEndsWith: '/b' });
+  medido.urlFuera = await page.evaluate((sid) => window.__mageBrowserDev.getState().states[sid]?.url ?? null, sessionId);
+  await page.waitForTimeout(BROWSER_POPOUT_SETTLE_MS);
+  return medido;
+}
+
 // Lo que va antes del `{url}` de la cabecera de la captura de la pluma, en cada idioma del catálogo.
 function browserPenHeaderPrefixes() {
   return ['es', 'en'].map((locale) => {
@@ -15837,10 +16751,9 @@ function helloWithWrongToken(userDataDir) {
 
 const HOST_TAB_MODEL = 'gpt-6-luna';
 
-// Cliente del host con el enlace verificado de la terminal (`hostLink.mjs`): reto HMAC, `hello` como `terminal` y los
-// eventos del host recogidos en `events`. Nunca guarda ni imprime el token.
-async function connectHostTabClient(userDataDir) {
-  const deps = {
+// E/S real del enlace verificado de la terminal (`hostLink.mjs`).
+function hostLinkDeps() {
+  return {
     platform: process.platform,
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     lstat: fs.lstatSync,
@@ -15852,7 +16765,105 @@ async function connectHostTabClient(userDataDir) {
     }),
     randomBytes,
   };
-  const { rpc } = await connectVerified({ userDataDir, clientVersion: 'verify-host-tab', deps });
+}
+
+// Cliente de prueba del host como `terminal`, con el token de un cliente emparejado o sin él. Nunca imprime tokens.
+function connectProbeClient(userDataDir, clientToken) {
+  return connectVerified({ userDataDir, clientVersion: 'verify-pair', deps: hostLinkDeps(), clientToken });
+}
+
+// Host 1.8: escribir exige estar emparejado. Pide `host.pair` y pulsa «Autorizar» en el diálogo de la ventana (un clic);
+// la misma conexión pasa a emparejada. Espera al desmontaje del diálogo (no a un tiempo fijo).
+async function pairByClick(page, rpc, clientName) {
+  const pairing = rpc.call('host.pair', { clientName, clientKind: 'terminal' });
+  const approve = page.locator('[data-dialog-action="host-pair-approve"]');
+  await approve.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await approve.click();
+  const paired = await pairing;
+  await page.locator('[data-host-pair-dialog]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  return paired;
+}
+
+const HOST_NOT_PAIRED = -32013;
+const HOST_UNKNOWN_SESSION = -32004;
+// La escritura de menos efecto: cambiar el modelo de una sesión que no existe.
+const HARMLESS_WRITE = { sessionId: 'verify-pair-no-existe', key: 'model', value: 'x' };
+const rpcOutcome = (promise) => promise.then((result) => ({ result }), (err) => ({ code: err.code ?? null, message: err.message }));
+
+// Pasos del emparejamiento; cada medida por nombre y sin tokens.
+async function measureHostPairing(page, { connect, runDir }) {
+  const medido = {};
+  const first = await connect(undefined);
+  medido.accesoArranque = first.hello.access;
+  medido.lista = Array.isArray((await first.rpc.call('sessions.list')).sessions);
+  medido.crear = await rpcOutcome(first.rpc.call('session.create', { commandId: randomUUID(), provider: 'claude', accountId: 'x', cwd: path.resolve('x'), trust: { acknowledged: true } }));
+  const pairing = await measurePairDialog(page, first.rpc, runDir);
+  Object.assign(medido, pairing.medido);
+  medido.escrituraEmparejada = await rpcOutcome(first.rpc.call('session.setOption', HARMLESS_WRITE));
+  const second = await connect(pairing.clientToken);
+  medido.accesoConToken = second.hello.access;
+  medido.cortadas = await revokeInSettings(page, pairing.clientId, [first.socket, second.socket]);
+  const third = await connect(pairing.clientToken);
+  medido.accesoTrasRevocar = third.hello.access;
+  medido.escrituraRevocada = await rpcOutcome(third.rpc.call('session.setOption', HARMLESS_WRITE));
+  return medido;
+}
+
+// El diálogo: uno solo, con el nombre del cliente, el foco en «Rechazar»; «Autorizar» devuelve un token.
+async function measurePairDialog(page, rpc, runDir) {
+  const pairing = rpc.call('host.pair', { clientName: 'verify-gui', clientKind: 'terminal' });
+  const dialog = page.locator('[data-host-pair-dialog]');
+  await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  // El foco inicial lo pone un efecto tras montar: se espera a él, y si no llega se mide lo que haya.
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-dialog-action') === 'host-pair-reject', null, { timeout: CONFIG.actionTimeoutMs })
+    .catch((err) => console.warn(`[verify] el foco no llegó a «Rechazar»: ${err.message}`));
+  const medido = {
+    dialogos: await dialog.count(),
+    titulo: (await page.locator('#host-pair-title').textContent()) ?? '',
+    foco: await page.evaluate(() => document.activeElement?.getAttribute('data-dialog-action') ?? null),
+  };
+  // La captura, con la animación de entrada acabada (opacidad 1 en el panel), no a mitad.
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-host-pair-dialog]')).opacity === '1', null, { timeout: CONFIG.actionTimeoutMs });
+  await page.screenshot({ path: path.join(runDir, 'host-pair.png') });
+  await page.locator('[data-dialog-action="host-pair-approve"]').click();
+  const { clientId, clientToken } = await pairing;
+  await dialog.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  medido.tokenValido = /^[0-9a-f]{64}$/.test(clientToken);
+  return { medido, clientId, clientToken };
+}
+
+// «Revocar» en Configuración › Hooks y permisos. Abre y cierra su diálogo. Devuelve cuántas conexiones se cortaron.
+async function revokeInSettings(page, clientId, sockets) {
+  const closed = sockets.map((socket) => new Promise((resolve) => socket.once('close', resolve)));
+  await page.keyboard.press('Control+Comma');
+  await page.locator(MODAL).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await openSection(page, uiRegExp('settings.sections.hooksPermissions.nav'));
+  const row = page.locator(`[data-host-client="${clientId}"]`);
+  await row.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await row.scrollIntoViewIfNeeded();
+  await page.locator(`[data-host-client-revoke="${clientId}"]`).click();
+  await row.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  const cortadas = await Promise.race([
+    Promise.all(closed).then(() => sockets.length),
+    new Promise((resolve) => setTimeout(() => resolve(0), CONFIG.actionTimeoutMs)),
+  ]);
+  await closeDialog(page);
+  return cortadas;
+}
+
+function hostPairingPassed(m) {
+  return m.accesoArranque === 'read' && m.lista && m.crear.code === HOST_NOT_PAIRED && m.dialogos === 1
+    && m.titulo.includes('verify-gui') && m.foco === 'host-pair-reject' && m.tokenValido
+    && m.escrituraEmparejada.code === HOST_UNKNOWN_SESSION && m.accesoConToken === 'full' && m.cortadas === 2
+    && m.accesoTrasRevocar === 'read' && m.escrituraRevocada.code === HOST_NOT_PAIRED;
+}
+
+// Cliente del host con el enlace verificado de la terminal (`hostLink.mjs`): reto HMAC, `hello` como `terminal`,
+// emparejado con un clic en la ventana (host 1.8) y los eventos del host recogidos en `events`. Nunca guarda ni imprime
+// el token.
+async function connectHostTabClient(page, userDataDir) {
+  const { rpc } = await connectVerified({ userDataDir, clientVersion: 'verify-host-tab', deps: hostLinkDeps() });
+  await pairByClick(page, rpc, 'verify-host-tab');
   const events = [];
   rpc.onNotification((method, params) => { if (method === 'event') events.push(params.event); });
   const call = (method, params) => Promise.race([
@@ -15891,7 +16902,7 @@ async function measureHostTab(instance, { profile, codexHome, runDir, setClient 
   const cwd = await page.evaluate(() => window.mage.getScratchDir());
   await page.evaluate((folder) => window.__mageDev.store.getState().answerTrustRequest(folder, true), cwd);
   const activaAntes = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
-  const client = await connectHostTabClient(profile);
+  const client = await connectHostTabClient(page, profile);
   setClient(client);
   const created = await client.call('session.create', { commandId: randomUUID(), provider: 'codex', accountId: codexHome, cwd, model: HOST_TAB_MODEL, trust: { acknowledged: true } });
   const { sessionId } = created;
@@ -16274,11 +17285,13 @@ function launchApp(userDataDir, extraEnv = {}) {
   // hay ni shell ni .cmd, y ademas funciona igual en los tres SO.
   const args = [
     path.join(repoRoot, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js'),
-    // `--prod` (solo con --perf-baseline): el build ya hecho (`pnpm build`), con React de produccion.
-    PROD_BUILD ? 'preview' : 'dev',
+    // `--prod` (solo con --perf-baseline o --perf-review): el build ya hecho (`pnpm build`), con React de produccion. Sin
+    // `--skipBuild`, `preview` vuelve a construir y «desde el lanzamiento» incluiria esa reconstruccion.
+    ...(PROD_BUILD ? ['preview', '--skipBuild'] : ['dev']),
     '--',
     `--remote-debugging-port=${CONFIG.port}`,
     `--user-data-dir=${userDataDir}`,
+    ...(PERF_REVIEW ? [`--inspect=127.0.0.1:${MAIN_INSPECT_PORT}`] : []),
   ];
   const child = spawn(process.execPath, args, {
     cwd: repoRoot,
@@ -16457,6 +17470,11 @@ async function main() {
   const longTranscript = perfCwd === null ? null : writeLongTranscript(userDataDir, { cwd: perfCwd, blocks: LONG_TRANSCRIPT_BLOCKS });
 
   console.log(`[verify:gui] perfil aislado: ${userDataDir}`);
+  // --perf-review: 300 conversaciones en la cuenta principal del HOME de prueba, ANTES de arrancar (nunca en el HOME real).
+  if (PERF_REVIEW && HARNESS_HOME === os.homedir()) throw new Error('--perf-review necesita el HOME de prueba (sin --turn=real)');
+  const perfHistory = PERF_REVIEW ? seedPerfHistory(path.join(HARNESS_HOME, '.claude'), { nowMs: Date.now() }) : null;
+  if (perfHistory !== null) seedPerfConversationIndex(path.join(userDataDir, 'conversation-index.json'), path.join(HARNESS_HOME, '.claude'), perfHistory.files);
+  const spawnAtMs = Date.now();
   const { child, log } = launchApp(userDataDir);
   let browser = null;
   const results = [];
@@ -16501,7 +17519,19 @@ async function main() {
       results.push({ name: 'Baseline de interfaz #40', ok: true, detail: redactUserData('medido', accountAliases) });
       return;
     }
-    const baselinePanels = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
+    // --perf-review: SOLO mide y deja `perf-review.json`; no corre ninguna comprobación.
+    if (PERF_REVIEW) {
+      const medido = await runPerfReview(page, {
+        openConversation: openTemporaryConversation, openRuntimeTab, startFake: startFakeOpenAiServer, userDataDir,
+        accountDir: path.join(HARNESS_HOME, '.claude'), history: perfHistory, devBridge: !PROD_BUILD,
+        inspectPort: MAIN_INSPECT_PORT, spawnAtMs, mountedMark: WORKBENCH_MOUNTED_MARK,
+      });
+      fs.writeFileSync(path.join(runDir, 'perf-review.json'), JSON.stringify(medido, null, 2), 'utf-8');
+      console.log(`[verify:gui] revisión de rendimiento: ${path.join(runDir, 'perf-review.json')}`);
+      results.push({ name: 'Revisión de rendimiento', ok: true, detail: 'medido' });
+      return;
+    }
+    const baselinePanels =await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
     if (process.argv.includes('--initial-close-prompt')) {
       await page.evaluate(() => window.mage.closeWindow());
       await page.locator(CLOSE_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });

@@ -38,6 +38,10 @@ const round = (deltas, finish) => ({ deltas, finish });
 
 // Cada escenario: `reply(body) -> round`, `usage` (manda trozo de uso si se pide) y opcionales `reject`
 // (respuesta de error) y `delay`.
+// Respuesta LARGA en Markdown (unos 6.600 caracteres: ~1.100 trozos de 6): la usa `verify-gui.mjs --perf-review`
+// para medir un turno en streaming (frames, tareas largas y volumen de IPC).
+const LONG_MARKDOWN_SECTIONS = 60;
+const LONG_MARKDOWN = Array.from({ length: LONG_MARKDOWN_SECTIONS }, (_, i) => `## Sección ${i + 1}\n\nPárrafo con **negrita**, \`código\` y una lista:\n\n- uno\n- dos\n\n\`\`\`ts\nexport const valor${i} = ${i};\n\`\`\`\n\n`).join('');
 const SCENARIOS = {
   // Texto fijo en una vuelta: el turno minimo de `verify:gui`.
   eco: { reply: () => round(text(FAKE_OPENAI_REPLY), 'stop'), usage: true },
@@ -147,6 +151,8 @@ const SCENARIOS = {
   },
   // Respuesta larga en un modelo de ventana pequeña (el catalogo declara FAKE_SMALL_CONTEXT).
   'contexto-2048': { reply: () => round([{ role: 'assistant', content: 'x'.repeat(1200) }], 'stop'), usage: true },
+  // Turno largo en streaming para `verify:gui --perf-review`.
+  largo: { reply: () => round(text(LONG_MARKDOWN), 'stop'), usage: true },
 };
 
 export const FAKE_SCENARIOS = Object.keys(SCENARIOS);

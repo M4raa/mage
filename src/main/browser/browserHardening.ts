@@ -23,16 +23,35 @@ export function hardenSession(session: Session, files: FileAccess | null, serveF
   });
 }
 
-/** Bloquea ventanas nuevas y navegaciones/redirecciones no permitidas. */
-export function hardenContents(contents: WebContents, files: FileAccess | null): void {
+/** Recibe un enlace http(s) que la página quiere abrir fuera (el visor de artifacts lo manda al navegador del sistema). */
+export type ExternalLinkHandler = (url: string) => void;
+
+const EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:']);
+
+function isExternalLink(url: string): boolean {
+  return URL.canParse(url) && EXTERNAL_PROTOCOLS.has(new URL(url).protocol);
+}
+
+/**
+ * Bloquea ventanas nuevas y navegaciones/redirecciones no permitidas. Con `onExternalLink` (el visor de artifacts),
+ * un clic hacia una página http(s) —en la misma pestaña o con `target=_blank`— no navega aquí: se le pasa a él.
+ */
+export function hardenContents(contents: WebContents, files: FileAccess | null, onExternalLink?: ExternalLinkHandler): void {
   // `window.open` y los enlaces `target=_blank` se deniegan SIEMPRE, aunque la URL sea http:
   // el navegador aislado nunca abre ventanas; el agente navega con `navigate`.
-  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  contents.setWindowOpenHandler(({ url }) => {
+    if (onExternalLink !== undefined && isExternalLink(url)) onExternalLink(url);
+    return { action: 'deny' };
+  });
 
   const blockDisallowed = (details: { url: string; preventDefault: () => void }): void => {
     if (!isAllowedNavigationUrl(details.url, files)) details.preventDefault();
   };
   // `loadURL` no dispara `will-navigate`; por eso `navigate()` valida antes con `normalizeNavigationUrl`.
-  contents.on('will-navigate', blockDisallowed);
+  contents.on('will-navigate', (details) => {
+    if (onExternalLink === undefined || !isExternalLink(details.url)) return blockDisallowed(details);
+    details.preventDefault();
+    onExternalLink(details.url);
+  });
   contents.on('will-redirect', blockDisallowed);
 }

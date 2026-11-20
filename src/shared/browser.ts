@@ -9,9 +9,33 @@ export interface BrowserEntryState {
   readonly url: string;
   readonly title: string;
   readonly canGoBack: boolean;
+  readonly canGoForward: boolean;
   readonly loading: boolean;
+  // El de la página (Chromium), en %; no el de la interfaz de Mage.
+  readonly zoomPercent: number;
   readonly control: BrowserControl;
   readonly lastAction: BrowserAgentAction | null;
+  // En su ventana propia: el panel enseña «Traer aquí» en vez de la página.
+  readonly poppedOut: boolean;
+}
+
+// -1 aleja, 0 vuelve a 100 %, 1 acerca.
+export type BrowserZoomStep = -1 | 0 | 1;
+
+export interface BrowserZoomKey {
+  readonly key: string;
+  readonly control: boolean;
+  readonly meta: boolean;
+  readonly alt: boolean;
+}
+
+const ZOOM_KEYS: ReadonlyMap<string, BrowserZoomStep> = new Map<string, BrowserZoomStep>([['+', 1], ['=', 1], ['-', -1], ['0', 0]]);
+
+// Ctrl/Cmd + `+`, `-` o `0` cambian el zoom del navegador. Lo usan la barra del panel (renderer) y la propia página
+// (main, `before-input-event`): con Alt no, para no comerse combinaciones del teclado (AltGr = Ctrl+Alt en Windows).
+export function zoomStepForKey(input: BrowserZoomKey): BrowserZoomStep | null {
+  if (!(input.control || input.meta) || input.alt) return null;
+  return ZOOM_KEYS.get(input.key) ?? null;
 }
 
 // DIP de la ventana.

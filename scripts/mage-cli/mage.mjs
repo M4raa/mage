@@ -15,6 +15,7 @@ import { runAccountAdd, runStop } from './commands.mjs';
 import { EarlyInput } from './earlyInput.mjs';
 import { connectVerified } from './hostLink.mjs';
 import { runMcpRelay } from './mcpRelay.mjs';
+import { clientTokenPath, ensurePaired, readClientToken, saveClientToken } from './pairing.mjs';
 import { ensureHost, headlessLaunch, isNoHostError } from './hostStarter.mjs';
 import { installMute } from './hiddenInput.mjs';
 import { createMessages, pickLanguage } from './messages.mjs';
@@ -82,7 +83,8 @@ function createContext(args) {
   const messages = createMessages(CLIENT_LANGUAGE);
   const defaultDir = defaultUserDataDir({ platform: process.platform, env: process.env, homedir: os.homedir() });
   const userDataDir = args.userDataDir ?? defaultDir;
-  const connect = () => connectVerified({ userDataDir, clientVersion: CLIENT_VERSION, deps: linkDeps, language: CLIENT_LANGUAGE });
+  const connect = ({ allowPairing = true } = {}) => connectPaired({ userDataDir, messages, allowPairing });
+  const isPaired = () => readClientToken(clientTokenPath(userDataDir, process.platform), linkDeps.readFile) !== undefined;
   const launch = () => {
     const plan = headlessLaunch({
       platform: process.platform, execPath: process.execPath, isElectron: process.versions.electron !== undefined,
@@ -90,18 +92,40 @@ function createContext(args) {
     });
     spawn(plan.command, plan.args, { env: plan.env, detached: true, stdio: 'ignore', windowsHide: true }).unref();
   };
-  return { messages, connect, launch };
+  return { messages, connect, launch, isPaired };
 }
 
-// Encuentra el host (o arranca Mage sin ventanas y lo cuenta); con `allowStart: false` solo conecta.
+// Se presenta con el token guardado de la terminal; si no lo hay (o se revocó), pide emparejar salvo `allowPairing: false`.
+async function connectPaired({ userDataDir, messages, allowPairing }) {
+  const tokenFile = clientTokenPath(userDataDir, process.platform);
+  const clientToken = readClientToken(tokenFile, linkDeps.readFile);
+  const link = await connectVerified({ userDataDir, clientVersion: CLIENT_VERSION, deps: linkDeps, language: CLIENT_LANGUAGE, clientToken });
+  const saveToken = (token) => saveClientToken(tokenFile, token, { writeFile: fs.writeFileSync, chmod: fs.chmodSync, platform: process.platform });
+  try {
+    return await ensurePaired({ link, allowPairing, saveToken, say: writeLine, messages });
+  } catch (error) {
+    link.socket.destroy();
+    throw error;
+  }
+}
+
+// Encuentra el host (o arranca Mage sin ventanas y lo cuenta); con `allowStart: false` solo conecta. Una terminal sin
+// emparejar no arranca Mage sin ventanas: ahí no habría dónde autorizarla, ni podría pararlo después.
 async function findHost(ctx, allowStart) {
   const { messages } = ctx;
-  const { link, started } = await ensureHost({
-    connect: ctx.connect, launch: ctx.launch, sleep, now: Date.now, allowStart,
-    onStarting: () => writeLine(messages.startingHeadless()),
-  });
-  if (started) writeLine(messages.startedHeadless());
-  return link;
+  const canStart = allowStart && ctx.isPaired();
+  let found;
+  try {
+    found = await ensureHost({
+      connect: ctx.connect, launch: ctx.launch, sleep, now: Date.now, allowStart: canStart,
+      onStarting: () => writeLine(messages.startingHeadless()),
+    });
+  } catch (error) {
+    if (allowStart && !canStart && isNoHostError(error)) throw new Error(messages.pairingNeedsWindow(), { cause: error });
+    throw error;
+  }
+  if (found.started) writeLine(messages.startedHeadless());
+  return found.link;
 }
 
 async function runChat(args, ctx) {
@@ -123,7 +147,8 @@ async function runChat(args, ctx) {
   let controller;
   const watchSocket = (current) => current.socket.once('close', () => guardPromise(controller.onDisconnected()));
   const reconnect = async () => {
-    const next = await reconnectWithRetries({ connect, sleep, onAttempt: (n, ms) => writeLine(messages.retrying(n, ms)) });
+    // Al reconectar no se pide emparejar: si se revocó, la terminal lo dice y sale.
+    const next = await reconnectWithRetries({ connect: () => connect({ allowPairing: false }), sleep, onAttempt: (n, ms) => writeLine(messages.retrying(n, ms)) });
     watchSocket(next);
     return next;
   };

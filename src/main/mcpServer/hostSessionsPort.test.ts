@@ -14,14 +14,19 @@ import type { ProviderModel } from '@shared/providers';
 import type { SessionListener } from '../coordination/sessionCoordinator';
 import { TrustRequiredError, UnknownAccountError } from '../host/hostErrors';
 import type { SessionSettings } from './delegatedSettings';
-import type { DelegatedSession, DelegationView } from './delegationLog';
-import { CONVERSATION_ID_TIMEOUT_MS, ExternalSessionsPort, HostSessionsPort, NO_PROJECT_ID } from './hostSessionsPort';
+import type { DelegatedRelaunch, DelegatedSession, DelegationView } from './delegationLog';
+import type { HostCreateRequest } from '../host/hostProtocol';
+import { CONVERSATION_ID_TIMEOUT_MS, ExternalSessionsPort, HostSessionsPort, NO_PROJECT_ID, NOT_LAUNCHED_TEXT } from './hostSessionsPort';
 import type { HostSessionsPortDeps } from './hostSessionsPort';
 import { MageToolHandlers } from './handlers';
 import { MemoryIdempotencyStore } from './idempotencyStore';
-import { MagePolicyError } from './errors';
+import { MagePolicyError, MageValidationError } from './errors';
 import { snapshotScope } from './scope';
 import type { CreateSessionCommand } from './sessionsPort';
+import type { ConversationPrefs, DelegationRecord } from '@shared/conversationIndex';
+import type { CreatorFacts } from './launchCard';
+import { PendingLaunches } from './pendingLaunches';
+import { sessionResultMessage } from '@shared/systemWrappers';
 
 const CWD = resolve('/work/proj');
 const FAKE_CODEX = fileURLToPath(new URL('../../../scripts/fake-codex-app-server.mjs', import.meta.url));
@@ -45,6 +50,7 @@ const view = (overrides: Partial<DelegationView> & { child?: DelegatedSession } 
 function setup(options: {
   views?: DelegationView[]; snapshot?: ConversationSnapshot; launch?: HostSessionsPortDeps['launch']; accounts?: HostSessionsPortDeps['accounts'];
   log?: Partial<HostSessionsPortDeps['log']>; creator?: SessionSettings | null; catalog?: readonly ProviderModel[];
+  facts?: CreatorFacts | null; pending?: PendingLaunches; index?: ReturnType<typeof fakeIndex>; ownerAlive?: boolean; usage?: HostSessionsPortDeps['usage'];
 } = {}) {
   const views = options.views ?? [view()];
   const listeners: SessionListener[] = [];
@@ -55,13 +61,14 @@ function setup(options: {
   const deps = {
     caller: { sessionId: 'caller-s', conversationId: 'caller-c', accountId: 'acc1' },
     log: {
-      watch: vi.fn(), recordInstruction: vi.fn(), messagesAfter: vi.fn(() => []), readMessages: vi.fn(() => []),
+      watch: vi.fn(), reopen: vi.fn(), recordInstruction: vi.fn(), messagesAfter: vi.fn(() => []), readMessages: vi.fn(() => []),
       get: (id: string) => views.find((v) => v.child.conversationId === id) ?? null, list: () => views,
       recordQuestion: vi.fn((): 'recorded' | 'creator_closed' => 'recorded'), settleQuestion: vi.fn(() => false),
       ...options.log,
     },
-    index: { recordDelegation: vi.fn() },
+    index: options.index ?? fakeIndex(),
     coordinator: {
+      ownerOf: vi.fn(() => (options.ownerAlive === false ? undefined : 1)),
       subscribe: vi.fn((_id: string, listener: SessionListener) => { listeners.push(listener); return { snapshot: options.snapshot ?? snap(null), unsubscribe: vi.fn() }; }),
       snapshot: vi.fn(() => options.snapshot ?? snap('child-c')),
       send: vi.fn((): SendReceipt => ({ status: 'accepted', commandId: REQUEST })),
@@ -76,14 +83,109 @@ function setup(options: {
     creatorSettings: vi.fn(() => options.creator ?? null),
     modelCatalog: vi.fn(() => options.catalog ?? []),
     setPermissionMode: vi.fn(),
+    creatorFacts: vi.fn(() => options.facts ?? null),
+    pending: options.pending ?? new PendingLaunches(),
+    newId: vi.fn(() => 'pend-1'),
+    usage: options.usage ?? { accounts: () => [], read: vi.fn(async () => null) },
+    setResumeOnReset: vi.fn(),
+    closer: { register: vi.fn(), closeNow: vi.fn() },
   };
   return { port: new HostSessionsPort(deps), deps, listeners, announced, answers, timers, cancelTimer };
+}
+// Índice en memoria: una conversación con preferencias guardadas por la tarjeta no tiene sesión nativa; las demás, sí.
+function fakeIndex() {
+  const records = new Map<string, DelegationRecord>();
+  const prefs = new Map<string, ConversationPrefs>();
+  return {
+    recordDelegation: vi.fn((id: string, record: DelegationRecord) => { records.set(id, record); }),
+    delegationOf: (id: string): DelegationRecord => records.get(id) ?? { createdBy: null, creatorChain: [] },
+    nativeRefOf: (id: string) => (prefs.has(id) ? null : { provider: 'claude', accountDir: 'acc1', nativeId: id }),
+    loadPrefs: (id: string) => prefs.get(id) ?? null,
+    savePrefs: vi.fn((id: string, value: ConversationPrefs) => { prefs.set(id, { ...prefs.get(id), ...value }); }),
+  };
 }
 const command = (overrides: Partial<CreateSessionCommand> = {}): CreateSessionCommand => ({
   target: { projectId: 'p1', accountId: 'acc1', provider: 'claude', cwd: CWD }, prompt: 'Haz algo\nsegunda línea', requestId: REQUEST,
   createdBy: { conversationId: 'caller-c', requestId: REQUEST, at: AT }, creatorChain: ['caller-c'], ...overrides,
 });
 const sendInput = (mode: 'direct' | 'queue' = 'queue') => ({ requestId: REQUEST, conversationId: 'child-c', text: 'sí', mode });
+
+describe('HostSessionsPort.getUsage', () => {
+  const info = (fiveHour: number) => ({ fiveHour: { utilization: fiveHour, resetsAt: Date.UTC(2026, 10, 19, 15) }, sevenDay: { utilization: 3, resetsAt: null }, limits: [], apiCreditsMinor: null, fetchedAt: 0 });
+  const accounts = [
+    { id: 'acc1', provider: 'claude', name: '.claude', billing: 'subscription' as const },
+    { id: 'api1', provider: 'claude', name: 'api', billing: 'api-key' as const },
+    { id: 'acc2', provider: 'codex', name: '.codex', billing: 'subscription' as const },
+  ];
+  it('getUsage_unaCuentaFalla_noTumbaLasDemas', async () => {
+    const read = vi.fn(async (id: string) => { if (id === 'acc1') throw new Error('HTTP 401'); return info(12.4); });
+    const { port } = setup({ usage: { accounts: () => accounts, read } });
+    const entries = await port.getUsage({ accountIds: ['acc1', 'acc2'] });
+    expect(entries[0]).toMatchObject({ accountId: 'acc1', fiveHour: null, weekly: null, error: 'usage_unavailable: HTTP 401' });
+    expect(entries[1]).toMatchObject({ accountId: 'acc2', fiveHour: { percent: 12 }, weekly: { percent: 3 } });
+    expect(entries[1]).not.toHaveProperty('error');
+  });
+  it('getUsage_cuentaDeApi_ventanasNull', async () => {
+    const { port } = setup({ usage: { accounts: () => accounts, read: async () => info(0) } });
+    expect(await port.getUsage({ accountIds: ['api1'] })).toEqual([{ accountId: 'api1', provider: 'claude', name: 'api', billing: 'api-key', fiveHour: null, weekly: null }]);
+  });
+  it('getUsage_cuentaDesconocida_noSale', async () => {
+    const read = vi.fn(async () => info(1));
+    const { port } = setup({ usage: { accounts: () => accounts, read } });
+    expect(await port.getUsage({ accountIds: ['nope'] })).toEqual([]);
+    expect(read).not.toHaveBeenCalled();
+  });
+  it('getUsage_sinCuentas_vacio', async () => {
+    expect(await setup().port.getUsage({ accountIds: [] })).toEqual([]);
+  });
+  it('getUsage_resetsAtEnIso', async () => {
+    const { port } = setup({ usage: { accounts: () => accounts, read: async () => info(10) } });
+    expect((await port.getUsage({ accountIds: ['acc1'] }))[0]?.fiveHour?.resetsAt).toBe('2026-11-19T15:00:00.000Z');
+  });
+});
+
+describe('HostSessionsPort.createSession: resumeOnReset', () => {
+  const accounts = [
+    { id: 'acc1', provider: 'claude', name: '.claude', billing: 'subscription' as const },
+    { id: 'api1', provider: 'claude', name: 'api', billing: 'api-key' as const },
+    { id: 'acc2', provider: 'codex', name: '.codex', billing: 'subscription' as const },
+  ];
+  const withAccounts = { accounts: () => accounts, read: async () => null };
+  const target = (accountId: string, provider: 'claude' | 'codex') => ({ projectId: 'p1', accountId, provider, cwd: CWD });
+  it('createSession_claudePorSuscripcion_enciendeLaOpcionEnLaSesionLanzada', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), usage: withAccounts });
+    await port.createSession(command({ model: 'm1', resumeOnReset: true }));
+    expect(deps.setResumeOnReset).toHaveBeenCalledWith('child-s', true);
+  });
+  it('createSession_sinResumeOnReset_noTocaLaOpcion', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), usage: withAccounts });
+    await port.createSession(command({ model: 'm1' }));
+    await port.createSession(command({ model: 'm1', requestId: 'otra', resumeOnReset: false }));
+    expect(deps.setResumeOnReset).not.toHaveBeenCalled();
+  });
+  it.each([
+    ['codex', target('acc2', 'codex'), 'codex/subscription'],
+    ['cuenta de API', target('api1', 'claude'), 'claude/api-key'],
+    ['cuenta desconocida', target('nope', 'claude'), 'claude/unknown'],
+  ])('createSession_%s_rechazaAntesDeLanzar', async (_name, creation, received) => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), usage: withAccounts });
+    await expect(port.createSession(command({ target: creation, model: 'm1', resumeOnReset: true }))).rejects.toThrow(`resume_on_reset_unsupported: ${received}`);
+    expect(deps.launch).not.toHaveBeenCalled();
+    expect(deps.setResumeOnReset).not.toHaveBeenCalled();
+  });
+  it('createSession_rechazo_esUnErrorDeValidacionQueNoGastaElRequestId', async () => {
+    const { port } = setup({ usage: withAccounts });
+    await expect(port.createSession(command({ target: target('acc2', 'codex'), resumeOnReset: true }))).rejects.toBeInstanceOf(MageValidationError);
+  });
+  it('createSession_sinModeloConElUsuarioDelante_laOpcionSeAplicaAlLanzarDesdeLaTarjeta', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), usage: withAccounts, facts: { isTaskRun: false, creatorChain: [], ultracode: false } });
+    const held = await port.createSession(command({ resumeOnReset: true }));
+    expect(held.state).toBe('awaiting_launch');
+    expect(deps.setResumeOnReset).not.toHaveBeenCalled();
+    await deps.pending.launch(held.conversationId, { model: 'm1', effort: 'low' });
+    expect(deps.setResumeOnReset).toHaveBeenCalledWith('child-s', true);
+  });
+});
 
 describe('HostSessionsPort.resolveCreationTarget', () => {
   it('resolveCreationTarget_relativeCwd_invalidCwd', async () => {
@@ -305,6 +407,97 @@ describe('HostSessionsPort.send', () => {
   });
 });
 
+describe('HostSessionsPort: onDone, cerrar y reabrir', () => {
+  const relaunch = (overrides: Partial<DelegatedRelaunch> = {}): DelegatedRelaunch => ({
+    request: { commandId: REQUEST, provider: 'claude', accountId: 'acc1', cwd: CWD, model: 'm1', trust: { acknowledged: false } } as HostCreateRequest,
+    permissionMode: 'default', onDone: 'close', resumeOnReset: false, ...overrides,
+  });
+  // Una cerrada a propósito que `reopen` del registro devuelve a la vida con otro sessionId (como Codex).
+  function reopenable(overrides: Partial<DelegatedRelaunch> = {}, provider = 'claude') {
+    const closed = view({ closed: true, retired: true, state: 'done', child: child({ provider, relaunch: relaunch(overrides) }) });
+    const open = view({ child: child({ provider, sessionId: 'child-s2', relaunch: relaunch(overrides) }) });
+    const holder = { current: closed };
+    const log = { get: (id: string) => (id === 'child-c' ? holder.current : null), reopen: vi.fn(() => { holder.current = open; }) };
+    return { ...setup({ views: [], log, snapshot: snap('child-c'), launch: vi.fn(() => 'child-s2') }), log };
+  }
+
+  it('createSession_sinOnDone_seRegistraConCloseYGuardaConQueSeLanzo', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c') });
+    await port.createSession(command({ model: 'm1' }));
+    expect(deps.closer.register).toHaveBeenCalledWith('child-s', 'close');
+    expect(deps.log.watch).toHaveBeenCalledWith(expect.objectContaining({ relaunch: expect.objectContaining({ onDone: 'close', resumeOnReset: false, permissionMode: 'default' }) }));
+  });
+  it('createSession_onDoneKeepAlive_seRegistraConKeepAlive', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c') });
+    await port.createSession(command({ model: 'm1', onDone: 'keepAlive' }));
+    expect(deps.closer.register).toHaveBeenCalledWith('child-s', 'keepAlive');
+  });
+  it('createSession_registraAntesDeVigilarLaSesion', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c') });
+    await port.createSession(command({ model: 'm1' }));
+    expect(vi.mocked(deps.closer.register).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(deps.log.watch).mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it('closeSession_viva_laCierraYa', async () => {
+    const { port, deps } = setup();
+    expect(await port.closeSession({ conversationId: 'child-c' })).toEqual({ closed: true });
+    expect(deps.closer.closeNow).toHaveBeenCalledWith('child-s');
+  });
+  it('closeSession_yaCerrada_noEsErrorYNoHaceNada', async () => {
+    const { port, deps } = setup({ views: [view({ closed: true, retired: true })] });
+    expect(await port.closeSession({ conversationId: 'child-c' })).toEqual({ closed: false });
+    expect(deps.closer.closeNow).not.toHaveBeenCalled();
+  });
+  it('closeSession_esperandoALanzarse_closedFalse', async () => {
+    const pending = new PendingLaunches();
+    const { port, deps } = setup({ views: [], pending, facts: { isTaskRun: false, creatorChain: [], ultracode: false } });
+    const held = await port.createSession(command());
+    expect(await port.closeSession({ conversationId: held.conversationId })).toEqual({ closed: false });
+    expect(deps.closer.closeNow).not.toHaveBeenCalled();
+  });
+  it('closeSession_noEsDescendiente_notFound', async () => {
+    const { port, deps } = setup({ views: [view({ child: child({ creatorChain: ['otra'] }) })] });
+    await expect(port.closeSession({ conversationId: 'child-c' })).rejects.toThrow('not_found: child-c');
+    expect(deps.closer.closeNow).not.toHaveBeenCalled();
+  });
+
+  it('send_cerradaAPropositoConRelaunch_laReabreConResumeYEntregaElMensaje', async () => {
+    const { port, deps, log } = reopenable();
+    expect(await port.send(sendInput())).toEqual({ receipt: 'accepted' });
+    expect(deps.launch).toHaveBeenCalledWith({ ...relaunch().request, commandId: 'pend-1' }, { conversationId: 'caller-c', sessionId: 'caller-s' }, 't', 'child-c');
+    expect(log.reopen).toHaveBeenCalledWith('child-s', 'child-s2');
+    expect(deps.closer.register).toHaveBeenCalledWith('child-s2', 'close');
+    expect(deps.coordinator.send).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'child-s2', text: 'sí' }));
+  });
+  it('send_reabierta_conservaLaPoliticaYLaOpcionDeReanudar', async () => {
+    const { port, deps } = reopenable({ onDone: 'keepAlive', resumeOnReset: true });
+    await port.send(sendInput());
+    expect(deps.closer.register).toHaveBeenCalledWith('child-s2', 'keepAlive');
+    expect(deps.setResumeOnReset).toHaveBeenCalledWith('child-s2', true);
+  });
+  it('send_reabiertaDeCodex_fijaElModoTrasLanzar', async () => {
+    const { port, deps } = reopenable({ permissionMode: ':workspace' }, 'codex');
+    await port.send(sendInput());
+    expect(deps.setPermissionMode).toHaveBeenCalledWith('child-s2', ':workspace');
+  });
+  it('send_cerradaQueNoCerroMage_rechazadaSinLanzar', async () => {
+    const { port, deps } = setup({ views: [view({ closed: true, child: child({ relaunch: relaunch() }) })] });
+    expect(await port.send(sendInput())).toEqual({ receipt: 'rejected', reason: 'session_closed' });
+    expect(deps.launch).not.toHaveBeenCalled();
+  });
+  it('send_cerradaAPropositoSinSaberConQueSeLanzo_rechazada', async () => {
+    const { port, deps } = setup({ views: [view({ closed: true, retired: true })] });
+    expect(await port.send(sendInput())).toEqual({ receipt: 'rejected', reason: 'session_closed' });
+    expect(deps.launch).not.toHaveBeenCalled();
+  });
+  it('send_reabrirFalla_lanzaLaunchFailedYNoEntregaNada', async () => {
+    const { port, deps } = reopenable();
+    deps.launch = vi.fn(() => { throw new Error('sin memoria'); });
+    await expect(port.send(sendInput())).rejects.toThrow(/^launch_failed: sin memoria/);
+    expect(deps.coordinator.send).not.toHaveBeenCalled();
+  });
+});
+
 describe('HostSessionsPort.send con pregunta a la creadora', () => {
   it('send_childAwaitingCreator_announcesAnswer', async () => {
     const { port, deps, announced } = setup({ log: { settleQuestion: vi.fn(() => true) } });
@@ -419,5 +612,131 @@ describe('MageToolHandlers con el puerto de main', () => {
   });
   it('handlers_createWithCallerInOwnChain_cycle', async () => {
     await expect(handlersFor(['x', 'caller-c'], 5).create(input)).rejects.toThrow('delegation_cycle');
+  });
+});
+
+describe('HostSessionsPort tarjeta Lanzar', () => {
+  const HUMAN: CreatorFacts = { isTaskRun: false, creatorChain: [], ultracode: false };
+  const CATALOG: ProviderModel[] = [{ id: 'haiku', label: 'Haiku', supportedEfforts: ['low', 'high'] }, { id: 'sonnet', label: 'Sonnet', supportedEfforts: ['low', 'high'] }];
+  const creator = { provider: 'claude', model: 'sonnet', effort: 'high', permissionMode: 'default' };
+
+  it('createSession_sinModeloConUsuario_quedaPendienteSinArrancarElCli', async () => {
+    // Arrange
+    const { port, deps, announced } = setup({ facts: HUMAN, creator, catalog: CATALOG });
+    // Act
+    const result = await port.createSession(command({ title: 'Hija' }));
+    // Assert
+    expect(result).toEqual({ conversationId: 'pend-1', state: 'awaiting_launch' });
+    expect(deps.launch).not.toHaveBeenCalled();
+    expect(deps.coordinator.send).not.toHaveBeenCalled();
+    expect(announced).toEqual([{ sessionId: 'caller-s', event: {
+      kind: 'delegation_launch', childId: 'pend-1', title: 'Hija', provider: 'claude', accountId: 'acc1', model: 'sonnet', effort: 'high',
+      models: [{ id: 'haiku', label: 'Haiku', efforts: ['low', 'high'] }, { id: 'sonnet', label: 'Sonnet', efforts: ['low', 'high'] }],
+    } }]);
+    expect(await port.getStatus('pend-1')).toEqual({ state: 'awaiting_launch', turnCount: 0, lastEventAt: AT });
+    expect(await port.send({ ...sendInput(), conversationId: 'pend-1' })).toEqual({ receipt: 'rejected', reason: 'awaiting_launch' });
+    expect(await port.cancel({ conversationId: 'pend-1', scope: 'turn' })).toEqual({ cancelled: false });
+  });
+  it('createSession_conModeloYEsfuerzo_arrancaSinTarjeta', async () => {
+    const { port, deps } = setup({ facts: HUMAN, snapshot: snap('child-c') });
+    const result = await port.createSession(command({ model: 'haiku', effort: 'low' }));
+    expect(result).toEqual({ conversationId: 'child-c', state: 'running' });
+    expect(deps.launch).toHaveBeenCalledTimes(1);
+  });
+  it('createSession_creadoraTareaProgramada_arrancaSinTarjeta', async () => {
+    const { port, deps } = setup({ facts: { ...HUMAN, isTaskRun: true }, snapshot: snap('child-c') });
+    await port.createSession(command());
+    expect(deps.launch).toHaveBeenCalledTimes(1);
+  });
+  it('lanzar_conLoElegido_arrancaPorElCaminoDeSiempreYLoAnuncia', async () => {
+    // Arrange
+    const pending = new PendingLaunches();
+    const { port, deps, announced } = setup({ facts: HUMAN, creator, catalog: CATALOG, snapshot: snap('child-c'), pending });
+    await port.createSession(command());
+    // Act
+    await pending.launch('pend-1', { model: 'haiku', effort: 'low' });
+    // Assert
+    expect(deps.launch).toHaveBeenCalledWith(expect.objectContaining({ model: 'haiku', effort: 'low', permissionMode: 'default' }), expect.anything(), 'Haz algo');
+    expect(deps.log.watch).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'child-c', launchId: 'pend-1' }));
+    expect(deps.coordinator.send).toHaveBeenCalledWith({ sessionId: 'child-s', text: 'Haz algo\nsegunda línea', commandId: REQUEST });
+    expect(announced.map((entry) => entry.event)).toContainEqual({
+      kind: 'delegation_launch_settled', childId: 'pend-1', outcome: { launched: true, model: 'haiku', effort: 'low', conversationId: 'child-c' },
+    });
+    expect(pending.find('pend-1')).toBeNull();
+  });
+  it('lanzar_modeloFueraDelCatalogo_rechazaYSigueEsperando', async () => {
+    const pending = new PendingLaunches();
+    const { port, deps } = setup({ facts: HUMAN, creator, catalog: CATALOG, pending });
+    await port.createSession(command());
+    await expect(pending.launch('pend-1', { model: 'gpt-5' })).rejects.toThrow('invalid_model: gpt-5');
+    expect(deps.launch).not.toHaveBeenCalled();
+    expect(pending.find('pend-1')?.status).toBe('pending');
+  });
+  it('lanzar_esfuerzoNoAdmitido_rechaza', async () => {
+    const pending = new PendingLaunches();
+    const { port } = setup({ facts: HUMAN, creator, catalog: CATALOG, pending });
+    await port.createSession(command());
+    await expect(pending.launch('pend-1', { model: 'haiku', effort: 'max' })).rejects.toThrow('invalid_effort: max');
+  });
+  it('cancelar_entregaALaCreadoraQueNoSeLanzo', async () => {
+    // Arrange
+    const pending = new PendingLaunches();
+    const { port, deps, announced } = setup({ facts: HUMAN, creator, pending });
+    await port.createSession(command({ title: 'Hija' }));
+    // Act
+    pending.cancel('pend-1');
+    // Assert
+    expect(deps.coordinator.send).toHaveBeenCalledWith({ sessionId: 'caller-s', text: sessionResultMessage({ title: 'Hija', conversationId: 'pend-1', text: NOT_LAUNCHED_TEXT }) });
+    expect(announced.map((entry) => entry.event)).toContainEqual({ kind: 'delegation_launch_settled', childId: 'pend-1', outcome: { launched: false } });
+    expect(deps.launch).not.toHaveBeenCalled();
+    expect((await port.getStatus('pend-1')).state).toBe('interrupted');
+  });
+  it('cancelar_creadoraCerrada_noEnviaNada', async () => {
+    const pending = new PendingLaunches();
+    const { port, deps } = setup({ facts: HUMAN, creator, pending, ownerAlive: false });
+    await port.createSession(command());
+    pending.cancel('pend-1');
+    expect(deps.coordinator.send).not.toHaveBeenCalled();
+  });
+  it('cancelar_dosVeces_laSegundaLanza', async () => {
+    const pending = new PendingLaunches();
+    await setup({ facts: HUMAN, creator, pending }).port.createSession(command());
+    pending.cancel('pend-1');
+    expect(() => pending.cancel('pend-1')).toThrow('ya no espera a lanzarse (estado: cancelled)');
+  });
+  it('createSession_mismoRequestIdDosVeces_unaSolaTarjeta', async () => {
+    const { port, announced } = setup({ facts: HUMAN, creator });
+    const first = await port.createSession(command());
+    const second = await port.createSession(command());
+    expect([first, second]).toEqual([{ conversationId: 'pend-1', state: 'awaiting_launch' }, { conversationId: 'pend-1', state: 'awaiting_launch' }]);
+    expect(announced.filter((entry) => entry.event.kind === 'delegation_launch')).toHaveLength(1);
+  });
+  it('createHandler_mismoRequestIdDosVeces_unaSolaTarjeta', async () => {
+    const { port, deps } = setup({ facts: HUMAN, creator });
+    const scope = snapshotScope({ accountIds: ['acc1'], caller: { conversationId: 'caller-c', creatorChain: [] } });
+    const handlers = new MageToolHandlers({ port, scope, store: new MemoryIdempotencyStore(), now: () => AT });
+    const input = { requestId: REQUEST, provider: 'claude' as const, cwd: CWD, prompt: 'x' };
+    const results = [await handlers.create(input), await handlers.create(input)];
+    expect(results).toEqual([{ conversationId: 'pend-1', state: 'awaiting_launch' }, { conversationId: 'pend-1', state: 'awaiting_launch' }]);
+    expect(deps.newId).toHaveBeenCalledTimes(1);
+    expect(await handlers.status({ conversationId: 'pend-1' })).toEqual({ state: 'awaiting_launch', turnCount: 0, lastEventAt: AT });
+  });
+  it('reinicio_pendienteDeAntes_quedaInterrumpidaYNoArranca', async () => {
+    // Arrange: el mismo índice y un registro de pendientes nuevo (otro arranque de Mage).
+    const index = fakeIndex();
+    await setup({ facts: HUMAN, creator, index }).port.createSession(command());
+    const { port, deps } = setup({ facts: HUMAN, creator, index, views: [] });
+    // Act
+    const status = await port.getStatus('pend-1');
+    // Assert
+    expect(status).toEqual({ state: 'interrupted', turnCount: 0, lastEventAt: AT });
+    expect(await port.readResult({ conversationId: 'pend-1', afterSeq: 0 })).toEqual([]);
+    expect(deps.launch).not.toHaveBeenCalled();
+  });
+  it('getStatus_pendienteDeOtraCreadora_notFound', async () => {
+    const pending = new PendingLaunches();
+    const { port } = setup({ facts: HUMAN, creator, pending, views: [] });
+    await port.createSession(command({ createdBy: { conversationId: 'otra-c', requestId: REQUEST, at: AT }, creatorChain: ['otra-c'] }));
+    await expect(port.getStatus('pend-1')).rejects.toThrow('not_found: pend-1');
   });
 });

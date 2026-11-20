@@ -56,7 +56,8 @@ function createFakes() {
     }),
     sendCommand: vi.fn(async (_method: string, _params: unknown) => ({})),
   };
-  const history = { canGoBack: vi.fn(() => true), goBack: vi.fn() };
+  const history = { canGoBack: vi.fn(() => true), goBack: vi.fn(), canGoForward: vi.fn(() => true), goForward: vi.fn() };
+  const zoom = { factor: 1 };
   const image = {
     isEmpty: vi.fn(() => false),
     getSize: () => ({ width: 1125, height: 750 }),
@@ -80,6 +81,11 @@ function createFakes() {
     navigationHistory: history,
     close: vi.fn(),
     isDestroyed: vi.fn(() => false),
+    getZoomFactor: vi.fn(() => zoom.factor),
+    setZoomFactor: vi.fn((factor: number) => {
+      zoom.factor = factor;
+    }),
+    openDevTools: vi.fn(),
   };
   const view = {
     webContents: contents,
@@ -188,6 +194,67 @@ describe('IsolatedBrowser hardening', () => {
     handlers.contentsEvents.get(eventName)?.(details);
 
     expect(details.preventDefault.mock.calls.length > 0).toBe(blocked);
+  });
+});
+
+describe('IsolatedBrowser external links (visor de artifacts)', () => {
+  function viewerBrowser() {
+    const fakes = createFakes();
+    const onExternalLink = vi.fn();
+    new IsolatedBrowser('t1', fakes.deps, ROOT, onExternalLink);
+    return { ...fakes, onExternalLink };
+  }
+
+  it('externalLink_clickToHttps_isCancelledAndHandedOut', () => {
+    // Arrange
+    const { handlers, onExternalLink } = viewerBrowser();
+    const details = { url: 'https://example.com/doc', preventDefault: vi.fn() };
+
+    // Act
+    handlers.contentsEvents.get('will-navigate')?.(details);
+
+    // Assert
+    expect(details.preventDefault).toHaveBeenCalled();
+    expect(onExternalLink).toHaveBeenCalledWith('https://example.com/doc');
+  });
+
+  it('externalLink_targetBlank_isDeniedAndHandedOut', () => {
+    // Arrange
+    const { handlers, onExternalLink } = viewerBrowser();
+
+    // Act
+    const result = handlers.windowOpen?.({ url: 'http://example.com/' });
+
+    // Assert
+    expect(result).toEqual({ action: 'deny' });
+    expect(onExternalLink).toHaveBeenCalledWith('http://example.com/');
+  });
+
+  it.each(['file:///etc/passwd', 'javascript:alert(1)', 'chrome://gpu'])('externalLink_nonHttp_isNotHandedOut (%s)', (url) => {
+    // Arrange
+    const { handlers, onExternalLink } = viewerBrowser();
+    const details = { url, preventDefault: vi.fn() };
+
+    // Act
+    handlers.contentsEvents.get('will-navigate')?.(details);
+    handlers.windowOpen?.({ url });
+
+    // Assert
+    expect(details.preventDefault).toHaveBeenCalled();
+    expect(onExternalLink).not.toHaveBeenCalled();
+  });
+
+  it('externalLink_localPageInsideRoot_navigatesHere', () => {
+    // Arrange
+    const { handlers, onExternalLink } = viewerBrowser();
+    const details = { url: fileUrl(PAGE), preventDefault: vi.fn() };
+
+    // Act
+    handlers.contentsEvents.get('will-navigate')?.(details);
+
+    // Assert
+    expect(details.preventDefault).not.toHaveBeenCalled();
+    expect(onExternalLink).not.toHaveBeenCalled();
   });
 });
 
@@ -445,6 +512,78 @@ describe('IsolatedBrowser back', () => {
   });
 });
 
+describe('IsolatedBrowser forward', () => {
+  it('forward_withHistory_goesForwardAndExpiresIds', async () => {
+    const { browser, history } = await browserWithElement();
+
+    expect(browser.forward()).toBe(true);
+
+    expect(history.goForward).toHaveBeenCalled();
+    await expect(browser.click({ elementId: 1 })).rejects.toThrow(/caducado/);
+  });
+
+  it('forward_withoutHistory_returnsFalse', () => {
+    const { browser, history } = createBrowser();
+    history.canGoForward.mockReturnValue(false);
+
+    expect(browser.forward()).toBe(false);
+    expect(history.goForward).not.toHaveBeenCalled();
+  });
+});
+
+describe('IsolatedBrowser zoom', () => {
+  it('zoom_plusTwice_125AndNotifies', () => {
+    const { browser, contents } = createBrowser();
+    const listener = vi.fn();
+    browser.onStateChange(listener);
+
+    browser.zoom(1);
+    const result = browser.zoom(1);
+
+    expect(result).toBe(125);
+    expect(contents.setZoomFactor).toHaveBeenLastCalledWith(1.25);
+    expect(browser.state().zoomPercent).toBe(125);
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('zoom_resetFrom150_100', () => {
+    const { browser, contents } = createBrowser();
+    contents.getZoomFactor.mockReturnValue(1.5);
+
+    expect(browser.zoom(0)).toBe(100);
+    expect(contents.setZoomFactor).toHaveBeenCalledWith(1);
+  });
+
+  it('zoom_ctrlMinusInPage_preventsAndZoomsOut', () => {
+    const { browser, handlers, contents } = createBrowser();
+    const event = { preventDefault: vi.fn() };
+
+    handlers.contentsEvents.get('before-input-event')?.(event, { type: 'keyDown', key: '-', control: true, meta: false, alt: false });
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(contents.setZoomFactor).toHaveBeenCalledWith(0.9);
+    expect(browser.state().zoomPercent).toBe(90);
+  });
+
+  it('zoom_otherKeyInPage_letsItThrough', () => {
+    const { handlers, contents } = createBrowser();
+    const event = { preventDefault: vi.fn() };
+
+    handlers.contentsEvents.get('before-input-event')?.(event, { type: 'keyDown', key: 'c', control: true, meta: false, alt: false });
+    handlers.contentsEvents.get('before-input-event')?.(event, { type: 'keyUp', key: '-', control: true, meta: false, alt: false });
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(contents.setZoomFactor).not.toHaveBeenCalled();
+  });
+
+  it('zoom_afterClose_throws', async () => {
+    const { browser } = createBrowser();
+    await browser.close();
+
+    expect(() => browser.zoom(1)).toThrow(/ya está cerrado/);
+  });
+});
+
 describe('IsolatedBrowser close', () => {
   it('close_afterClick_detachesClosesAndClearsPartition', async () => {
     const { browser, debuggerFake, contents, fakeSession } = await browserWithElement();
@@ -566,7 +705,7 @@ describe('IsolatedBrowser control and state', () => {
     const { browser, contents } = createBrowser();
     contents.isLoading.mockReturnValue(true);
 
-    expect(browser.state()).toEqual({ url: 'http://localhost:5173/', title: 'Título', canGoBack: true, loading: true });
+    expect(browser.state()).toEqual({ url: 'http://localhost:5173/', title: 'Título', canGoBack: true, canGoForward: true, loading: true, zoomPercent: 100 });
   });
 
   it('onStateChange_navigateEvent_notifiesUntilUnsubscribed', () => {

@@ -12,7 +12,7 @@ import { describeError } from './describeError';
 // tal cual. Este modulo es el UNICO que escribe `accounts`, `usageByAccount`, `modelCatalogByAccount` y `status`
 // (borrar una cuenta, que cierra sus pestañas, sigue en el store).
 
-export type AccountsActions = Pick<WorkbenchState, 'loadModelCatalog' | 'refreshAccounts' | 'refreshLogin' | 'assignAccountAccents' | 'refreshUsage' | 'refreshActiveUsage' | 'refreshStatus'>;
+export type AccountsActions = Pick<WorkbenchState, 'loadModelCatalog' | 'refreshAccounts' | 'refreshLogin' | 'reloadLogin' | 'assignAccountAccents' | 'refreshUsage' | 'refreshActiveUsage' | 'refreshStatus'>;
 
 export interface AccountsDeps {
   readonly mage: MageApi;
@@ -40,6 +40,15 @@ export function createAccountsActions(deps: AccountsDeps): AccountsActions {
       await mage.refreshLogin(accountId);
       await get().refreshAccounts();
       if (get().accounts.some((account) => account.id === accountId && account.loginStatus === 'logged_in')) await get().refreshUsage(accountId);
+    },
+
+    // Relee el login de UNA cuenta de Claude por suscripción: recoge una sesión que otra instalación escribió después de
+    // la última lectura. Main solo lee el fichero; no renueva el token. Otra clase de cuenta no tiene nada que releer.
+    reloadLogin: async (accountId) => {
+      const account = get().accounts.find((a) => a.id === accountId);
+      if (account === undefined || account.providerId !== 'claude' || account.apiBilled) return;
+      const { loginStatus } = await mage.reloadLogin(accountId);
+      set((s) => ({ accounts: s.accounts.map((a) => (a.id === accountId ? { ...a, loginStatus } : a)) }));
     },
 
     refreshAccounts: async () => {

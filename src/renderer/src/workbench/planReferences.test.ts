@@ -4,6 +4,7 @@ import {
   associatedDocumentPaths,
   buildReferenceIndex,
   extractReferenceTokens,
+  fileDocId,
   indexDocumentAnchors,
   panelEntries,
   planDocuments,
@@ -16,6 +17,20 @@ const writeBlock = (id: string, filePath: string, isError = false): Block =>
 const userBlock = (id: string, text: string): Block => ({ kind: 'user', id, text }) as unknown as Block;
 const agentBlock = (id: string, text: string): Block =>
   ({ kind: 'agent', id, runs: [{ code: false, text }], streaming: false }) as unknown as Block;
+
+describe('fileDocId', () => {
+  it('fileDocId_rutaRelativaDentro_rutaResuelta', () => {
+    const docId = fileDocId('src/a.ts', 'C:/proj');
+
+    expect(docId).toBe('C:/proj/src/a.ts');
+  });
+
+  it('fileDocId_rutaFuera_laMisma', () => {
+    const docId = fileDocId('D:/otro/a.ts', 'C:/proj');
+
+    expect(docId).toBe('D:/otro/a.ts');
+  });
+});
 
 describe('extractReferenceTokens', () => {
   it('extractReferenceTokens_threeForms', () => {
@@ -143,6 +158,26 @@ describe('anchorTextMatcher', () => {
     const matcher = anchorTextMatcher('F0.4');
 
     expect([matcher.test('F0.4 Arranque'), matcher.test('F0x4'), matcher.test('F0.4: x')]).toEqual([true, false, true]);
+  });
+});
+
+describe('panelEntries adjuntos', () => {
+  const attachedText = 'mira\n\n```\n// notas.md\n# Hola\n```';
+
+  it('panelEntries_mensajeConAdjunto_seccionAttached', () => {
+    const blocks = [userBlock('u1', attachedText)];
+
+    const entries = panelEntries(blocks, 'C:/proj');
+
+    expect(entries.map((e) => (e.kind === 'file' ? [e.section, e.docId] : null))).toEqual([['attached', 'C:/proj/notas.md']]);
+  });
+
+  it('panelEntries_adjuntoYaEditado_noSeRepite', () => {
+    const blocks = [writeBlock('w1', 'C:/proj/notas.md'), userBlock('u1', attachedText)];
+
+    const entries = panelEntries(blocks, 'C:/proj');
+
+    expect(entries.map((e) => (e.kind === 'file' ? [e.section, e.docId] : null))).toEqual([['created', 'C:/proj/notas.md']]);
   });
 });
 

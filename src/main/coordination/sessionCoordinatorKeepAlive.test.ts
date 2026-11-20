@@ -102,6 +102,25 @@ describe('SessionCoordinator: keep-alive de la cache (F4.6)', () => {
     expect(h.kaTimers().map((t) => t.ms)).toEqual([INTERVAL_MS]);
   });
 
+  it('excludeFromKeepAlive_sesionExcluida_noProgramaNada', () => {
+    const h = harness();
+    h.coordinator.excludeFromKeepAlive(h.id);
+
+    primeBigTurn(h);
+
+    expect(h.kaTimers()).toEqual([]);
+  });
+
+  it('excludeFromKeepAlive_conUnoProgramado_loCancela', () => {
+    const h = harness();
+    primeBigTurn(h);
+    expect(h.kaTimers()).toHaveLength(1);
+
+    h.coordinator.excludeFromKeepAlive(h.id);
+
+    expect(h.kaTimers()).toEqual([]);
+  });
+
   it('keepAlive_fires_sendsPromptWithOwnUuid', () => {
     const h = harness();
     primeBigTurn(h);

@@ -31,6 +31,10 @@ import { ArtifactCard } from './ArtifactCard';
 import { artifactCardFrom } from '../artifactView';
 import { delegationCardFrom } from '../delegationView';
 import { DelegationCard } from './DelegationCard';
+import { fileCardFrom } from '../fileCardView';
+import { FileCard } from './FileCard';
+import { SentAttachmentCards } from './SentAttachmentCards';
+import { splitSentAttachments } from '../sentAttachments';
 import { chatRows, currentTurnSummary, stickResetKey, type ChatRow } from '../chatVisibility';
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import type { Block, ImageAttachment } from '../types';
@@ -912,6 +916,7 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
   // (`/rename X`) es un chip, y una tarea programada una tarjeta con el cuerpo plegado, en vez de la
   // burbuja con el XML crudo. Los avisos que no se pintan ya los quito `transcriptToBlocks`.
   const wrapper = useMemo(() => classifySystemWrapper(block.text), [block.text]);
+  const sent = useMemo(() => splitSentAttachments(block.text), [block.text]);
   const t = useT();
   const tabId = usePaneTabId();
   const offersRewind = useRewindOffer(tabId, block.nativeId);
@@ -941,9 +946,10 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
             que aportaba el texto plano. */}
         <Collapsible stateKey={block.id} maxHeightPx={USER_MESSAGE_MAX_HEIGHT_PX} expandLabel={t('chat.collapsible.showFullMessage')}>
           <div className="min-w-0 break-words text-mg-text">
-            <Markdown text={block.text} />
+            <Markdown text={sent.body} />
           </div>
         </Collapsible>
+        {sent.files.length > 0 && <SentAttachmentCards files={sent.files} />}
         {block.attachments.length > 0 && <UserAttachments attachments={block.attachments} />}
       </div>
     </div>
@@ -1216,7 +1222,10 @@ function ToolBlock({ block }: { readonly block: Extract<Block, { kind: 'tool' }>
   const card = artifactCardFrom(block);
   if (card !== null) return <ArtifactCard card={card} />;
   const delegation = delegationCardFrom(block);
-  return delegation === null ? null : <DelegationCard card={delegation} />;
+  if (delegation !== null) return <DelegationCard card={delegation} />;
+  const file = fileCardFrom(block);
+  if (file !== null) return <FileCard card={file} />;
+  return null;
 }
 
 function AgentBlock({

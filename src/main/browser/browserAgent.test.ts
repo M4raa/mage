@@ -55,6 +55,7 @@ function setup(sessions: string[] = ['A']) {
     onChange: vi.fn(),
     onOpened: vi.fn(),
     onClosed: vi.fn(),
+    isPoppedOut: () => false,
     log: vi.fn(),
   });
   const imageDeps: ImageDeps = { fromBitmap: (_data, size) => fakeImage(size.width, size.height) };

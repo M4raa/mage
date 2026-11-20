@@ -60,16 +60,45 @@ afterEach(async () => {
 });
 
 describe('Mage MCP server', () => {
-  it('listTools_conexionReal_sieteHerramientasConAmbosEsquemas', async () => {
+  it('listTools_conexionReal_nueveHerramientasConAmbosEsquemas', async () => {
     const { client } = await connect();
     const result = await client.listTools();
-    expect(result.tools.map((tool) => tool.name).sort()).toEqual(['mage_ask_creator', 'mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_list_sessions', 'mage_read_result', 'mage_send']);
+    expect(result.tools.map((tool) => tool.name).sort()).toEqual(['mage_ask_creator', 'mage_cancel', 'mage_close_session', 'mage_create_session', 'mage_get_status', 'mage_get_usage', 'mage_list_sessions', 'mage_read_result', 'mage_send']);
     for (const tool of result.tools) {
       expect(tool.inputSchema.type).toBe('object');
       expect(tool.inputSchema.additionalProperties).toBe(false);
       expect(tool.outputSchema?.type).toBe('object');
     }
-    expect(client.getServerVersion()).toEqual({ name: 'mage', version: '1' });
+    expect(client.getServerVersion()).toEqual({ name: 'mage', version: '3' });
+  });
+  it('initialize_instrucciones_recomiendanMirarElUsoYReanudar', async () => {
+    const { client } = await connect();
+    const instructions = client.getInstructions() ?? '';
+    expect(instructions).toContain('mage_get_usage');
+    expect(instructions).toContain('resumeOnReset: true');
+  });
+  it('initialize_instrucciones_avisanDeQueSeCierranYComoEvitarlo', async () => {
+    const { client } = await connect();
+    expect(client.getInstructions() ?? '').toContain('Por defecto una sesión creada se cierra 5 minutos después de entregar su resultado; pasa onDone: "keepAlive" si vas a seguir trabajando con ella, y usa mage_close_session para cerrarla antes.');
+  });
+  it('listTools_createSession_documentaOnDoneYResumeOnReset', async () => {
+    const { client } = await connect();
+    const tool = (await client.listTools()).tools.find((item) => item.name === 'mage_create_session');
+    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['onDone', 'resumeOnReset']));
+    expect(tool?.inputSchema.required ?? []).not.toContain('onDone');
+    expect(tool?.description).toContain('Por defecto una sesión creada se cierra 5 minutos después de entregar su resultado; pasa onDone: "keepAlive" si vas a seguir trabajando con ella, y usa mage_close_session para cerrarla antes.');
+  });
+  it('initialize_instrucciones_pidenModeloYEsfuerzoSinElUsuario', async () => {
+    const { client } = await connect();
+    const instructions = client.getInstructions() ?? '';
+    expect(instructions).toContain('Si trabajas sin el usuario (tarea programada, sesión delegada o Ultracode), pasa siempre model y effort en mage_create_session');
+  });
+  it('listTools_estadoAwaitingLaunch_documentado', async () => {
+    const { client } = await connect();
+    const tools = (await client.listTools()).tools;
+    const describedBy = (name: string) => tools.find((tool) => tool.name === name)?.description ?? '';
+    expect(describedBy('mage_create_session')).toContain('awaiting_launch');
+    expect(describedBy('mage_get_status')).toContain('awaiting_launch');
   });
   // P-038: sin instrucciones, «lanza dos sesiones nuevas» acababa en subagentes aun con el MCP cargado.
   it('initialize_sinNavegador_instruccionesDeSesionesSinLasDelNavegador', async () => {
@@ -118,6 +147,15 @@ describe('Mage MCP server', () => {
     const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
     expect(createInputSchema.safeParse({ ...base, effort: 'high' }).success).toBe(true);
   });
+  it('createInputSchema_resumeOnReset_opcionalYBooleano', () => {
+    const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
+    expect(createInputSchema.safeParse(base).success).toBe(true);
+    expect(createInputSchema.safeParse({ ...base, resumeOnReset: true }).success).toBe(true);
+    expect(createInputSchema.safeParse({ ...base, resumeOnReset: false }).success).toBe(true);
+    const bad = createInputSchema.safeParse({ ...base, resumeOnReset: 'sí' });
+    expect(bad.success).toBe(false);
+    expect(JSON.stringify(bad)).toContain('resumeOnReset: valor recibido sí');
+  });
   it('callTool_askCreator_memoryPort_acceptedYRegistrada', async () => {
     const { call, port } = await connect();
     const result = await call('ask_creator', { requestId: REQUEST, text: 'hola' });
@@ -129,6 +167,90 @@ describe('Mage MCP server', () => {
     const result = await call('ask_creator', { requestId: REQUEST, text: '' });
     expect(result.isError).toBe(true);
     expect(port.questions).toEqual([]);
+  });
+  it('createInputSchema_onDone_closeKeepAliveOAusente', () => {
+    const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
+    expect(createInputSchema.safeParse({ ...base, onDone: 'close' }).success).toBe(true);
+    expect(createInputSchema.safeParse({ ...base, onDone: 'keepAlive' }).success).toBe(true);
+    const bad = createInputSchema.safeParse({ ...base, onDone: 'forever' });
+    expect(bad.success).toBe(false);
+    expect(JSON.stringify(bad)).toContain('onDone: valor recibido forever');
+  });
+  describe('mage_close_session', () => {
+    it('closeSession_sesionVisible_laCierra', async () => {
+      const { call, port } = await connect();
+      const result = await call('close_session', { requestId: REQUEST, conversationId: 'historical-id' });
+      expect(result.structuredContent).toEqual({ closed: true });
+      expect((await port.getStatus('historical-id')).state).toBe('done');
+    });
+    it('closeSession_yaCerrada_closedFalseSinError', async () => {
+      const { call } = await connect();
+      await call('close_session', { requestId: REQUEST, conversationId: 'historical-id' });
+      const again = await call('close_session', { requestId: SECOND, conversationId: 'historical-id' });
+      expect(again.isError).not.toBe(true);
+      expect(again.structuredContent).toEqual({ closed: false });
+    });
+    it('closeSession_mismoRequestId_idempotenteUnSoloCierre', async () => {
+      const port = makePort();
+      const effect = vi.spyOn(port, 'closeSession');
+      const { call } = await connect({ port });
+      const first = await call('close_session', { requestId: REQUEST, conversationId: 'historical-id' });
+      const second = await call('close_session', { requestId: REQUEST, conversationId: 'historical-id' });
+      expect(second).toEqual(first);
+      expect(effect).toHaveBeenCalledTimes(1);
+    });
+    it('closeSession_fueraDelAlcance_scopeDeniedSinCerrar', async () => {
+      const port = makePort();
+      const effect = vi.spyOn(port, 'closeSession');
+      const { call } = await connect({ port });
+      expect(JSON.stringify(await call('close_session', { requestId: REQUEST, conversationId: 'foreign' }))).toContain('scope_denied');
+      expect(JSON.stringify(await call('close_session', { requestId: SECOND, conversationId: 'private' }))).toContain('scope_denied');
+      expect(effect).not.toHaveBeenCalled();
+    });
+    it('closeSession_sinRequestId_isErrorConCampo', async () => {
+      const { call } = await connect();
+      const result = await call('close_session', { conversationId: 'historical-id' });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain('requestId');
+    });
+    it('closeSession_descripcionExplicaQueReabreUnSend', async () => {
+      const { client } = await connect();
+      const tool = (await client.listTools()).tools.find((item) => item.name === 'mage_close_session');
+      expect(tool?.description).toContain('mage_send');
+      expect(tool?.inputSchema.required).toEqual(expect.arrayContaining(['requestId', 'conversationId']));
+    });
+  });
+  describe('mage_get_usage', () => {
+    const window5h = { percent: 42, resetsAt: '2026-11-19T15:00:00.000Z' };
+    const entry = (accountId: string) => ({ accountId, provider: 'claude', name: accountId, billing: 'subscription' as const, fiveHour: window5h, weekly: { percent: 7, resetsAt: null } });
+    const withUsage = () => new MemorySessionsPort({ targets: [], now: () => NOW, newConversationId: () => 'x', usage: [entry('a'), entry('b')] });
+    it('getUsage_sinAccountId_devuelveLasCuentasDelAlcance', async () => {
+      const { call } = await connect({ port: withUsage(), scope: { accountIds: ['a'] } });
+      const result = await call('get_usage');
+      expect(result.structuredContent).toEqual({ accounts: [entry('a')] });
+    });
+    it('getUsage_cuentaFueraDelAlcance_scopeDenied', async () => {
+      const { call } = await connect({ port: withUsage(), scope: { accountIds: ['a'] } });
+      expect(JSON.stringify(await call('get_usage', { accountId: 'b' }))).toContain('scope_denied');
+    });
+    it('getUsage_cuentaDelAlcance_soloEsa', async () => {
+      const { call } = await connect({ port: withUsage(), scope: { accountIds: ['a', 'b'] } });
+      expect((await call('get_usage', { accountId: 'b' })).structuredContent).toEqual({ accounts: [entry('b')] });
+    });
+    it('getUsage_cuentaDelAlcanceQueElPuertoNoConoce_unknownAccount', async () => {
+      const { call } = await connect({ port: withUsage(), scope: { accountIds: ['a', 'zzz'] } });
+      expect(JSON.stringify(await call('get_usage', { accountId: 'zzz' }))).toContain('unknown_account: zzz');
+    });
+    it('getUsage_porcentajeNoEntero_noPasaElContrato', async () => {
+      const port = new MemorySessionsPort({ targets: [], now: () => NOW, newConversationId: () => 'x', usage: [{ ...entry('a'), fiveHour: { percent: 42.5, resetsAt: null } }] });
+      const { call } = await connect({ port, scope: { accountIds: ['a'] } });
+      expect((await call('get_usage')).isError).toBe(true);
+    });
+    it('getUsage_esSoloLectura_noGastaIdempotencia', async () => {
+      const { call } = await connect({ port: withUsage(), scope: { accountIds: ['a'] } });
+      const first = await call('get_usage');
+      expect(await call('get_usage')).toEqual(first);
+    });
   });
   it('callTool_requestIdTexto_createAceptado', async () => {
     const { call } = await connect();

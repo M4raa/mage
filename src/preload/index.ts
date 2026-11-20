@@ -1,5 +1,6 @@
 import { BROWSER_STATE_CHANNEL, type BrowserEntryState } from '@shared/browser';
 import type { ConversationLockParams, ConversationLockRef } from '@shared/conversationLock';
+import type { ArtifactsListParams, ArtifactsMoreParams, ArtifactsOpenParams, ArtifactsVisibilityParams } from '@shared/artifactLibrary';
 import type { MentionPreviewParams, MentionResolveParams, MentionSearchParams } from '@shared/mentions';
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import {
@@ -25,8 +26,10 @@ import {
   UPDATE_STATE_CHANNEL,
   CONVERSATION_LOCK_LOST_CHANNEL,
   type CloseAnswer,
+  type LaunchDelegatedParams,
 } from '@shared/ipc';
 import type { UpdateState } from '@shared/update';
+import { HOST_PAIR_REQUESTS_CHANNEL, type HostPairAnswer, type HostPairRequestView } from '@shared/hostClients';
 import type { ResolvedUiLanguage } from '@shared/i18n/language';
 import type { GhPrUpdate } from '@shared/gh';
 import type {
@@ -73,6 +76,7 @@ import type {
   AdoptableSession,
   SetModelParams,
   SetEffortParams,
+  SetResumeOnResetParams,
   StopTaskParams,
   SetPermissionModeParams,
   TranscriptBatchPayload,
@@ -111,6 +115,7 @@ const api: MageApi = {
   takeQueuedMessages: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionQueueTake, sessionId),
   setModel: (params: SetModelParams) => ipcRenderer.invoke(IpcChannel.SessionSetModel, params),
   setEffort: (params: SetEffortParams) => ipcRenderer.invoke(IpcChannel.SessionSetEffort, params),
+  setResumeOnReset: (params: SetResumeOnResetParams) => ipcRenderer.invoke(IpcChannel.SessionSetResumeOnReset, params),
   setPermissionMode: (params: SetPermissionModeParams) =>
     ipcRenderer.invoke(IpcChannel.SessionSetPermissionMode, params),
   stopTask: (params: StopTaskParams) => ipcRenderer.invoke(IpcChannel.SessionStopTask, params),
@@ -120,6 +125,8 @@ const api: MageApi = {
   getSessionIdleState: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionIdleState, sessionId),
   listAdoptableSessions: () => ipcRenderer.invoke(IpcChannel.SessionsAdoptable),
   attachSession: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionAttach, sessionId),
+  launchDelegated: (params: LaunchDelegatedParams) => ipcRenderer.invoke(IpcChannel.DelegationLaunch, params),
+  cancelDelegatedLaunch: (conversationId: string) => ipcRenderer.invoke(IpcChannel.DelegationCancelLaunch, conversationId),
   getScratchDir: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchDir),
   getScratchRoot: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoot),
   getScratchRoots: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoots),
@@ -141,6 +148,7 @@ const api: MageApi = {
   openEditor: (params: OpenEditorParams) => ipcRenderer.invoke(IpcChannel.OpenEditor, params),
   listAccounts: () => ipcRenderer.invoke(IpcChannel.AccountsList),
   refreshLogin: (configDir: string) => ipcRenderer.invoke(IpcChannel.AccountsRefreshLogin, configDir),
+  reloadLogin: (configDir: string) => ipcRenderer.invoke(IpcChannel.AccountsReloadLogin, configDir),
   confirmCodexAccounts: () => ipcRenderer.invoke(IpcChannel.AccountsCodexConfirm),
   createAccount: (name: string) => ipcRenderer.invoke(IpcChannel.AccountsCreate, name),
   startLogin: (params) => ipcRenderer.invoke(IpcChannel.AccountsLoginStart, params),
@@ -252,6 +260,10 @@ const api: MageApi = {
   recordArtifact: (params: RecordArtifactParams) => ipcRenderer.invoke(IpcChannel.ArtifactRecordSave, params),
   openArtifact: (params: OpenArtifactParams) => ipcRenderer.invoke(IpcChannel.ArtifactOpen, params),
   lookupArtifactPublisher: (url: string) => ipcRenderer.invoke(IpcChannel.ArtifactPublisherLookup, url),
+  listArtifacts: (params: ArtifactsListParams) => ipcRenderer.invoke(IpcChannel.ArtifactsList, params),
+  moreArtifacts: (params: ArtifactsMoreParams) => ipcRenderer.invoke(IpcChannel.ArtifactsMore, params),
+  openArtifactInViewer: (params: ArtifactsOpenParams) => ipcRenderer.invoke(IpcChannel.ArtifactsOpen, params),
+  artifactVisibility: (params: ArtifactsVisibilityParams) => ipcRenderer.invoke(IpcChannel.ArtifactsVisibility, params),
   readInstructions: (params: ReadInstructionsParams) => ipcRenderer.invoke(IpcChannel.InstructionsRead, params),
   readProjectFile: (params: ReadProjectFileParams) => ipcRenderer.invoke(IpcChannel.ProjectFileRead, params),
   writeProjectFile: (params: WriteProjectFileParams) => ipcRenderer.invoke(IpcChannel.ProjectFileWrite, params),
@@ -363,6 +375,15 @@ const api: MageApi = {
     return () => ipcRenderer.removeListener(CLOSE_PROMPT_CHANNEL, handler);
   },
   answerClose: (answer: CloseAnswer) => ipcRenderer.invoke(IpcChannel.CloseAnswer, answer),
+  getHostPairRequests: () => ipcRenderer.invoke(IpcChannel.HostPairPending),
+  onHostPairRequests: (listener: (pending: readonly HostPairRequestView[]) => void) => {
+    const handler = (_: unknown, pending: readonly HostPairRequestView[]) => listener(pending);
+    ipcRenderer.on(HOST_PAIR_REQUESTS_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(HOST_PAIR_REQUESTS_CHANNEL, handler);
+  },
+  answerHostPair: (answer: HostPairAnswer) => ipcRenderer.invoke(IpcChannel.HostPairAnswer, answer),
+  listHostClients: () => ipcRenderer.invoke(IpcChannel.HostClientsList),
+  revokeHostClient: (clientId: string) => ipcRenderer.invoke(IpcChannel.HostClientsRevoke, clientId),
   getUpdateState: () => ipcRenderer.invoke(IpcChannel.UpdateGetState),
   onUpdateState: (listener: (state: UpdateState) => void) => {
     const handler = (_: unknown, state: UpdateState) => listener(state);
@@ -388,7 +409,13 @@ const api: MageApi = {
   browserOpen: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserOpen, sessionId),
   browserNavigate: (params) => ipcRenderer.invoke(IpcChannel.BrowserNavigate, params),
   browserBack: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserBack, sessionId),
+  browserForward: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserForward, sessionId),
   browserReload: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserReload, sessionId),
+  browserZoom: (params) => ipcRenderer.invoke(IpcChannel.BrowserZoom, params),
+  browserOpenExternal: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserOpenExternal, sessionId),
+  browserDevTools: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserDevTools, sessionId),
+  browserPopOut: (params) => ipcRenderer.invoke(IpcChannel.BrowserPopOut, params),
+  browserPopIn: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserPopIn, sessionId),
   browserClose: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserClose, sessionId),
   browserSetBounds: (params) => ipcRenderer.invoke(IpcChannel.BrowserSetBounds, params),
   browserTakeControl: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserTakeControl, sessionId),

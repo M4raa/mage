@@ -4,6 +4,45 @@ Lo que cambia de una versión a otra, contado para quien usa la app. La más rec
 enseña estas mismas notas en su pestaña de novedades al actualizarse, y en Configuración › Notas de
 versión.
 
+## 0.1.7 — 2026-11-20
+
+### Añadido
+- **Todos tus artifacts en Mage.** Una pantalla nueva lista los artifacts que has creado y los que han compartido contigo, de todas tus cuentas de Claude, y los abre dentro de Mage sin iniciar sesión en claude.ai. La tarjeta de un artifact publicado dice quién puede verlo y enlaza para cambiarlo en claude.ai.
+- **Acciones que siempre preguntan.** En Claude, publicar un artifact, `git push` y crear o comentar en GitHub con `gh` piden permiso también en Auto y en Aceptar ediciones; solo «Omitir permisos» se lo salta. La lista está en Configuración › Hooks y permisos.
+- **Navegador como el de Claude Desktop.** Adelante, copiar la dirección, abrirla en el navegador del sistema, zoom por navegador (Ctrl + `+`/`-`/`0`) y sacarlo a una ventana propia sin recargar la página.
+- **Enlaces del chat.** El clic abre en el navegador de Mage; Ctrl o el clic central, en el del sistema; el botón derecho ofrece los dos y copiar. Se puede invertir en Configuración.
+- **Ficheros en el chat.** Cada fichero que el agente crea o edita deja una ficha en el hilo que lo abre en Ficheros. Los adjuntos de un mensaje enviado salen como fichas con nombre y tamaño, y se abren en Ficheros › Adjuntos.
+- **Cerrar una conversación que trabaja** pregunta: dejarla en segundo plano, cerrarla y pararla, o cancelar. Con «No volver a preguntar», se cambia en Configuración › Almacenamiento.
+- **Subsesiones con confirmación.** Si el agente crea una sesión sin decir modelo o esfuerzo, sale una tarjeta «Lanzar» con los valores heredados para revisarlos. Las tareas programadas, las sesiones delegadas y Ultracode no la ven.
+- **Uso y reanudación para los agentes.** El MCP de Mage da el uso de 5 h y semanal de cada cuenta con su hora de reset, y una sesión puede «continuar al restablecerse» la ventana de 5 h (nunca la semanal), también desde el «+» de la pestaña.
+- **Las subsesiones se cierran al acabar.** Cinco minutos después de entregar su resultado, una subsesión suelta su proceso (salvo que se cree para seguir viva) y se reabre al escribirle; ya no se quedan horas ocupando memoria.
+- **Emparejar el host.** Un cliente nuevo de la terminal (`mage chat`) pide permiso en la ventana de Mage la primera vez; los emparejados se revocan en Configuración › Hooks y permisos.
+- «Reintentar» en una cuenta sin sesión vuelve a leer lo que haya escrito el CLI.
+
+### Cambiado
+- **Paneles.** Por defecto se ven Conversaciones, Contexto, Ficheros, Actividad y Navegador; el resto está en «Añadir panel». Al actualizar se aplica una vez; lo que añadas después se respeta. Un panel escondido se abre solo cuando algo lo pide.
+- **Artifact siempre disponible** en Claude: sale el ajuste de Configuración.
+- **Prompt.** La caja es más baja, la línea de debajo tiene menos margen, el % de contexto va a la derecha del modelo y los desplegables de `/` y `@` salen encima de la caja.
+- Las fichas de los ficheros mencionados en el prompt enseñan su tamaño.
+
+### Corregido
+- La pestaña marcada podía no ser la que se veía al restaurar con la activa de una cuenta que ya no estaba.
+- Ctrl+Tab (y abrir desde el widget, una tarea o una subsesión) deja el teclado en la pestaña que se ve, también con paneles divididos; una pregunta MCP del otro panel ya no te cambia de pestaña.
+- El botón «Navegador» abre los `.html` del scratchpad del CLI.
+- El estado de la sesión de una cuenta se vuelve a leer al acabar cada turno.
+
+### Seguridad
+- El host local ya no acepta, en ningún proveedor, modos con acceso total sin preguntar desde la terminal.
+- El token de arranque del host solo deja leer; escribir exige un cliente emparejado.
+- Los secretos de los servidores MCP ya no viajan en el entorno del CLI de Claude, donde el agente podía leerlos con un comando: van al fichero de configuración MCP de la cuenta.
+- Dependencias de producción sin avisos altos (excepción declarada: GHSA-mrhx-c7xc-m3w5 de zod 3, hasta pasar a zod 4); Dependabot activado y un SBOM CycloneDX en cada versión.
+
+### Limitaciones conocidas
+- Una conversación que nace en «Omitir permisos» no añade las acciones que siempre preguntan si después se cambia de modo sin reabrirla.
+- Recargar la ventana con una subsesión esperando «Lanzar» pierde su tarjeta.
+- El visor de artifacts enseña una copia local: puede pedir a la red, pero sin cookies de claude.ai ni acceso a otros ficheros.
+- Codex sigue recibiendo los secretos de sus MCP por el entorno (sin medir).
+
 ## 0.1.6 — 2026-11-16
 
 ### Añadido

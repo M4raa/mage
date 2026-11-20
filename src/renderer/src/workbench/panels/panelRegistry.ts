@@ -36,6 +36,7 @@ export interface PanelDefinition {
   readonly icon: IconName; // forma propia de la suite (`panel*`), monocroma y sin emoji
   readonly defaultAnchor: Anchor;
   readonly defaultZone: ZoneKey;
+  readonly defaultHidden?: boolean; // escondido en un perfil nuevo: sale en «Añadir panel»
   readonly render: () => React.JSX.Element;
 }
 
@@ -70,29 +71,30 @@ function definePanel(spec: PanelSpec): PanelDefinition {
   };
 }
 
+// Visibles por defecto: Conversaciones, Contexto, Ficheros, Actividad y Navegador. El resto, escondido (`defaultHidden`): se añade desde «Añadir panel».
 const PANEL_SPECS: readonly PanelSpec[] = [
   { id: 'conversations', titleKey: 'menu.panel.conversations', icon: 'panelConversations', defaultAnchor: 'left', defaultZone: 'a', render: () => createElement(ChatSidebar) },
-  { id: 'usage', titleKey: 'menu.panel.usage', icon: 'panelUsage', defaultAnchor: 'left', defaultZone: 'b', render: () => createElement(UsagePanel) },
-  { id: 'permissions', titleKey: 'menu.panel.permissions', icon: 'panelPermissions', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(PermissionPanel) },
+  { id: 'usage', titleKey: 'menu.panel.usage', icon: 'panelUsage', defaultAnchor: 'left', defaultZone: 'b', defaultHidden: true, render: () => createElement(UsagePanel) },
+  { id: 'permissions', titleKey: 'menu.panel.permissions', icon: 'panelPermissions', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true, render: () => createElement(PermissionPanel) },
   { id: 'context', titleKey: 'menu.panel.context', icon: 'panelContext', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(TranscriptContextPanel) },
-  { id: 'logs', titleKey: 'menu.panel.logs', icon: 'panelLogs', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(TranscriptLogPanel) },
-  { id: 'memory', titleKey: 'menu.panel.memory', icon: 'panelMemory', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(MemoryPanel) },
-  { id: 'mcp', title: 'MCP', icon: 'panelMcp', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(McpPanel) },
+  { id: 'logs', titleKey: 'menu.panel.logs', icon: 'panelLogs', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true, render: () => createElement(TranscriptLogPanel) },
+  { id: 'memory', titleKey: 'menu.panel.memory', icon: 'panelMemory', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true, render: () => createElement(MemoryPanel) },
+  { id: 'mcp', title: 'MCP', icon: 'panelMcp', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true, render: () => createElement(McpPanel) },
   // 2.9.b. Van a la MISMA zona que las cinco anteriores (tablist unico del Inspector). Anadir ids
   // nuevos NO obliga a borrar `panels-layout.json`: `reconcileLayoutWithRegistry` los añade al final y
   // solo abre uno si la zona estaba vacia — en una instalacion existente aparecen tres iconos nuevos y
   // ninguno se abre solo. Lo que si obligaria a borrarlo es cambiar el `defaultZone` de uno que YA
   // existia, y aqui no se cambia ninguno.
-  { id: 'instructions', titleKey: 'menu.panel.instructions', icon: 'panelInstructions', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(InstructionsPanel) },
-  { id: 'commands', titleKey: 'menu.panel.commands', icon: 'panelCommands', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(CommandsPanel) },
-  { id: 'agents', titleKey: 'menu.panel.agents', icon: 'panelAgents', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(AgentsPanel) },
+  { id: 'instructions', titleKey: 'menu.panel.instructions', icon: 'panelInstructions', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true, render: () => createElement(InstructionsPanel) },
+  { id: 'commands', titleKey: 'menu.panel.commands', icon: 'panelCommands', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true, render: () => createElement(CommandsPanel) },
+  { id: 'agents', titleKey: 'menu.panel.agents', icon: 'panelAgents', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true, render: () => createElement(AgentsPanel) },
   // Herramientas que la sesion cargo de verdad. Mismo criterio que las de arriba: id NUEVO en la misma
   // zona, asi que `reconcileLayoutWithRegistry` lo añade al final sin abrirlo solo y sin obligar a
   // borrar `panels-layout.json`.
-  { id: 'tools', titleKey: 'menu.panel.tools', icon: 'panelTools', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(ToolsPanel) },
+  { id: 'tools', titleKey: 'menu.panel.tools', icon: 'panelTools', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true, render: () => createElement(ToolsPanel) },
   // Artifacts publicados por la conversacion activa (peticion del usuario). Mismo criterio que los de
   // arriba: id nuevo en la misma zona, asi que aparece sin abrirse solo ni obligar a borrar el layout.
-  { id: 'artifacts', titleKey: 'menu.panel.artifacts', icon: 'panelArtifacts', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(ArtifactsPanel) },
+  { id: 'artifacts', titleKey: 'menu.panel.artifacts', icon: 'panelArtifacts', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true, render: () => createElement(ArtifactsPanel) },
   // Ficheros que la conversacion ha CREADO (2.10, peticion del usuario: "que aparezca a la derecha como
   // un artifact y asi poder ver el plan, poder editarlo"). Mismo criterio que los de arriba: id NUEVO en
   // la misma zona, asi que `reconcileLayoutWithRegistry` lo añade al final sin abrirlo solo y sin
@@ -104,7 +106,7 @@ const PANEL_SPECS: readonly PanelSpec[] = [
   { id: 'activity', titleKey: 'menu.panel.activity', icon: 'panelActivity', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(ActivityPanel) },
   // Las PR del repo de la pestaña y las de la conversacion (F5.5, Q08). Id nuevo en la misma zona: aparece sin
   // abrirse solo y sin obligar a borrar `panels-layout.json`; lo abre «Abrir en el panel» de la barra de PR.
-  { id: 'pullRequests', titleKey: 'menu.panel.pullRequests', icon: 'panelPullRequests', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(PullRequestsPanel) },
+  { id: 'pullRequests', titleKey: 'menu.panel.pullRequests', icon: 'panelPullRequests', defaultAnchor: 'right', defaultZone: 'a', defaultHidden: true, render: () => createElement(PullRequestsPanel) },
   // Navegador de la sesion (F11b.3, D-S7). Id nuevo en la misma zona: aparece sin abrirse solo; lo revela el agente al abrirlo.
   { id: 'browser', titleKey: 'menu.panel.browser', icon: 'globe', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(BrowserPanel) },
 ];

@@ -6,7 +6,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { posix, win32 } from 'node:path';
 
-export const HOST_PROTOCOL = '1.7';
+export const HOST_PROTOCOL = '1.8';
 export const CHALLENGE_CONTEXT = 'mage-host-challenge-v1:';
 export const CHALLENGE_NONCE_BYTES = 32;
 export const NOT_MAGE_SERVER = 'El servidor del pipe no es el de Mage';
@@ -170,10 +170,12 @@ export async function verifyServer(rpc, token, randomBytes) {
 
 const CALLER_PATTERN = /^[0-9a-f]{64}$/;
 
-// `client.caller` (la credencial MAGE_MCP_CALLER) solo viaja si tiene la forma esperada; nunca se escribe en un mensaje.
-function helloClient(client, clientVersion) {
+// `client.caller` (la credencial MAGE_MCP_CALLER) y `clientToken` (el de un cliente emparejado, host 1.8) solo viajan si
+// tienen la forma esperada; nunca se escriben en un mensaje.
+function helloClient(client, clientVersion, clientToken) {
   const caller = typeof client.caller === 'string' && CALLER_PATTERN.test(client.caller) ? { caller: client.caller } : {};
-  return { client: { kind: client.kind, version: clientVersion }, ...caller };
+  const paired = typeof clientToken === 'string' && CALLER_PATTERN.test(clientToken) ? { clientToken } : {};
+  return { client: { kind: client.kind, version: clientVersion }, ...caller, ...paired };
 }
 
 // El host 1.6 entiende `client.setLanguage`; a uno anterior no se le manda (su `hello` y sus métodos son estrictos).
@@ -183,7 +185,7 @@ export function supportsClientLanguage(protocol) {
   return match !== null && Number(match[1]) === 1 && Number(match[2]) >= 6;
 }
 
-export async function connectVerified({ userDataDir, clientVersion, deps, client = { kind: 'terminal' }, language }) {
+export async function connectVerified({ userDataDir, clientVersion, deps, client = { kind: 'terminal' }, language, clientToken }) {
   const { address, token } = readHostFiles(userDataDir, deps);
   verifyUnixEndpoint(address, deps);
   const socket = await deps.connect(address);
@@ -194,7 +196,7 @@ export async function connectVerified({ userDataDir, clientVersion, deps, client
     socket.destroy();
     throw error;
   }
-  const hello = await rpc.call('hello', { protocol: HOST_PROTOCOL, ...helloClient(client, clientVersion), token });
+  const hello = await rpc.call('hello', { protocol: HOST_PROTOCOL, ...helloClient(client, clientVersion, clientToken), token });
   if (language !== undefined && supportsClientLanguage(hello.protocol)) await setLanguage(rpc, socket, language);
   return { rpc, socket, hello };
 }

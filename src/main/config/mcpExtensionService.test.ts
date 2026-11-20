@@ -151,24 +151,25 @@ describe('McpExtensionService', () => {
     expect(servers).toMatchObject([{ name: 'db', command: 'node', args: [join(ROOT, 'db', 'server', 'index.js')], secrets: { MAGE_MCP_SECRET_DB_KEY: 'secreto-k' } }]);
   });
 
-  // De la boveda al --mcp-config que se escribe en disco: el valor no puede aparecer en ningun fichero.
-  it('resolveActive_hastaElMcpConfigGenerado_elValorDeLaBovedaNoLlegaANingunFichero', () => {
+  // De la boveda al --mcp-config: el valor solo esta en el fichero generado (el de la cuenta, solo del usuario),
+  // nunca en el estado de la extension ni en el entorno del CLI, que hereda el Bash del agente.
+  it('resolveActive_hastaElMcpConfigGenerado_elValorDeLaBovedaSoloEnElGenerado', () => {
+    // Arrange
     const { service, writeArchive, fs } = setup();
     writeArchive(manifest());
     service.install(service.previewInstall(ARCHIVE).token);
     service.saveConfig('db', { key: 'secreto-k' });
     let generated = '';
-
-    const { env } = toClaudeArgs(service.resolveActive().servers, null, (text) => {
+    // Act
+    toClaudeArgs(service.resolveActive().servers, null, (text) => {
       generated = text;
       return '/gen/x.json';
     });
-
+    // Assert
     const onDisk = [...fs.files.values()].map((data) => new TextDecoder().decode(data));
-    expect(generated).toContain('${MAGE_MCP_SECRET_DB_KEY}');
-    expect(generated).not.toContain('secreto-k');
+    expect(generated).toContain('secreto-k');
+    expect(generated).not.toContain('${MAGE_MCP_SECRET_DB_KEY}');
     expect(onDisk.some((text) => text.includes('secreto-k'))).toBe(false);
-    expect(env.MAGE_MCP_SECRET_DB_KEY).toBe('secreto-k');
   });
 
   it('resolveActive_desactivadaOIncompleta_noSaleYLaIncompletaAvisa', () => {

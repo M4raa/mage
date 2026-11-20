@@ -6,7 +6,7 @@ import { RETIRED_PROVIDER_IDS } from '@shared/providers';
 import { isPlaceholderTitle } from '@shared/conversationTitle';
 import type { Tab } from './types';
 import { conversationIdOfTab } from './conversationId';
-import { findLeafPath, fromLegacySplit, singleLeaf, pruneSplitLayout } from './splitLayout';
+import { activateTab, findLeafPath, fromLegacySplit, singleLeaf, pruneSplitLayout } from './splitLayout';
 
 // Mapeo PURO entre el estado del workbench y el workspace persistido (M2.5). Sin IPC ni store: el
 // store llama a estas funciones y delega el I/O en window.mage.{load,save}Workspace.
@@ -118,7 +118,9 @@ export function restoreTabs(
   const rawLayout: SplitLayout =
     persisted.splitLayout ?? fromLegacySplit(activeTabId, persisted.splitTabId ?? null, persisted.splitDirection === 'col' ? 'col' : 'row');
   const pruned = activeTabId.length === 0 ? null : pruneSplitLayout(rawLayout, survivingIds);
-  const splitLayout = pruned === null || findLeafPath(pruned, activeTabId) === null ? singleLeaf(activeTabId) : pruned;
+  // La activa se ENSEÑA en su hoja: si la guardada se perdió con su cuenta, la poda elige para esa hoja otra pestaña
+  // que no tiene por qué ser `activeTabId`, y la barra marcaría una mientras el store manda en otra.
+  const splitLayout = pruned === null || findLeafPath(pruned, activeTabId) === null ? singleLeaf(activeTabId) : activateTab(pruned, activeTabId);
   return { tabs, activeTabId, splitLayout };
 }
 

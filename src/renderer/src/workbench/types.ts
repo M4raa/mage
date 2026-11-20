@@ -80,6 +80,10 @@ export interface Tab {
   readonly effort?: string;
   // Ultracode (solo Claude): ajuste de ARRANQUE, como el esfuerzo. undefined -> apagado.
   readonly ultracode?: boolean;
+  // «Continuar al restablecerse» (solo Claude por suscripción): si la sesión choca con la ventana de 5 h, main le manda
+  // «continúa» al restablecerse. Sin sesión aún, es el borrador que se pasa al crearla. No se persiste: tras reiniciar
+  // Mage, main ya no lo recuerda.
+  readonly resumeOnReset?: boolean;
   // Tope de gasto (--max-budget-usd, M2.4) en CENTAVOS ENTEROS. undefined -> sin tope.
   readonly maxBudgetUsdCents?: number;
   // Modo de permiso (M2.6). undefined -> 'default'. Cambia con el ciclo shift+tab / chip del PromptBar.

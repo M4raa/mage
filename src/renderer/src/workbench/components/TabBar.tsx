@@ -44,6 +44,7 @@ export function TabBar({
   const setActiveTab = useWorkbenchStore((s) => s.setActiveTab);
   const focusPrompt = useWorkbenchStore((s) => s.focusPrompt);
   const closeTab = useWorkbenchStore((s) => s.closeTab);
+  const requestCloseTab = useWorkbenchStore((s) => s.requestCloseTab);
   const addTabToPane = useWorkbenchStore((s) => s.addTabToPane);
   const openNewTabDialog = useWorkbenchStore((s) => s.openNewTabDialog);
   const openInNewWindow = useWorkbenchStore((s) => s.openInNewWindow);
@@ -154,7 +155,7 @@ export function TabBar({
               setActiveTab(tab.id);
               focusPrompt();
             }}
-            onClose={() => closeTab(tab.id)}
+            onClose={() => requestCloseTab(tab.id)}
             moveBlockedReason={tabMoveBlockedReason(statusByChat[tab.id])}
             dropSide={tabDrop.target?.tabId === tab.id ? tabDrop.target.side : null}
             onDragOutOfWindow={() => void dropTabOutside(tab.id).catch(reportMoveError)}
@@ -209,7 +210,7 @@ export function TabBar({
             x={menu.x}
             y={menu.y}
             onClose={() => setMenu(null)}
-            onCloseTab={() => closeTab(menu.tab.id)}
+            onCloseTab={() => requestCloseTab(menu.tab.id)}
             onCloseAll={closeAllTabs}
             onCloseInactive={closeInactiveTabs}
             onTogglePinned={() => toggleTabPinned(menu.tab.id)}

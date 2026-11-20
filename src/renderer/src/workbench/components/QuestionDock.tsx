@@ -59,7 +59,7 @@ export function QuestionDock(): React.JSX.Element {
 }
 
 // El panel del split donde esta el usuario: solo ahi puede una pregunta tomar el foco (#58).
-function isActivePane(tabId: string): boolean {
+export function isActivePane(tabId: string): boolean {
   return useWorkbenchStore.getState().activeTabId === tabId;
 }
 

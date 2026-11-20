@@ -172,6 +172,16 @@ export interface SessionPlugin {
 // codex) o fallo. Evento INTERNO de main: lo consume la coordinacion.
 export type SteerOutcome = 'active_turn' | 'new_turn' | 'no_active_turn' | 'not_steerable' | 'failed';
 
+// Un modelo que ofrece la tarjeta «Lanzar» de una sesion delegada, con los esfuerzos que admite (vacio = sin catalogo).
+export interface LaunchModelOption {
+  readonly id: string;
+  readonly label: string;
+  readonly efforts: readonly string[];
+}
+export type LaunchOutcome =
+  | { readonly launched: true; readonly model: string | null; readonly effort: string | null; readonly conversationId: string }
+  | { readonly launched: false };
+
 // Union discriminada por `kind`. Cada variante es inmutable.
 export type MageEvent =
   // Delegacion (D-M9), en la conversacion creadora: nace una hija por la peticion `requestId`.
@@ -190,11 +200,25 @@ export type MageEvent =
   | {
       readonly kind: 'delegation_state';
       readonly childId: string;
-      readonly state: 'working' | 'waiting_answer' | 'permission_pending' | 'done' | 'interrupted';
+      readonly state: 'awaiting_launch' | 'working' | 'waiting_answer' | 'permission_pending' | 'done' | 'interrupted';
     }
   // Delegacion (U26): en la propia DELEGADA, si espera la respuesta de su creadora tras `mage_ask_creator`.
   // `creatorId` es la conversacion creadora. Lo pinta el chip de su pestana; no se persiste.
   | { readonly kind: 'delegation_waiting'; readonly creatorId: string; readonly waiting: boolean }
+  // Delegacion, en la CREADORA: una hija pedida sin modelo o sin esfuerzo espera a que el usuario la lance. Lleva lo
+  // que pinta la tarjeta: lo heredado (null = el por defecto de la cuenta) y los modelos de la cuenta con sus esfuerzos.
+  | {
+      readonly kind: 'delegation_launch';
+      readonly childId: string;
+      readonly title: string;
+      readonly provider: string;
+      readonly accountId: string;
+      readonly model: string | null;
+      readonly effort: string | null;
+      readonly models: readonly LaunchModelOption[];
+    }
+  // Delegacion: el usuario contesto la tarjeta. Lanzada lleva lo elegido y el id real de la conversacion.
+  | { readonly kind: 'delegation_launch_settled'; readonly childId: string; readonly outcome: LaunchOutcome }
   // Arranque de sesion. `mcpServers` y `slashCommands` son lo que la sesion cargo DE VERDAD (unica
   // fuente fiable: ni el modelo ni `claude mcp list` lo saben). Vacios si el CLI no los reporta.
   | {
@@ -344,6 +368,9 @@ export type MageEvent =
   // (`blocked`: el comando denegado; null si lo permitió una regla). Ese permiso NO se anunció a los clientes.
   // Una sesion en segundo plano que nadie reclamo caduca (F2.4): main la para justo despues de este evento.
   | { readonly kind: 'background_expired' }
+  // Main cierra una subsesion terminada (o a peticion de su creadora) y la para justo despues de este evento: la pestaña
+  // que la tenga abierta suelta su estado de motor y queda lista para reabrirla con `--resume` al escribir.
+  | { readonly kind: 'closed_by_mage' }
   // Respuesta del motor a una peticion de Mage con `requestId` (rewind/fork, F4.4/F4.5): la emite el adapter al
   // reconocer la respuesta del CLI. `result` es el cuerpo TAL CUAL (su forma depende de la peticion); `error`
   // lleva el motivo cuando `ok` es false (o `process_not_running`/`process_exited` si no hubo proceso).

@@ -6,7 +6,7 @@ import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostConnectionDeps, type McpTunnelHandle, type HostSessions, type HostTransport } from './hostConnection';
 import type { HostControl } from './hostControl';
 import type { HostMode } from './hostServer';
-import { BypassPermissionsBlockedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError } from './hostErrors';
+import { BypassPermissionsBlockedError, PairingRefusedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError } from './hostErrors';
 import { HOST_PROTOCOL, HostErrorCode } from './hostProtocol';
 import { challengeProof } from './hostToken';
 
@@ -15,7 +15,11 @@ const NONCE = '0'.repeat(64);
 const SNAPSHOT: ConversationSnapshot = { sessionId: 's1', provider: 'claude', conversationId: 'c1', nativeRef: null, lastSeq: 7, state: 'idle', queue: [], pending: [], background: false };
 const EVENT: SequencedSessionEvent = { sessionId: 's1', conversationId: 'c1', seq: 8, at: 1, event: { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } } };
 
-function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<HostControl>; rewind?: Partial<HostConnectionDeps['rewind']>; maxLineBytes?: number; mode?: HostMode } = {}) {
+// Token de un cliente emparejado: el `hello` del arnés lo presenta por defecto (acceso completo).
+const CLIENT_TOKEN = 'c'.repeat(64);
+const NEW_CLIENT_TOKEN = '9'.repeat(64);
+
+function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<HostControl>; rewind?: Partial<HostConnectionDeps['rewind']>; maxLineBytes?: number; mode?: HostMode; isMageCaller?: (credential: string) => boolean } = {}) {
   const written: string[] = [];
   let buffered = 0;
   let ended = false;
@@ -51,16 +55,30 @@ function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<
   const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
   const log = vi.fn();
   let ids = 0;
+  // Doble del almacén: CLIENT_TOKEN es `client-1`; `revoke(id)` llama a quien escucha ese cliente.
+  const revokedListeners = new Map<string, () => void>();
+  const clients = {
+    authenticate: vi.fn((token: string) => (token === CLIENT_TOKEN ? 'client-1' : null)),
+    add: vi.fn(() => ({ clientId: 'client-2', clientToken: NEW_CLIENT_TOKEN })),
+    onRevoked: vi.fn((id: string, listener: () => void) => { revokedListeners.set(id, listener); return () => { revokedListeners.delete(id); }; }),
+  };
+  const revoke = (id: string) => revokedListeners.get(id)?.();
+  // Doble del diálogo: la respuesta la da el test (`approvePairing` / `refusePairing`).
+  const answers: { resolve: () => void; reject: (err: Error) => void }[] = [];
+  const pairing = { ask: vi.fn(() => new Promise<void>((resolve, reject) => { answers.push({ resolve, reject }); })) };
   const connection = new HostConnection(transport, {
-    sessions, control, rewind, mcp, mode: options.mode ?? 'gui', token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
+    sessions, control, rewind, mcp, mode: options.mode ?? 'gui', token: TOKEN,
+    isMageCaller: options.isMageCaller ?? (() => true),
+    clients,
+    pairing, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
     setTimer: (fn, ms) => { const timer = { fn, ms, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
     ...(options.maxLineBytes === undefined ? {} : { maxLineBytes: options.maxLineBytes }),
   });
   const send = (message: unknown) => connection.receive(Buffer.from(`${JSON.stringify(message)}\n`));
   const lines = () => written.join('').split('\n').filter((line) => line.length > 0).map((line) => JSON.parse(line) as Record<string, any>);
   const hello = (overrides: Record<string, unknown> = {}) =>
-    send({ jsonrpc: '2.0', id: 1, method: 'hello', params: { protocol: HOST_PROTOCOL, client: { kind: 'terminal', version: '1' }, token: TOKEN, ...overrides } });
-  return { connection, sessions, control, rewind, mcp, tunnel, mcpSends, send, lines, written, hello, sinks, unsubscribe, timers, log, isEnded: () => ended, setBuffered: (n: number) => { buffered = n; } };
+    send({ jsonrpc: '2.0', id: 1, method: 'hello', params: { protocol: HOST_PROTOCOL, client: { kind: 'terminal', version: '1' }, token: TOKEN, clientToken: CLIENT_TOKEN, ...overrides } });
+  return { connection, sessions, control, rewind, mcp, tunnel, mcpSends, send, lines, written, hello, sinks, unsubscribe, timers, log, clients, pairing, answers, revoke, revokedListeners, isEnded: () => ended, setBuffered: (n: number) => { buffered = n; } };
 }
 
 describe('HostConnection — autenticación', () => {
@@ -728,7 +746,7 @@ describe('HostConnection — métodos 1.2', () => {
 
     const [, , blocked] = h.lines();
     expect(blocked!.error.code).toBe(HostErrorCode.PermissionModeBlocked);
-    expect(blocked!.error.message).toContain('does not accept the “Bypass permissions” mode');
+    expect(blocked!.error.message).toContain('does not accept full-access modes that never ask');
   });
 
   it('sessionCancelQueued_llegaARemoveQueued', () => {
@@ -970,6 +988,213 @@ describe('rewind (1.4)', () => {
     await flush();
 
     expect(h.written.length).toBe(before);
+  });
+});
+
+describe('HostConnection — credenciales (1.8)', () => {
+  const CALLER = 'ef'.repeat(32);
+
+  it('hello_soloTokenDeArranque_accesoLectura', () => {
+    const h = harness();
+
+    h.hello({ clientToken: undefined });
+
+    expect(h.lines()[0]!.result.access).toBe('read');
+  });
+
+  it('hello_tokenDeClienteEmparejado_accesoCompleto', () => {
+    const h = harness();
+
+    h.hello();
+
+    expect(h.lines()[0]!.result.access).toBe('full');
+  });
+
+  it('hello_tokenDeClienteDesconocido_lecturaSinCerrarNiRepetirlo', () => {
+    const h = harness();
+
+    h.hello({ clientToken: 'd'.repeat(64) });
+
+    expect(h.lines()[0]!.result.access).toBe('read');
+    expect(h.isEnded()).toBe(false);
+    expect(JSON.stringify(h.log.mock.calls)).not.toContain('d'.repeat(64));
+  });
+
+  it('hello_tokenDeClienteMalFormado_invalidParams', () => {
+    const h = harness();
+
+    h.hello({ clientToken: 'no-hex' });
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.InvalidParams);
+  });
+
+  it('lectura_soloTokenDeArranque_responde', () => {
+    const h = harness();
+    h.hello({ clientToken: undefined });
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'sessions.list' });
+
+    expect(h.lines()[1]!.result.sessions).toEqual([SNAPSHOT]);
+  });
+
+  it('escritura_soloTokenDeArranque_notPairedSinLlamarAlCoordinador', () => {
+    const h = harness();
+    h.hello({ clientToken: undefined });
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.send', params: { sessionId: 's1', text: 'hola', commandId: 'k' } });
+
+    expect(h.lines()[1]!.error.code).toBe(HostErrorCode.NotPaired);
+    expect(h.lines()[1]!.error.message).toMatch(/no está emparejado/);
+    expect(h.sessions.send).not.toHaveBeenCalled();
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('crear_soloTokenDeArranque_notPairedConTextoLocalizado', () => {
+    const h = harness();
+    h.hello({ clientToken: undefined });
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.create', params: {} });
+
+    expect(h.lines()[1]!.error.code).toBe(HostErrorCode.NotPaired);
+    expect(h.lines()[1]!.error.data.localized.key).toBe('errors.host.notPaired');
+    expect(h.control.createSession).not.toHaveBeenCalled();
+  });
+
+  it('mcp_conLlamanteVivoSinEmparejar_abreTunelPeroNoEscribe', () => {
+    const h = harness();
+    h.hello({ client: { kind: 'mcp', version: '1' }, caller: CALLER, clientToken: undefined });
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'mcp.message', params: { message: { jsonrpc: '2.0', id: 1, method: 'tools/list' } } });
+    h.send({ jsonrpc: '2.0', id: 3, method: 'host.stop' });
+
+    expect(h.lines()[0]!.result.access).toBe('tunnel');
+    expect(h.tunnel.receive).toHaveBeenCalledTimes(1);
+    expect(h.lines()[2]!.error.code).toBe(HostErrorCode.NotPaired);
+    expect(h.control.requestQuit).not.toHaveBeenCalled();
+  });
+
+  it('mcp_conLlamanteMuerto_sinTunelYMensajeNotPaired', () => {
+    const h = harness({ isMageCaller: () => false });
+    h.hello({ client: { kind: 'mcp', version: '1' }, caller: CALLER, clientToken: undefined });
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'mcp.message', params: { message: {} } });
+
+    expect(h.lines()[0]!.result.access).toBe('read');
+    expect(h.mcp.open).not.toHaveBeenCalled();
+    expect(h.lines()[1]!.error.code).toBe(HostErrorCode.NotPaired);
+  });
+
+  const flushPairing = () => new Promise<void>((resolve) => setImmediate(resolve));
+  const PAIR = { jsonrpc: '2.0', id: 2, method: 'host.pair', params: { clientName: 'mage', clientKind: 'terminal' } };
+
+  it('pair_autorizado_devuelveTokenUnaVezYLaConexionPasaAEmparejada', async () => {
+    const h = harness();
+    h.hello({ clientToken: undefined });
+
+    h.send(PAIR);
+    expect(h.pairing.ask).toHaveBeenCalledWith({ clientName: 'mage', clientKind: 'terminal' });
+    h.answers[0]!.resolve();
+    await flushPairing();
+    h.send({ jsonrpc: '2.0', id: 3, method: 'session.interrupt', params: { sessionId: 's1' } });
+
+    expect(h.lines()[1]!.result).toEqual({ clientId: 'client-2', clientToken: NEW_CLIENT_TOKEN });
+    expect(h.clients.add).toHaveBeenCalledWith({ name: 'mage', kind: 'terminal' });
+    expect(h.lines()[2]!.result).toEqual({ queued: [] });
+    expect(JSON.stringify(h.log.mock.calls)).not.toContain(NEW_CLIENT_TOKEN);
+  });
+
+  it('pair_rechazado_pairingRefusedYSigueEnLectura', async () => {
+    const h = harness();
+    h.hello({ clientToken: undefined });
+
+    h.send(PAIR);
+    h.answers[0]!.reject(new PairingRefusedError('rejected'));
+    await flushPairing();
+    h.send({ jsonrpc: '2.0', id: 3, method: 'session.interrupt', params: { sessionId: 's1' } });
+
+    expect(h.lines()[1]!.error.code).toBe(HostErrorCode.PairingRefused);
+    expect(h.lines()[1]!.error.data.localized.key).toBe('errors.host.pairRejected');
+    expect(h.clients.add).not.toHaveBeenCalled();
+    expect(h.lines()[2]!.error.code).toBe(HostErrorCode.NotPaired);
+  });
+
+  it('pair_sinVentanaOPlazoVencido_motivoDistinto', async () => {
+    const h = harness();
+    h.hello({ clientToken: undefined });
+
+    h.send(PAIR);
+    h.send({ ...PAIR, id: 3 });
+    h.answers[0]!.reject(new PairingRefusedError('noWindow'));
+    h.answers[1]!.reject(new PairingRefusedError('timeout'));
+    await flushPairing();
+
+    expect(h.lines()[1]!.error.data.localized.key).toBe('errors.host.pairNoWindow');
+    expect(h.lines()[2]!.error.data.localized.key).toBe('errors.host.pairTimeout');
+  });
+
+  it('pair_conexionCerradaAntesDeAutorizar_noDaDeAltaNada', async () => {
+    const h = harness();
+    h.hello({ clientToken: undefined });
+    h.send(PAIR);
+
+    h.connection.closed();
+    h.answers[0]!.resolve();
+    await flushPairing();
+
+    expect(h.clients.add).not.toHaveBeenCalled();
+    expect(h.lines()).toHaveLength(1);
+  });
+
+  it('pair_nombreConSaltoDeLinea_invalidParamsSinPreguntar', () => {
+    const h = harness();
+    h.hello({ clientToken: undefined });
+
+    h.send({ ...PAIR, params: { clientName: 'uno\ndos', clientKind: 'terminal' } });
+    h.send({ ...PAIR, id: 3, params: { clientName: 'x'.repeat(65), clientKind: 'terminal' } });
+    h.send({ ...PAIR, id: 4, params: { clientName: '   ', clientKind: 'terminal' } });
+    h.send({ ...PAIR, id: 5, params: { clientName: 'mage', clientKind: 'otro' } });
+
+    expect(h.lines().slice(1).map((line) => line.error.code)).toEqual([HostErrorCode.InvalidParams, HostErrorCode.InvalidParams, HostErrorCode.InvalidParams, HostErrorCode.InvalidParams]);
+    expect(h.pairing.ask).not.toHaveBeenCalled();
+  });
+
+  it('revocar_conexionEmparejada_seCortaConNotPaired', () => {
+    const h = harness();
+    h.hello();
+
+    h.revoke('client-1');
+
+    expect(h.lines()[1]).toMatchObject({ id: null, error: { code: HostErrorCode.NotPaired } });
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('revocar_clienteRecienEmparejado_seCorta', async () => {
+    const h = harness();
+    h.hello({ clientToken: undefined });
+    h.send(PAIR);
+    h.answers[0]!.resolve();
+    await flushPairing();
+
+    h.revoke('client-2');
+
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('cerrar_conexionEmparejada_dejaDeEscucharLaRevocacion', () => {
+    const h = harness();
+    h.hello();
+
+    h.connection.closed();
+
+    expect(h.revokedListeners.size).toBe(0);
+  });
+
+  it('terminal_conLlamanteVivo_soloLectura', () => {
+    const h = harness();
+
+    h.hello({ caller: CALLER, clientToken: undefined });
+
+    expect(h.lines()[0]!.result.access).toBe('read');
   });
 });
 

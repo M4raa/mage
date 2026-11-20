@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NOT_MAGE_SERVER } from './hostLink.mjs';
 import { reconnectWithRetries } from './reconnect.mjs';
+import { NOT_PAIRED_CODE } from './pairing.mjs';
 
 const delays = (sleep) => sleep.mock.calls.map(([ms]) => ms);
 
@@ -26,6 +27,16 @@ describe('reconnectWithRetries', () => {
     await expect(promise).rejects.toMatchObject({ message: expect.stringContaining('3 intentos'), cause: last });
     expect(delays(sleep)).toEqual([1000, 2000, 4000]);
     expect(connect).toHaveBeenCalledTimes(3);
+  });
+
+  it('reconnect_terminalRevocada_noReintenta', async () => {
+    const sleep = vi.fn(async () => {});
+    const revoked = Object.assign(new Error('ya no está emparejada'), { code: NOT_PAIRED_CODE });
+    const connect = vi.fn().mockRejectedValue(revoked);
+
+    await expect(reconnectWithRetries({ connect, sleep, onAttempt: vi.fn() })).rejects.toBe(revoked);
+
+    expect(connect).toHaveBeenCalledTimes(1);
   });
 
   it('reconnect_impostor_noReintenta', async () => {

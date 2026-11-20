@@ -5,6 +5,7 @@ import { buildUserContentBlocks } from '@shared/imageRefs';
 import type { MageEvent, PermissionDecision, PermissionScope } from '@shared/events';
 import { localized } from '@shared/i18n/localizedText';
 import { isUuid } from '@shared/sessionInput';
+import { withExternalActionAsk } from '@shared/externalActionAsk';
 import { parseElicitationRequest, type ElicitationAnswer } from '@shared/elicitation';
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
@@ -65,8 +66,6 @@ export interface ClaudeAdapterDeps {
   // Clave de API de la cuenta SI Y SOLO SI es una cuenta de Claude por API (grupo E); null para las de
   // suscripcion. La lee main de su boveda: nunca viene del renderer.
   readonly resolveApiKey?: (accountDir: string) => string | null; // por defecto () => null
-  // D5 (#53): ajuste del usuario «Permitir Artifact», apagado por defecto. Se lee en cada arranque.
-  readonly artifactEnabled?: () => boolean; // por defecto () => false
   // T6: valor crudo de MAGE_TEST_ANTHROPIC_BASE_URL y si la app esta empaquetada. Por defecto: sin variable y
   // EMPAQUETADA (lo seguro: nunca redirige).
   readonly testBaseUrl?: () => string | undefined;
@@ -95,7 +94,6 @@ export class ClaudeAdapter implements ProviderAdapter {
   private readonly resolveBinary: () => string;
   private readonly writeMcpConfig: ClaudeMcpConfigWriter;
   private readonly resolveApiKey: (accountDir: string) => string | null;
-  private readonly artifactEnabled: () => boolean;
   private readonly testBaseUrl: () => string | undefined;
   private readonly isPackaged: () => boolean;
   private readonly log: ClaudeAdapterDeps['log'];
@@ -104,7 +102,6 @@ export class ClaudeAdapter implements ProviderAdapter {
     this.resolveBinary = deps.resolveBinary ?? resolveClaudeBinary;
     this.writeMcpConfig = deps.writeMcpConfig ?? refuseClaudeMcpConfig;
     this.resolveApiKey = deps.resolveApiKey ?? (() => null);
-    this.artifactEnabled = deps.artifactEnabled ?? (() => false);
     this.testBaseUrl = deps.testBaseUrl ?? (() => undefined);
     this.isPackaged = deps.isPackaged ?? (() => true); // lo seguro: sin dato, nunca redirige
     this.log = deps.log;
@@ -137,22 +134,23 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (appended.length > 0) args.push('--append-system-prompt', appended);
     // Lo comun (MCP compartidos y extensiones, hooks y permisos) traducido a flags de Claude.
     // Ultracode (medido en 2.1.319: `--settings {"ultracode":true}` hace que el CLI inyecte `ultra_effort_enter`).
-    const shared = claudeSharedLaunch(params.shared, params.accountDir, this.writeMcpConfig, params.ultracode === true ? { ultracode: true } : {});
+    // Acciones externas (publicar, push, escribir en GitHub): reglas `ask` en todos los modos salvo «Omitir permisos».
+    const launchSettings = withExternalActionAsk(params.ultracode === true ? { ultracode: true } : {}, params.permissionMode);
+    const shared = claudeSharedLaunch(params.shared, params.accountDir, this.writeMcpConfig, launchSettings);
     args.push(...shared.args);
     // Env del hijo: se fija la cuenta y se SANEA (scrubAgentEnv), que borra toda credencial heredada. El
     // invariante de facturacion vive en un solo sitio: ver src/main/os/agentEnv.ts. Segunda excepcion
     // escrita alli: la clave de una cuenta de Claude por API se pone DESPUES del saneado y solo en el hijo
     // de esa cuenta; las de suscripcion no reciben ninguna.
     const apiKey = this.resolveApiKey(params.accountDir);
-    // #53/D5 (medido en 2.1.309, spike/f1-artifact.mjs): en modo SDK el CLI apaga Artifact salvo con
-    // CLAUDE_CODE_ARTIFACT verdadero. Publica en claude.ai, así que es opción del usuario, apagada por
-    // defecto; el valor va DESPUÉS del env heredado: manda el ajuste, no lo que el usuario exportara.
     const testEndpoint = decideTestAnthropicBaseUrl({ value: this.testBaseUrl(), isPackaged: this.isPackaged(), isApiKeyAccount: apiKey !== null });
     if (testEndpoint.kind === 'ignored') this.log?.('warn', `${TEST_ANTHROPIC_BASE_URL_ENV} ignorada`, { reason: testEndpoint.reason });
     const env: NodeJS.ProcessEnv = {
       ...scrubAgentEnv(process.env),
       [FILE_CHECKPOINTING_ENV]: 'true',
-      CLAUDE_CODE_ARTIFACT: this.artifactEnabled() ? '1' : '0',
+      // La herramienta Artifact de Claude Code, siempre disponible (medido en 2.1.309: en modo SDK el CLI la
+      // apaga salvo con este valor verdadero). Va DESPUÉS del env heredado: manda esto, no lo que se exportara.
+      CLAUDE_CODE_ARTIFACT: '1',
       CLAUDE_CONFIG_DIR: params.accountDir,
       ...shared.env,
       ...(apiKey === null ? {} : { [ANTHROPIC_API_KEY_ENV]: apiKey }),

@@ -30,6 +30,7 @@ const VALID: AppSettings = {
   distrustedFolders: [],
   scratchRetention: '30d',
   closeBehavior: 'background',
+  runningTabClose: 'stop',
   newConversationFolder: 'lastProject',
   importedContextMaxChars: 50_000,
   onboardingCompletedVersion: 1,
@@ -42,8 +43,8 @@ const VALID: AppSettings = {
   adminMode: true,
   hiddenAccounts: ['C:/cuentas/.claude-x'],
   claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
-  artifactEnabled: true,
   hostPermissionAnswers: false,
+  linksOpenExternally: false,
   ghNoticeDismissed: true,
   autoArchiveOnPrClose: true,
   agyCommandRules: { allow: ['git status'], deny: ['rm -rf build'] },
@@ -87,6 +88,25 @@ describe('SettingsStore.load', () => {
     const invalido = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, runtimeShell: 'cmd' }) })).load();
 
     expect([sinCampo.runtimeShell, invalido.runtimeShell]).toEqual(['auto', 'auto']);
+  });
+
+  it('load_sinRunningTabClose_ask', () => {
+    // Un fichero anterior al ajuste no lo trae: se pregunta, que es lo seguro.
+    const { runningTabClose: _ausente, ...previo } = VALID;
+
+    const loaded = new SettingsStore(deps({ readFile: () => JSON.stringify(previo) })).load();
+
+    expect(loaded.runningTabClose).toBe('ask');
+  });
+
+  it('load_runningTabCloseBasura_ask', () => {
+    const file = JSON.stringify({ ...VALID, runningTabClose: 'quit' });
+
+    expect(new SettingsStore(deps({ readFile: () => file })).load().runningTabClose).toBe('ask');
+  });
+
+  it('load_runningTabCloseValido_loConserva', () => {
+    expect(new SettingsStore(deps()).load().runningTabClose).toBe('stop');
   });
 
   it('load_accentByAccountFueraDeRango_caeAVacio', () => {
@@ -501,24 +521,11 @@ describe('SettingsStore.save', () => {
   });
 });
 
-describe('SettingsStore — Artifact (D5)', () => {
-  it('load_sinCampoArtifact_apagado', () => {
-    const { artifactEnabled: _omitted, ...withoutArtifact } = VALID;
-    const store = new SettingsStore(deps({ readFile: () => JSON.stringify(withoutArtifact) }));
+describe('SettingsStore — ajuste de Artifact retirado', () => {
+  it('load_campoArtifactViejo_seIgnoraSinError', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, artifactEnabled: true }) }));
 
-    expect(store.load().artifactEnabled).toBe(false);
-  });
-
-  it('load_artifactBasura_apagado', () => {
-    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, artifactEnabled: 'sí' }) }));
-
-    expect(store.load().artifactEnabled).toBe(false);
-  });
-
-  it('load_artifactEncendido_seConserva', () => {
-    const store = new SettingsStore(deps({ readFile: () => JSON.stringify(VALID) }));
-
-    expect(store.load().artifactEnabled).toBe(true);
+    expect('artifactEnabled' in store.load()).toBe(false);
   });
 });
 

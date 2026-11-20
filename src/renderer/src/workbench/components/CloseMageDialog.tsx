@@ -95,11 +95,17 @@ function WorkingNotice({ working }: { readonly working: number }): React.JSX.Ele
 export function DialogButton({
   primary = false,
   buttonRef,
+  closeTabAction,
+  dialogAction,
   onClick,
   children,
 }: {
   readonly primary?: boolean;
   readonly buttonRef?: React.Ref<HTMLButtonElement>;
+  // Marca para medir el diálogo de cerrar una pestaña que trabaja (`data-close-tab-action`).
+  readonly closeTabAction?: string;
+  // Marca genérica para medir un botón de diálogo (`data-dialog-action`).
+  readonly dialogAction?: string;
   readonly onClick: () => void;
   readonly children: React.ReactNode;
 }): React.JSX.Element {
@@ -107,6 +113,8 @@ export function DialogButton({
   return (
     <button
       ref={buttonRef}
+      data-close-tab-action={closeTabAction}
+      data-dialog-action={dialogAction}
       onClick={onClick}
       className={`rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] transition-colors duration-90 ease-out hover:bg-mg-hover ${tone}`}
     >

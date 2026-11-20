@@ -44,6 +44,12 @@ jobs:
       # El humo del EMPAQUETADO, que es lo unico que prueba que el .exe arranca de verdad. Necesita
       # una sesion con escritorio: `windows-latest` la tiene, a diferencia de los runners de Linux.
       - run: pnpm smoke:packaged
+      # SBOM CycloneDX de la versión, adjunto a la release. Se genera en este trabajo porque es el único
+      # que construye instaladores (Linux y macOS siguen desactivados). Versión de cdxgen fijada: no ampliar sin probarla.
+      - name: SBOM CycloneDX de la versión
+        run: |
+          $version = node -p "require('./package.json').version"
+          pnpm dlx @cyclonedx/cdxgen@12.9.1 -t js --no-recurse -o "release/mage-$version-sbom.cdx.json"
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installers
@@ -51,6 +57,7 @@ jobs:
             release/*.exe
             release/*.msi
             release/latest.yml
+            release/*-sbom.cdx.json
       - name: Crear/actualizar la release en borrador
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -61,6 +68,7 @@ jobs:
             release/*.exe
             release/*.msi
             release/latest.yml
+            release/*-sbom.cdx.json
 
   # Linux y macOS NO se han construido nunca (ver README). Se dejan preparados pero desactivados para
   # no publicar un artefacto que nadie ha visto arrancar: se activan quitando el `if: false` cuando

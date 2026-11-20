@@ -34,6 +34,8 @@ export interface PanelPlacement {
   readonly id: PanelId;
   readonly defaultAnchor: Anchor;
   readonly defaultZone: ZoneKey;
+  /** Escondido en un perfil nuevo: sale en «Añadir panel», no en la barra. */
+  readonly defaultHidden?: boolean;
 }
 
 // Los tres tipos del estado se DERIVAN del esquema de escritura (`panelLayoutSchema.ts`): un campo
@@ -65,7 +67,8 @@ export type PanelLayoutState = Readonly<Omit<z.infer<typeof Schema.PANEL_LAYOUT_
 // Version de esquema que produce SIEMPRE reconcileLayoutWithRegistry, sea cual sea la del fichero
 // cargado: la propia reconciliacion ya es la migracion (§3.3), no queda ningun dato en una version
 // vieja despues de pasar por aqui.
-export const PANEL_LAYOUT_VERSION = 1;
+// 2: los paneles escondidos por defecto se esconden una vez en los perfiles de la versión 1.
+export const PANEL_LAYOUT_VERSION = 2;
 
 // Minimo de una zona ABIERTA, en px: por debajo, su contenido deja de ser legible. Se usa tanto para
 // sanear un `sizePx` corrupto al reconciliar (§3.3) como limite inferior de resolveResize (§6).
@@ -130,7 +133,7 @@ export const ANCHORS: readonly Anchor[] = ['left', 'right', 'bottom'];
 export const ZONE_KEYS: readonly ZoneKey[] = ['a', 'b'];
 
 function registryIdsForZone(registry: readonly PanelPlacement[], anchor: Anchor, zoneKey: ZoneKey): readonly PanelId[] {
-  return registry.filter((p) => p.defaultAnchor === anchor && p.defaultZone === zoneKey).map((p) => p.id);
+  return registry.filter((p) => p.defaultAnchor === anchor && p.defaultZone === zoneKey && p.defaultHidden !== true).map((p) => p.id);
 }
 
 function buildFreshZone(registry: readonly PanelPlacement[], anchor: Anchor, zoneKey: ZoneKey): ZoneState {
@@ -146,7 +149,7 @@ function buildFreshLayout(registry: readonly PanelPlacement[]): PanelLayoutState
   for (const anchor of ANCHORS) {
     stripes[anchor] = { a: buildFreshZone(registry, anchor, 'a'), b: buildFreshZone(registry, anchor, 'b'), splitPx: DEFAULT_SPLIT_SIZE_PX[anchor] };
   }
-  return { version: PANEL_LAYOUT_VERSION, stripes, hiddenPanelIds: [] };
+  return { version: PANEL_LAYOUT_VERSION, stripes, hiddenPanelIds: registry.filter((p) => p.defaultHidden === true).map((p) => p.id) };
 }
 
 // ¿Tiene `loaded` la forma minima para intentar reconciliarlo campo a campo? Un fichero ausente, no
@@ -266,6 +269,28 @@ function sanitizeHiddenIds(rawHidden: unknown, registry: readonly PanelPlacement
   return [...new Set(sanitizePanelIds(rawHidden, registry))].filter((id) => !claimed.has(id));
 }
 
+// Versión 1 → 2: esconde UNA vez los paneles `defaultHidden` que el perfil tenía en la barra. Desde la 2 manda el usuario.
+function hideDefaultHiddenOnce(layout: PanelLayoutState, registry: readonly PanelPlacement[]): PanelLayoutState {
+  const hiddenByDefault = new Set(registry.filter((p) => p.defaultHidden === true).map((p) => p.id));
+  const removed: PanelId[] = [];
+  const stripZone = (zone: ZoneState): ZoneState => {
+    const panelIds = zone.panelIds.filter((id) => !hiddenByDefault.has(id));
+    removed.push(...zone.panelIds.filter((id) => hiddenByDefault.has(id)));
+    // Solo cambia el activo si era uno de los quitados; una zona cerrada a propósito (null) sigue cerrada.
+    const activeWasRemoved = zone.activePanelId !== null && hiddenByDefault.has(zone.activePanelId);
+    if (!activeWasRemoved) return { ...zone, panelIds };
+    return { ...zone, panelIds, activePanelId: panelIds[0] ?? null };
+  };
+  const stripes = {} as Record<Anchor, StripeState>;
+  for (const anchor of ANCHORS) {
+    const stripe = layout.stripes[anchor];
+    stripes[anchor] = { ...stripe, a: stripZone(stripe.a), b: stripZone(stripe.b) };
+  }
+  return { ...layout, stripes, hiddenPanelIds: [...new Set([...layout.hiddenPanelIds, ...removed])] };
+}
+
+const isBeforeVersion2 = (loaded: PanelLayoutState): boolean => typeof loaded.version === 'number' && loaded.version < 2;
+
 // Reconcilia el layout persistido contra el registro de paneles ACTUAL (§3.3): tolera un `loaded`
 // ausente/vacio/corrupto (cae al layout desde cero a partir del registro), añade sin robar el foco
 // los paneles nuevos de una version posterior, y descarta sin lanzar los que ya no existen. Nunca
@@ -297,7 +322,8 @@ export function reconcileLayoutWithRegistry(loaded: PanelLayoutState | null, reg
     for (const zoneKey of ZONE_KEYS) zones[zoneKey] = addRegistryPanels(saved[anchor][zoneKey], { anchor, zoneKey }, registry, taken);
     stripes[anchor] = { ...zones, splitPx: sanitizeSizePx(readRawSplitPx(loaded.stripes, anchor), DEFAULT_SPLIT_SIZE_PX[anchor]) };
   }
-  return { version: PANEL_LAYOUT_VERSION, stripes, hiddenPanelIds };
+  const result = { version: PANEL_LAYOUT_VERSION, stripes, hiddenPanelIds };
+  return isBeforeVersion2(loaded) ? hideDefaultHiddenOnce(result, registry) : result;
 }
 
 // Nueva posicion en px de un divisor de resize (role="separator", §6) dado el tamaño actual y la tecla

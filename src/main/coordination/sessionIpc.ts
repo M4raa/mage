@@ -11,6 +11,7 @@ import {
   SET_EFFORT_SCHEMA,
   SET_MODEL_SCHEMA,
   SET_PERMISSION_MODE_SCHEMA,
+  SET_RESUME_ON_RESET_SCHEMA,
   STOP_TASK_SCHEMA,
   UPDATE_QUEUED_SCHEMA,
 } from '@shared/sessionInput';
@@ -34,7 +35,10 @@ import type { SessionCoordinator } from './sessionCoordinator';
 export type IpcRegister = (channel: string, listener: (event: IpcMainInvokeEvent, arg: unknown) => unknown) => void;
 
 export type SessionCommands = Pick<SessionManager,
-  'setPermissionMode' | 'setModel' | 'setEffort' | 'stopTask'>;
+  'setPermissionMode' | 'setModel' | 'setEffort' | 'stopTask'> & {
+  // «Continuar al restablecerse»: lanza si la cuenta de la sesión no lo admite (solo Claude por suscripción).
+  setResumeOnReset(sessionId: string, enabled: boolean): void;
+};
 
 export interface SessionIpcDeps {
   readonly handle: IpcRegister;
@@ -128,6 +132,10 @@ function registerSessionOptions({ handle, sessions }: SessionIpcDeps, authorize:
   handle(IpcChannel.SessionSetEffort, (event, arg) => {
     const params = authorize(event, IpcChannel.SessionSetEffort, parseSessionInput(SET_EFFORT_SCHEMA, arg, IpcChannel.SessionSetEffort));
     sessions.setEffort(params.sessionId, params.effort);
+  });
+  handle(IpcChannel.SessionSetResumeOnReset, (event, arg) => {
+    const params = authorize(event, IpcChannel.SessionSetResumeOnReset, parseSessionInput(SET_RESUME_ON_RESET_SCHEMA, arg, IpcChannel.SessionSetResumeOnReset));
+    sessions.setResumeOnReset(params.sessionId, params.enabled);
   });
   handle(IpcChannel.SessionStopTask, (event, arg) => {
     const params = authorize(event, IpcChannel.SessionStopTask, parseSessionInput(STOP_TASK_SCHEMA, arg, IpcChannel.SessionStopTask));

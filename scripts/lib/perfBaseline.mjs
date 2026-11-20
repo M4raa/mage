@@ -48,7 +48,7 @@ export function topSelfTime(profile, top = PROFILE_TOP, keep = PROFILE_KEEP) {
 // captura para la siguiente entrada de `eventType`) y se CONFIRMA armada; despues `act()` la provoca y se
 // espera el resultado. «Listo» = `readyExpr` (JS evaluado en la pagina) verdadero en un frame. El plazo
 // corre desde que se arma, haya llegado el evento o no: una medida que no llega lanza, nunca cuelga.
-async function measureInteraction(page, eventType, readyExpr, act) {
+export async function measureInteraction(page, eventType, readyExpr, act) {
   await page.evaluate(({ eventType, readyExpr, timeoutMs }) => {
     const ready = new Function(`return (${readyExpr});`);
     window.__perfResult = new Promise((resolve, reject) => {
@@ -307,8 +307,39 @@ export async function withStep(name, run, page) {
   }
 }
 
+// Como `withStep`, pero un paso que falla NO aborta la linea base: su error ES su medida y queda en su fila del JSON.
+export async function softStep(name, run, page) {
+  try {
+    return await withStep(name, run, page);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// Un perfil nuevo tiene escondidos los paneles que no son de serie (`logs` entre ellos): su boton no esta en la barra.
+// Si falta, se añade con el menu «Añadir panel» de la interfaz (vale en produccion, sin puente de desarrollo). El
+// panel que se añade puede quedar abierto: `measurePanelOpen` lo cierra antes de medir.
+export async function ensurePanelButton(page, panelId) {
+  const button = page.locator(`button[data-stripe-btn="true"][data-panel-id="${panelId}"]`);
+  if ((await button.count()) > 0) return;
+  const adders = page.locator(`button[data-stripe-btn="true"][aria-label="${ui('menu.dock.addPanelLabel')}"]`);
+  const title = ui(`menu.panel.${panelId}`);
+  for (let i = 0; i < (await adders.count()); i++) {
+    await adders.nth(i).click();
+    const item = page.getByRole('menuitem', { name: title, exact: true });
+    if ((await item.count()) > 0) {
+      await item.click();
+      await button.first().waitFor({ state: 'attached', timeout: INTERACTION_TIMEOUT_MS });
+      return;
+    }
+    await page.keyboard.press('Escape');
+    await page.locator('[role="menu"]').first().waitFor({ state: 'detached', timeout: INTERACTION_TIMEOUT_MS });
+  }
+  throw new Error(`El panel ${panelId} no tiene boton en la barra ni entrada «${title}» en ningun menu «Añadir panel»`);
+}
+
 // Ids de las pestañas visibles en la barra, por el DOM (vale tambien sin el puente de desarrollo).
-function tabIdsInBar(page) {
+export function tabIdsInBar(page) {
   return page.evaluate(() => [...document.querySelectorAll('[role="tab"][data-tab-id]')].map((el) => el.getAttribute('data-tab-id')));
 }
 
@@ -324,25 +355,25 @@ export async function runPerfBaseline(page, { openConversation, devBridge, longT
   await withStep('abrirConversaciones', async () => { await openConversation(page); await openConversation(page); }, page);
   const tabs = (await tabIdsInBar(page)).slice(-2);
   const out = { modo: devBridge ? 'desarrollo (electron-vite dev, React de desarrollo)' : 'producción (electron-vite preview del build)', repeticiones: PERF_REPEATS };
-  out.escrituraPrompt = await withStep('escrituraPrompt', () => measureTyping(page), page);
-  out.cambioPestana = await withStep('cambioPestana', () => measureTabSwitch(page, tabs), page);
+  out.escrituraPrompt = await softStep('escrituraPrompt', () => measureTyping(page), page);
+  out.cambioPestana = await softStep('cambioPestana', () => measureTabSwitch(page, tabs), page);
   out.aperturaPanel = {};
-  for (const panel of PANELS) out.aperturaPanel[panel] = await withStep(`aperturaPanel.${panel}`, () => measurePanelOpen(page, panel), page);
-  out.ecoIpcMain = await withStep('ecoIpcMain', () => measureIpcEcho(page), page);
-  out.perfilEscritura = await withStep('perfilEscritura', () => profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); }), page);
-  out.perfilCambioPestana = await withStep('perfilCambioPestana', () => profileWhile(page, async () => { for (let i = 0; i < 10; i++) await page.locator(`[role="tab"][data-tab-id="${tabs[i % 2]}"]`).click(); }), page);
+  for (const panel of PANELS) out.aperturaPanel[panel] = await softStep(`aperturaPanel.${panel}`, async () => { await ensurePanelButton(page, panel); return measurePanelOpen(page, panel); }, page);
+  out.ecoIpcMain = await softStep('ecoIpcMain', () => measureIpcEcho(page), page);
+  out.perfilEscritura = await softStep('perfilEscritura', () => profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); }), page);
+  out.perfilCambioPestana = await softStep('perfilCambioPestana', () => profileWhile(page, async () => { for (let i = 0; i < 10; i++) await page.locator(`[role="tab"][data-tab-id="${tabs[i % 2]}"]`).click(); }), page);
   if (devBridge) await measureWithDevBridge(page, out, tabs);
   // Al final: abrir la conversacion larga cambia la pestaña activa, y las medidas con puente van sobre `tabs`.
-  out.cambioPestanaConTranscripcionLarga = await withStep('cambioPestanaConTranscripcionLarga', () => measureLongTranscriptTabSwitch(page, { openConversation, title: longTranscriptTitle }), page);
+  out.cambioPestanaConTranscripcionLarga = await softStep('cambioPestanaConTranscripcionLarga', () => measureLongTranscriptTabSwitch(page, { openConversation, title: longTranscriptTitle }), page);
   return out;
 }
 
 // Las medidas que inyectan estado por el puente de desarrollo.
 async function measureWithDevBridge(page, out, tabs) {
-  out.conversacionLarga = await withStep('conversacionLarga', () => measureLongConversations(page), page);
-  out.anclaAlAnteponer = await withStep('anclaAlAnteponer', () => measurePrependAnchor(page), page);
-  out.volverAlFinal = await withStep('volverAlFinal', () => scrollActiveChatToBottom(page), page);
-  out.escrituraConConversacionLarga = await withStep('escrituraConConversacionLarga', () => measureTyping(page), page);
-  out.cambioPestanaConConversacionLarga = await withStep('cambioPestanaConConversacionLarga', () => measureTabSwitch(page, tabs), page);
-  out.perfilEscrituraConConversacionLarga = await withStep('perfilEscrituraConConversacionLarga', () => profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); }), page);
+  out.conversacionLarga = await softStep('conversacionLarga', () => measureLongConversations(page), page);
+  out.anclaAlAnteponer = await softStep('anclaAlAnteponer', () => measurePrependAnchor(page), page);
+  out.volverAlFinal = await softStep('volverAlFinal', () => scrollActiveChatToBottom(page), page);
+  out.escrituraConConversacionLarga = await softStep('escrituraConConversacionLarga', () => measureTyping(page), page);
+  out.cambioPestanaConConversacionLarga = await softStep('cambioPestanaConConversacionLarga', () => measureTabSwitch(page, tabs), page);
+  out.perfilEscrituraConConversacionLarga = await softStep('perfilEscrituraConConversacionLarga', () => profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); }), page);
 }

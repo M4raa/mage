@@ -27,6 +27,9 @@ export interface AccountInfo {
   readonly defaultModel: string | null; // settings.json -> model (o null)
 }
 
+// Estado de login releido del disco para UNA cuenta («Reintentar» y fin de turno).
+export type AccountLoginState = Pick<AccountInfo, 'loginStatus' | 'expiresAt'>;
+
 // Alta de una cuenta que no es la suscripcion de Claude (grupo E, «Añadir cuenta» para la matriz). La
 // clave (solo en las de API) sube UNA vez, en este mensaje, y nunca vuelve al renderer.
 export interface AccountCreateParams {
