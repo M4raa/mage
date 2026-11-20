@@ -9213,6 +9213,32 @@ const CHECKS = [
     },
   },
   {
+    // Sin Enter ni CLI: el trabajo vivo es un estado sembrado (sesión e id inventados) y `closeSession`/`stop` del
+    // puente son espías, así que main nunca ve esas sesiones. Todo lo sustituido se restaura en `finally`.
+    name: 'Pestañas: cerrar una que trabaja pregunta y Cancelar no la cierra; con «Dejar en segundo plano» recordado, no pregunta',
+    async run(page) {
+      await page.evaluate(() => {
+        // Las propiedades de `window.mage` son de solo lectura; el store lo resuelve en cada llamada, así que se
+        // sustituye el objeto entero por uno que hereda del real y solo cambia estos dos métodos.
+        const original = window.mage;
+        window.__vgCloseTabOriginal = original;
+        window.__vgCloseTabCalls = { closeSession: 0, stop: 0 };
+        window.mage = Object.create(original, {
+          closeSession: { value: async () => { window.__vgCloseTabCalls.closeSession += 1; return { background: true }; } },
+          stop: { value: async () => { window.__vgCloseTabCalls.stop += 1; } },
+        });
+      });
+      try {
+        return await medirCerrarPestanaQueTrabaja(page);
+      } finally {
+        await page.evaluate(() => {
+          if (window.__vgCloseTabOriginal !== undefined) window.mage = window.__vgCloseTabOriginal;
+          window.__mageDev.store.getState().setRunningTabClose('ask');
+        });
+      }
+    },
+  },
+  {
     name: 'P-038: hay aire entre los mensajes del hilo',
     async run(page) {
       await openTemporaryConversation(page);
@@ -15131,6 +15157,54 @@ async function revealHiddenPanels(page, ids) {
     for (const id of lista) if (store.getState().isPanelOpen(id)) store.getState().togglePanelById(id);
   }, ids);
   await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// Abre una temporal con trabajo vivo sembrado y devuelve su id y el localizador de su ✕.
+async function openWorkingTemporaryTab(page, sessionId) {
+  await openTemporaryConversation(page);
+  const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+  const reseed = () => seedWorkingState(page, tabId, sessionId);
+  await reseed();
+  return { tabId, reseed, tab: page.locator(`[role="tab"][data-tab-id="${tabId}"]`), cross: page.locator(`[role="tab"][data-tab-id="${tabId}"] button`).first() };
+}
+
+// Con una sesión inventada, la app acaba pasando la pestaña a `error` a los pocos segundos: se vuelve a sembrar
+// justo antes de cada pulsación para que el trabajo siga «vivo» en el momento de cerrar.
+function seedWorkingState(page, tabId, sessionId) {
+  return page.evaluate(({ id, session }) => {
+    window.__mageDev.store.setState((s) => ({ sessionIdByChat: { ...s.sessionIdByChat, [id]: session }, statusByChat: { ...s.statusByChat, [id]: 'streaming' } }));
+  }, { id: tabId, session: sessionId });
+}
+
+// El cuerpo de la comprobación «cerrar una pestaña que trabaja»: diálogo, Cancelar, recordar y sin diálogo.
+async function medirCerrarPestanaQueTrabaja(page) {
+  const dialog = page.locator('[data-close-tab-dialog]');
+  const first = await openWorkingTemporaryTab(page, 'vg-close-s');
+  await page.evaluate(() => window.__mageDev.store.getState().setRunningTabClose('ask'));
+  await first.reseed();
+  await first.cross.click();
+  await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  const tabSurvivesEscape = (await first.tab.count()) === 1;
+  await first.reseed();
+  await first.cross.click();
+  await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await dialog.locator('input[type="checkbox"]').check();
+  await dialog.locator('[data-close-tab-action="background"]').click();
+  await first.tab.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  const afterBackground = await page.evaluate(async () => ({
+    stopCalls: window.__vgCloseTabCalls.stop,
+    stored: window.__mageDev.store.getState().settings.runningTabClose,
+    saved: (await window.mage.loadSettings()).runningTabClose,
+  }));
+  const second = await openWorkingTemporaryTab(page, 'vg-close-s2');
+  await second.reseed();
+  await second.cross.click();
+  await second.tab.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  const dialogAfterRemembered = await dialog.count();
+  const ok = tabSurvivesEscape && afterBackground.stopCalls === 0 && afterBackground.stored === 'background' && dialogAfterRemembered === 0;
+  return { ok, detail: JSON.stringify({ tabSurvivesEscape, ...afterBackground, dialogAfterRemembered }) };
 }
 
 async function openTemporaryConversation(page) {
