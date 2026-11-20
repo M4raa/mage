@@ -42,7 +42,7 @@ import { homedir, tmpdir } from 'node:os';
 import { accountsFetchFor, accountsHomeFrom, decideTestHome } from './os/testHome';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isUnderCliScratchpad as isUnderCliScratchpadPure } from './files/cliScratchpad';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
@@ -261,6 +261,9 @@ import { openArtifactWindow } from './artifacts/artifactWindow';
 import { FrameClient } from './artifacts/frameClient';
 import { ArtifactsService, artifactAccountIds } from './artifacts/artifactsService';
 import { registerArtifactsIpc } from './artifacts/artifactsIpc';
+import { ArtifactReader } from './artifacts/artifactReader';
+import { ArtifactViewer } from './artifacts/artifactViewer';
+import { ARTIFACT_VIEWER_SESSION_ID } from '@shared/artifactLibrary';
 import { InstructionsService } from './instructions/instructionsService';
 import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type BridgeFs, type BridgeSpec } from './instructions/instructionsBridge';
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
@@ -2996,16 +2999,56 @@ const hostOwnership = new HostOwnership({
 const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordinator.ownerOf(id) !== undefined });
 // Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel o, sin panel, en la de aparcamiento (D-S3, Z01).
 const viewPlacement = new ViewPlacement<PopoutWindow>(createParkingHost(createParkingWindow));
-const browserRegistry = new BrowserRegistry({
-  createBrowser: (instanceId, sessionId) => new IsolatedBrowser(instanceId, electronBrowserDeps, sessionCoordinator.rewindContext(sessionId).cwd),
+// El visor de artifacts es una entrada más del registro, con su id reservado (ver `artifactViewer.ts`).
+const browserRegistry: BrowserRegistry = new BrowserRegistry({
+  createBrowser: (instanceId, sessionId) => sessionId === ARTIFACT_VIEWER_SESSION_ID
+    ? artifactViewer.createBrowser(instanceId)
+    : new IsolatedBrowser(instanceId, electronBrowserDeps, sessionCoordinator.rewindContext(sessionId).cwd),
   newId: randomUUID,
-  isLive: (sessionId) => sessionCoordinator.ownerOf(sessionId) !== undefined,
+  isLive: (sessionId) => sessionId === ARTIFACT_VIEWER_SESSION_ID ? artifactViewer.isOpen() : sessionCoordinator.ownerOf(sessionId) !== undefined,
   onChange: broadcastBrowserStates,
   onOpened: (_sessionId, handle) => viewPlacement.ensureHosted(handle),
-  onClosed: (sessionId, handle) => { browserPopouts.forget(handle); penSessions.discard(sessionId); },
+  onClosed: (sessionId, handle) => {
+    browserPopouts.forget(handle);
+    penSessions.discard(sessionId);
+    if (sessionId === ARTIFACT_VIEWER_SESSION_ID) artifactViewer.forget();
+  },
   isPoppedOut: (handle) => viewPlacement.detachedWindowOf(handle) !== null,
   log: mainLog,
 });
+// Visor de artifacts: lee el artifact desde main (boot + ficheros, sin cookies) a una cache bajo los datos de Mage y lo
+// abre en un navegador aislado con esa carpeta como raiz. SIN la segunda raiz del navegador normal (el scratchpad del
+// CLI): una pagina ajena no lee nada de fuera de su carpeta. Sus enlaces http(s) van al navegador del sistema.
+const artifactReader = new ArtifactReader({
+  client: frameClient,
+  get userDataDir() {
+    return app.getPath('userData');
+  },
+  fs: {
+    exists: existsSync,
+    mkdir: (target) => mkdirSync(target, { recursive: true }),
+    writeFile: (target, bytes) => writeFileSync(target, bytes),
+    rename: renameSync,
+    rmrf: (target) => rmSync(target, { recursive: true, force: true, maxRetries: RMRF_RETRIES, retryDelay: RMRF_RETRY_DELAY_MS }),
+  },
+  newId: randomUUID,
+});
+const artifactViewer: ArtifactViewer = new ArtifactViewer({
+  reader: artifactReader,
+  registry: () => browserRegistry,
+  createBrowser: (instanceId, root) =>
+    new IsolatedBrowser(instanceId, { ...electronBrowserDeps, isAllowedOutsideRoot: undefined }, root, openViewerLinkOutside),
+  toFileUrl: (filePath) => pathToFileURL(filePath).href,
+});
+
+// Un enlace del artifact hacia fuera: al navegador del sistema (su guarda solo deja https). Un fallo se registra.
+function openViewerLinkOutside(url: string): void {
+  openWithService.openExternal(url).catch((error: unknown) => {
+    // Solo el esquema y el host: la URL entera de una pagina ajena puede llevar cosas en la query.
+    const { protocol, host } = new URL(url);
+    mainLog('warn', 'No se pudo abrir fuera un enlace del visor de artifacts', { target: `${protocol}//${host}`, error: error instanceof Error ? error.message : String(error) });
+  });
+}
 // Ventanas propias del navegador (una por navegador como mucho), por el id de su webContents: la IPC del navegador
 // las reconoce como ventanas de Mage y reciben su estado. No son del workbench: no salen en `windowManager`.
 const browserPopoutWindows = new Map<number, BrowserWindow>();
@@ -3208,6 +3251,7 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerArtifactsIpc({
     handle: (channel, listener) => ipcMain.handle(channel, listener),
     service: artifactsService,
+    viewer: artifactViewer,
     accountIds: () => artifactAccountIds(listAllAccounts()),
   });
   registerProjectIpc1(deps);

@@ -4,11 +4,13 @@
 import { z } from 'zod';
 import { IpcChannel } from '@shared/ipc';
 import type { AccountArtifacts, ArtifactPage } from '@shared/artifactLibrary';
-import type { ArtifactsService } from './artifactsService';
+import { ARTIFACT_ID_PATTERN, type ArtifactsService } from './artifactsService';
+import type { ArtifactViewer, OpenedArtifact } from './artifactViewer';
 
 export interface ArtifactsIpcDeps {
   readonly handle: (channel: string, listener: (event: unknown, arg: unknown) => unknown) => void;
   readonly service: Pick<ArtifactsService, 'page' | 'listAll'>;
+  readonly viewer: Pick<ArtifactViewer, 'open'>;
   // Las cuentas con lista, en este momento (las cuentas cambian mientras Mage corre).
   readonly accountIds: () => readonly string[];
 }
@@ -26,6 +28,10 @@ const moreSchema = z
     rel: relSchema,
     pageToken: z.string().min(1).max(MAX_PAGE_TOKEN_CHARS),
   })
+  .strict();
+
+const openSchema = z
+  .object({ accountId: z.string().min(1).max(MAX_ACCOUNT_CHARS), id: z.string().regex(ARTIFACT_ID_PATTERN) })
   .strict();
 
 function parseWith<T>(schema: z.ZodType<T>, raw: unknown): T {
@@ -54,7 +60,14 @@ export function moreArtifacts(deps: ArtifactsIpcDeps, raw: unknown): Promise<Art
   return deps.service.page(accountId, rel, { pageToken, refresh: false });
 }
 
+export function openArtifactInViewer(deps: ArtifactsIpcDeps, raw: unknown): Promise<OpenedArtifact> {
+  const { accountId, id } = parseWith(openSchema, raw);
+  requireArtifactAccount(deps, accountId);
+  return deps.viewer.open(accountId, id);
+}
+
 export function registerArtifactsIpc(deps: ArtifactsIpcDeps): void {
   deps.handle(IpcChannel.ArtifactsList, (_event, arg) => listArtifacts(deps, arg));
   deps.handle(IpcChannel.ArtifactsMore, (_event, arg) => moreArtifacts(deps, arg));
+  deps.handle(IpcChannel.ArtifactsOpen, (_event, arg) => openArtifactInViewer(deps, arg));
 }

@@ -1,6 +1,6 @@
 import type { Session, WebContents, WebContentsView } from 'electron';
 import type { RawCapture } from './annotatedCapture';
-import { hardenContents, hardenSession, type ServeFile } from './browserHardening';
+import { hardenContents, hardenSession, type ExternalLinkHandler, type ServeFile } from './browserHardening';
 import { deriveDeviceScale } from './deviceScale';
 import { buildDomReadScript } from './domReadScript';
 import { parseDomSnapshot, resolveReadDomOptions, type ReadDomOptions } from './domSnapshot';
@@ -69,11 +69,15 @@ export class IsolatedBrowser {
   private readonly stateListeners = new Set<() => void>();
   private closed = false;
 
-  /** `fileRoot`: carpeta de trabajo de la conversación; sus .html se pueden abrir (P-040). null: ningún fichero. */
+  /**
+   * `fileRoot`: carpeta de trabajo de la conversación; sus .html se pueden abrir (P-040). null: ningún fichero.
+   * `onExternalLink`: solo el visor de artifacts; los enlaces http(s) de la página salen por ahí en vez de navegar aquí.
+   */
   constructor(
     instanceId: string,
     private readonly deps: BrowserDeps,
     fileRoot: string | null,
+    onExternalLink?: ExternalLinkHandler,
   ) {
     const partition = partitionNameFor(instanceId);
     this.files = createFileAccess(fileRoot, deps);
@@ -83,7 +87,7 @@ export class IsolatedBrowser {
     }
     hardenSession(this.session, this.files, deps.serveFile);
     this.view = deps.createView(this.session);
-    hardenContents(this.view.webContents, this.files);
+    hardenContents(this.view.webContents, this.files, onExternalLink);
     for (const event of STATE_EVENTS) {
       this.view.webContents.on(event as 'did-navigate', () => this.notifyStateChange());
     }

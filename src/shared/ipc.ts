@@ -17,7 +17,7 @@ import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
-import type { AccountArtifacts, ArtifactPage, ArtifactsListParams, ArtifactsMoreParams } from './artifactLibrary';
+import type { AccountArtifacts, ArtifactPage, ArtifactsListParams, ArtifactsMoreParams, ArtifactsOpenParams } from './artifactLibrary';
 import type { MentionPreview, MentionPreviewParams, MentionResolution, MentionResolveParams, MentionSearchParams, MentionSearchResult } from './mentions';
 import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, QueuedMessage, SendMode, SendReceipt } from './coordination';
 import type { UsageInfo } from './usage';
@@ -326,6 +326,7 @@ export const IpcChannel = {
   // Todos los artifacts de las cuentas de Claude por suscripcion (creados y compartidos), desde main.
   ArtifactsList: 'artifacts:list',
   ArtifactsMore: 'artifacts:more',
+  ArtifactsOpen: 'artifacts:open',
   // Varias ventanas del workbench sobre la MISMA instancia (peticion del usuario: la app en dos
   // pantallas). No es una duplicacion: ajustes/temas/permisos/carpetas de confianza son los mismos
   // objetos de main para todas; lo que cambia por ventana es el workspace (pestañas, paneles, cuenta
@@ -1245,6 +1246,9 @@ export interface MageApi {
   listArtifacts(params: ArtifactsListParams): Promise<readonly AccountArtifacts[]>;
   // «Cargar más» de una lista. LANZA si falla.
   moreArtifacts(params: ArtifactsMoreParams): Promise<ArtifactPage>;
+  // Abre un artifact en el visor de Mage (navegador aislado, sin cookies); su vista la coloca la barra del navegador
+  // con el id `ARTIFACT_VIEWER_SESSION_ID`. Devuelve su titulo. LANZA si falla.
+  openArtifactInViewer(params: ArtifactsOpenParams): Promise<{ readonly title: string }>;
   // Instrucciones que aplican a la conversacion (2.9.b): CLAUDE.md de proyecto y de usuario. `content`
   // null = el fichero no existe (no es un error).
   readInstructions(params: ReadInstructionsParams): Promise<readonly InstructionsFile[]>;

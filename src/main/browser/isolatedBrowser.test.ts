@@ -197,6 +197,67 @@ describe('IsolatedBrowser hardening', () => {
   });
 });
 
+describe('IsolatedBrowser external links (visor de artifacts)', () => {
+  function viewerBrowser() {
+    const fakes = createFakes();
+    const onExternalLink = vi.fn();
+    new IsolatedBrowser('t1', fakes.deps, ROOT, onExternalLink);
+    return { ...fakes, onExternalLink };
+  }
+
+  it('externalLink_clickToHttps_isCancelledAndHandedOut', () => {
+    // Arrange
+    const { handlers, onExternalLink } = viewerBrowser();
+    const details = { url: 'https://example.com/doc', preventDefault: vi.fn() };
+
+    // Act
+    handlers.contentsEvents.get('will-navigate')?.(details);
+
+    // Assert
+    expect(details.preventDefault).toHaveBeenCalled();
+    expect(onExternalLink).toHaveBeenCalledWith('https://example.com/doc');
+  });
+
+  it('externalLink_targetBlank_isDeniedAndHandedOut', () => {
+    // Arrange
+    const { handlers, onExternalLink } = viewerBrowser();
+
+    // Act
+    const result = handlers.windowOpen?.({ url: 'http://example.com/' });
+
+    // Assert
+    expect(result).toEqual({ action: 'deny' });
+    expect(onExternalLink).toHaveBeenCalledWith('http://example.com/');
+  });
+
+  it.each(['file:///etc/passwd', 'javascript:alert(1)', 'chrome://gpu'])('externalLink_nonHttp_isNotHandedOut (%s)', (url) => {
+    // Arrange
+    const { handlers, onExternalLink } = viewerBrowser();
+    const details = { url, preventDefault: vi.fn() };
+
+    // Act
+    handlers.contentsEvents.get('will-navigate')?.(details);
+    handlers.windowOpen?.({ url });
+
+    // Assert
+    expect(details.preventDefault).toHaveBeenCalled();
+    expect(onExternalLink).not.toHaveBeenCalled();
+  });
+
+  it('externalLink_localPageInsideRoot_navigatesHere', () => {
+    // Arrange
+    const { handlers, onExternalLink } = viewerBrowser();
+    const details = { url: fileUrl(PAGE), preventDefault: vi.fn() };
+
+    // Act
+    handlers.contentsEvents.get('will-navigate')?.(details);
+
+    // Assert
+    expect(details.preventDefault).not.toHaveBeenCalled();
+    expect(onExternalLink).not.toHaveBeenCalled();
+  });
+});
+
 describe('IsolatedBrowser file protocol', () => {
   it('fileProtocol_resourceInsideRoot_servesRealPath', async () => {
     const { handlers, deps } = createBrowser();

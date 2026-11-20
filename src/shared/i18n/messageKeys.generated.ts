@@ -1029,8 +1029,11 @@ export interface MessageValues {
   readonly "errors.app.providerNotConfigured": { readonly "provider": string | number };
   readonly "errors.artifacts.assetStatus": { readonly "file": string | number; readonly "status": string | number };
   readonly "errors.artifacts.badStatus": { readonly "account": string | number; readonly "status": string | number };
+  readonly "errors.artifacts.notAPage": { readonly "file": string | number };
   readonly "errors.artifacts.sessionExpired": { readonly "account": string | number };
   readonly "errors.artifacts.tooLarge": { readonly "file": string | number; readonly "limitKib": string | number };
+  readonly "errors.artifacts.tooManyFiles": { readonly "count": string | number; readonly "max": string | number };
+  readonly "errors.artifacts.totalTooLarge": { readonly "limitMib": string | number };
   readonly "errors.attachments.imageTooLarge": { readonly "max": string | number; readonly "size": string | number };
   readonly "errors.attachments.invalidSize": { readonly "size": string | number };
   readonly "errors.attachments.tooMany": { readonly "count": string | number; readonly "max": string | number };

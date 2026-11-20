@@ -55,3 +55,12 @@ export interface ArtifactsMoreParams {
   readonly rel: ArtifactRel;
   readonly pageToken: string;
 }
+
+export interface ArtifactsOpenParams {
+  readonly accountId: string;
+  readonly id: string;
+}
+
+// Id reservado del visor de artifacts en el registro del navegador de Mage: con el, la barra y la IPC del navegador
+// le valen tal cual. Nunca coincide con el de una sesion (esos son UUID).
+export const ARTIFACT_VIEWER_SESSION_ID = 'mage-artifact-viewer';

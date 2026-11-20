@@ -1,6 +1,6 @@
 import { BROWSER_STATE_CHANNEL, type BrowserEntryState } from '@shared/browser';
 import type { ConversationLockParams, ConversationLockRef } from '@shared/conversationLock';
-import type { ArtifactsListParams, ArtifactsMoreParams } from '@shared/artifactLibrary';
+import type { ArtifactsListParams, ArtifactsMoreParams, ArtifactsOpenParams } from '@shared/artifactLibrary';
 import type { MentionPreviewParams, MentionResolveParams, MentionSearchParams } from '@shared/mentions';
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import {
@@ -255,6 +255,7 @@ const api: MageApi = {
   lookupArtifactPublisher: (url: string) => ipcRenderer.invoke(IpcChannel.ArtifactPublisherLookup, url),
   listArtifacts: (params: ArtifactsListParams) => ipcRenderer.invoke(IpcChannel.ArtifactsList, params),
   moreArtifacts: (params: ArtifactsMoreParams) => ipcRenderer.invoke(IpcChannel.ArtifactsMore, params),
+  openArtifactInViewer: (params: ArtifactsOpenParams) => ipcRenderer.invoke(IpcChannel.ArtifactsOpen, params),
   readInstructions: (params: ReadInstructionsParams) => ipcRenderer.invoke(IpcChannel.InstructionsRead, params),
   readProjectFile: (params: ReadProjectFileParams) => ipcRenderer.invoke(IpcChannel.ProjectFileRead, params),
   writeProjectFile: (params: WriteProjectFileParams) => ipcRenderer.invoke(IpcChannel.ProjectFileWrite, params),
