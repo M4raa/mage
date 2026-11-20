@@ -14,7 +14,8 @@ import type { ProviderModel } from '@shared/providers';
 import type { SessionListener } from '../coordination/sessionCoordinator';
 import { TrustRequiredError, UnknownAccountError } from '../host/hostErrors';
 import type { SessionSettings } from './delegatedSettings';
-import type { DelegatedSession, DelegationView } from './delegationLog';
+import type { DelegatedRelaunch, DelegatedSession, DelegationView } from './delegationLog';
+import type { HostCreateRequest } from '../host/hostProtocol';
 import { CONVERSATION_ID_TIMEOUT_MS, ExternalSessionsPort, HostSessionsPort, NO_PROJECT_ID, NOT_LAUNCHED_TEXT } from './hostSessionsPort';
 import type { HostSessionsPortDeps } from './hostSessionsPort';
 import { MageToolHandlers } from './handlers';
@@ -60,7 +61,7 @@ function setup(options: {
   const deps = {
     caller: { sessionId: 'caller-s', conversationId: 'caller-c', accountId: 'acc1' },
     log: {
-      watch: vi.fn(), recordInstruction: vi.fn(), messagesAfter: vi.fn(() => []), readMessages: vi.fn(() => []),
+      watch: vi.fn(), reopen: vi.fn(), recordInstruction: vi.fn(), messagesAfter: vi.fn(() => []), readMessages: vi.fn(() => []),
       get: (id: string) => views.find((v) => v.child.conversationId === id) ?? null, list: () => views,
       recordQuestion: vi.fn((): 'recorded' | 'creator_closed' => 'recorded'), settleQuestion: vi.fn(() => false),
       ...options.log,
@@ -87,6 +88,7 @@ function setup(options: {
     newId: vi.fn(() => 'pend-1'),
     usage: options.usage ?? { accounts: () => [], read: vi.fn(async () => null) },
     setResumeOnReset: vi.fn(),
+    closer: { register: vi.fn(), closeNow: vi.fn() },
   };
   return { port: new HostSessionsPort(deps), deps, listeners, announced, answers, timers, cancelTimer };
 }
@@ -402,6 +404,97 @@ describe('HostSessionsPort.send', () => {
   it('send_closed_rejected', async () => {
     const { port } = setup({ views: [view({ closed: true })] });
     expect(await port.send(sendInput())).toEqual({ receipt: 'rejected', reason: 'session_closed' });
+  });
+});
+
+describe('HostSessionsPort: onDone, cerrar y reabrir', () => {
+  const relaunch = (overrides: Partial<DelegatedRelaunch> = {}): DelegatedRelaunch => ({
+    request: { commandId: REQUEST, provider: 'claude', accountId: 'acc1', cwd: CWD, model: 'm1', trust: { acknowledged: false } } as HostCreateRequest,
+    permissionMode: 'default', onDone: 'close', resumeOnReset: false, ...overrides,
+  });
+  // Una cerrada a propósito que `reopen` del registro devuelve a la vida con otro sessionId (como Codex).
+  function reopenable(overrides: Partial<DelegatedRelaunch> = {}, provider = 'claude') {
+    const closed = view({ closed: true, retired: true, state: 'done', child: child({ provider, relaunch: relaunch(overrides) }) });
+    const open = view({ child: child({ provider, sessionId: 'child-s2', relaunch: relaunch(overrides) }) });
+    const holder = { current: closed };
+    const log = { get: (id: string) => (id === 'child-c' ? holder.current : null), reopen: vi.fn(() => { holder.current = open; }) };
+    return { ...setup({ views: [], log, snapshot: snap('child-c'), launch: vi.fn(() => 'child-s2') }), log };
+  }
+
+  it('createSession_sinOnDone_seRegistraConCloseYGuardaConQueSeLanzo', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c') });
+    await port.createSession(command({ model: 'm1' }));
+    expect(deps.closer.register).toHaveBeenCalledWith('child-s', 'close');
+    expect(deps.log.watch).toHaveBeenCalledWith(expect.objectContaining({ relaunch: expect.objectContaining({ onDone: 'close', resumeOnReset: false, permissionMode: 'default' }) }));
+  });
+  it('createSession_onDoneKeepAlive_seRegistraConKeepAlive', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c') });
+    await port.createSession(command({ model: 'm1', onDone: 'keepAlive' }));
+    expect(deps.closer.register).toHaveBeenCalledWith('child-s', 'keepAlive');
+  });
+  it('createSession_registraAntesDeVigilarLaSesion', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c') });
+    await port.createSession(command({ model: 'm1' }));
+    expect(vi.mocked(deps.closer.register).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(deps.log.watch).mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it('closeSession_viva_laCierraYa', async () => {
+    const { port, deps } = setup();
+    expect(await port.closeSession({ conversationId: 'child-c' })).toEqual({ closed: true });
+    expect(deps.closer.closeNow).toHaveBeenCalledWith('child-s');
+  });
+  it('closeSession_yaCerrada_noEsErrorYNoHaceNada', async () => {
+    const { port, deps } = setup({ views: [view({ closed: true, retired: true })] });
+    expect(await port.closeSession({ conversationId: 'child-c' })).toEqual({ closed: false });
+    expect(deps.closer.closeNow).not.toHaveBeenCalled();
+  });
+  it('closeSession_esperandoALanzarse_closedFalse', async () => {
+    const pending = new PendingLaunches();
+    const { port, deps } = setup({ views: [], pending, facts: { isTaskRun: false, creatorChain: [], ultracode: false } });
+    const held = await port.createSession(command());
+    expect(await port.closeSession({ conversationId: held.conversationId })).toEqual({ closed: false });
+    expect(deps.closer.closeNow).not.toHaveBeenCalled();
+  });
+  it('closeSession_noEsDescendiente_notFound', async () => {
+    const { port, deps } = setup({ views: [view({ child: child({ creatorChain: ['otra'] }) })] });
+    await expect(port.closeSession({ conversationId: 'child-c' })).rejects.toThrow('not_found: child-c');
+    expect(deps.closer.closeNow).not.toHaveBeenCalled();
+  });
+
+  it('send_cerradaAPropositoConRelaunch_laReabreConResumeYEntregaElMensaje', async () => {
+    const { port, deps, log } = reopenable();
+    expect(await port.send(sendInput())).toEqual({ receipt: 'accepted' });
+    expect(deps.launch).toHaveBeenCalledWith({ ...relaunch().request, commandId: 'pend-1' }, { conversationId: 'caller-c', sessionId: 'caller-s' }, 't', 'child-c');
+    expect(log.reopen).toHaveBeenCalledWith('child-s', 'child-s2');
+    expect(deps.closer.register).toHaveBeenCalledWith('child-s2', 'close');
+    expect(deps.coordinator.send).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'child-s2', text: 'sí' }));
+  });
+  it('send_reabierta_conservaLaPoliticaYLaOpcionDeReanudar', async () => {
+    const { port, deps } = reopenable({ onDone: 'keepAlive', resumeOnReset: true });
+    await port.send(sendInput());
+    expect(deps.closer.register).toHaveBeenCalledWith('child-s2', 'keepAlive');
+    expect(deps.setResumeOnReset).toHaveBeenCalledWith('child-s2', true);
+  });
+  it('send_reabiertaDeCodex_fijaElModoTrasLanzar', async () => {
+    const { port, deps } = reopenable({ permissionMode: ':workspace' }, 'codex');
+    await port.send(sendInput());
+    expect(deps.setPermissionMode).toHaveBeenCalledWith('child-s2', ':workspace');
+  });
+  it('send_cerradaQueNoCerroMage_rechazadaSinLanzar', async () => {
+    const { port, deps } = setup({ views: [view({ closed: true, child: child({ relaunch: relaunch() }) })] });
+    expect(await port.send(sendInput())).toEqual({ receipt: 'rejected', reason: 'session_closed' });
+    expect(deps.launch).not.toHaveBeenCalled();
+  });
+  it('send_cerradaAPropositoSinSaberConQueSeLanzo_rechazada', async () => {
+    const { port, deps } = setup({ views: [view({ closed: true, retired: true })] });
+    expect(await port.send(sendInput())).toEqual({ receipt: 'rejected', reason: 'session_closed' });
+    expect(deps.launch).not.toHaveBeenCalled();
+  });
+  it('send_reabrirFalla_lanzaLaunchFailedYNoEntregaNada', async () => {
+    const { port, deps } = reopenable();
+    deps.launch = vi.fn(() => { throw new Error('sin memoria'); });
+    await expect(port.send(sendInput())).rejects.toThrow(/^launch_failed: sin memoria/);
+    expect(deps.coordinator.send).not.toHaveBeenCalled();
   });
 });
 

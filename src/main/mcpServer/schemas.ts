@@ -2,7 +2,7 @@ import { EFFORT_LEVELS } from '@shared/ipc';
 import { z } from 'zod';
 
 // 2: `awaiting_launch` (la sesión espera a que el usuario la lance desde su tarjeta).
-// 3: `mage_get_usage` (uso de 5 h y semanal por cuenta) y `resumeOnReset` en `mage_create_session`.
+// 3: `mage_get_usage` (uso de 5 h y semanal por cuenta), `resumeOnReset` y `onDone` en `mage_create_session` y `mage_close_session`.
 export const MAGE_MCP_CONTRACT_VERSION = 3;
 export const DEFAULT_MAX_RESULT_BYTES = 65_536;
 // Largo máximo del nombre de una sesión delegada (el `title` de mage_create_session y el que se deriva del prompt).
@@ -35,7 +35,10 @@ export const createInputSchema = z.object({
   effort: z.enum(EFFORT_LEVELS, { errorMap: diagnostic('effort') }).optional(), permissionMode: id('permissionMode').optional(),
   title: z.string({ errorMap: diagnostic('title') }).trim().min(1).max(MAX_SESSION_TITLE_CHARS).optional(),
   resumeOnReset: z.boolean({ errorMap: diagnostic('resumeOnReset') }).optional(),
+  onDone: z.enum(['close', 'keepAlive'], { errorMap: diagnostic('onDone') }).optional(),
 }).strict();
+export const closeInputSchema = z.object({ requestId: requestId, conversationId: id('conversationId') }).strict();
+export const closeOutputSchema = z.object({ closed: z.boolean() }).strict();
 export const statusInputSchema = z.object({ conversationId: id('conversationId') }).strict();
 export const readInputSchema = z.object({
   conversationId: id('conversationId'), afterSeq: integer('afterSeq').optional(),

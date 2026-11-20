@@ -19,7 +19,7 @@ const CHILD: DelegatedSession = {
   accountId: 'a', projectId: 'p', createdBy: { conversationId: 'conv-parent', requestId: '11111111-1111-4111-8111-111111111111', at: '2026-11-03T10:00:00.000Z' }, creatorChain: ['conv-parent'],
 };
 
-function setup(options: { creatorAlive?: boolean } = {}) {
+function setup(options: { creatorAlive?: boolean; onTurnDone?: (child: DelegatedSession, resultDelivered: boolean) => void } = {}) {
   let current = snap('idle');
   let listener: SessionListener | null = null;
   let unsubscribed = 0;
@@ -33,7 +33,7 @@ function setup(options: { creatorAlive?: boolean } = {}) {
     announce: (id: string, event: MageEvent) => { announced.push(event); announcedTo.push({ sessionId: id, event }); },
     ownerOf: () => (options.creatorAlive === false ? undefined : 1),
   };
-  const log = new DelegationLog({ coordinator, now: () => Date.parse('2026-11-03T10:00:00.000Z') });
+  const log = new DelegationLog({ coordinator, now: () => Date.parse('2026-11-03T10:00:00.000Z'), ...(options.onTurnDone === undefined ? {} : { onTurnDone: options.onTurnDone }) });
   const emit = (event: MageEvent, next?: ConversationSnapshot) => {
     if (next !== undefined) current = next;
     const payload: SequencedSessionEvent = { sessionId: 'child', event, conversationId: 'conv-child', seq: 1, at: Date.parse('2026-11-03T10:05:00.000Z') };
@@ -58,6 +58,127 @@ describe('mcpStateOf', () => {
     ['idleWithoutTurns', snap('idle'), false, 0, 'working'],
   ] as const)('mcpStateOf_eachCase_asSpecified_%s', (_name, snapshot, closed, turnCount, expected) => {
     expect(mcpStateOf({ snapshot, closed, turnCount })).toBe(expected);
+  });
+});
+
+describe('mcpStateOf_retired', () => {
+  it('mcpStateOf_cerradaAPropositoSinSesion_done', () => {
+    expect(mcpStateOf({ snapshot: null, closed: true, turnCount: 1, retired: true })).toBe('done');
+  });
+  it('mcpStateOf_cerradaSinRetirar_interrupted', () => {
+    expect(mcpStateOf({ snapshot: null, closed: true, turnCount: 1, retired: false })).toBe('interrupted');
+  });
+  it('mcpStateOf_retiradaPeroViva_siguePorSuEstadoReal', () => {
+    expect(mcpStateOf({ snapshot: snap('running'), closed: false, turnCount: 1, retired: true })).toBe('working');
+  });
+});
+
+describe('DelegationLog: cierre a propósito y reapertura', () => {
+  it('retire_luegoCierre_estadoDoneYSeAnunciaALaCreadora', () => {
+    const { log, close, announcedTo } = setup();
+    log.watch(CHILD);
+    log.retire('child');
+    close();
+    expect(log.get('conv-child')).toMatchObject({ closed: true, retired: true, state: 'done' });
+    expect(announcedTo).toContainEqual({ sessionId: 'parent', event: { kind: 'delegation_state', childId: 'conv-child', state: 'done' } });
+  });
+  it('cierre_sinRetirar_sigueInterrupted', () => {
+    const { log, close } = setup();
+    log.watch(CHILD);
+    close();
+    expect(log.get('conv-child')).toMatchObject({ closed: true, retired: false, state: 'interrupted' });
+  });
+  it('retire_sesionDesconocida_lanzaConElId', () => {
+    expect(() => setup().log.retire('nope')).toThrow('nope');
+  });
+  it('reopen_cerradaAPropositoConOtroSessionId_vuelveAVivirConsuHistorial', () => {
+    const { log, emit, close } = setup();
+    log.watch(CHILD);
+    emit({ kind: 'assistant_text', text: 'hecho' }, snap('running'));
+    emit(result, snap('idle'));
+    log.retire('child');
+    close();
+    log.reopen('child', 'child-2');
+    const view = log.get('conv-child');
+    expect(view).toMatchObject({ closed: false, retired: false, turnCount: 1, child: { sessionId: 'child-2', conversationId: 'conv-child' } });
+    expect(log.messagesAfter('conv-child', 0)).toEqual([{ seq: 1, role: 'assistant', text: 'hecho' }]);
+    expect(log.list().map((item) => item.child.sessionId)).toEqual(['child-2']);
+    expect(log.watchCount('child-2')).toBe(1);
+    expect(log.watchCount('child')).toBe(0);
+  });
+  it('reopen_mismoSessionId_comoEnClaude_conservaLaEntrada', () => {
+    const { log, close } = setup();
+    log.watch(CHILD);
+    log.retire('child');
+    close();
+    log.reopen('child', 'child');
+    expect(log.get('conv-child')).toMatchObject({ closed: false, child: { sessionId: 'child' } });
+    expect(log.list()).toHaveLength(1);
+  });
+  it('reopen_conLaTarjeta_seSigueEncontrandoPorAmbosIds', () => {
+    const { log, close } = setup();
+    log.watch({ ...CHILD, launchId: 'pend-1' });
+    log.retire('child');
+    close();
+    log.reopen('child', 'child-2');
+    expect(log.get('pend-1')?.child.sessionId).toBe('child-2');
+    expect(log.get('conv-child')?.child.sessionId).toBe('child-2');
+  });
+  it('reopen_reabiertaSigueEntregandoResultadosYContandoTurnos', () => {
+    const { log, emit, close, sent } = setup();
+    log.watch(CHILD);
+    log.retire('child');
+    close();
+    log.reopen('child', 'child-2');
+    emit({ kind: 'assistant_text', text: 'otra vez' }, snap('running'));
+    emit(result, snap('idle'));
+    expect(log.get('conv-child')?.turnCount).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
+  it('reopen_cerradaSinRetirar_lanza', () => {
+    const { log, close } = setup();
+    log.watch(CHILD);
+    close();
+    expect(() => log.reopen('child', 'child-2')).toThrow('child');
+  });
+  it('reopen_viva_lanza', () => {
+    const { log } = setup();
+    log.watch(CHILD);
+    expect(() => log.reopen('child', 'child-2')).toThrow('child');
+  });
+});
+
+describe('DelegationLog: onTurnDone', () => {
+  const run = (options: { creatorAlive?: boolean; read?: boolean; text?: string | null; question?: boolean } = {}) => {
+    const calls: boolean[] = [];
+    const h = setup({ creatorAlive: options.creatorAlive, onTurnDone: (_child, delivered) => { calls.push(delivered); } });
+    h.log.watch(CHILD);
+    if (options.question === true) h.log.recordQuestion('child', '¿sigo?');
+    if (options.text !== null) h.emit({ kind: 'assistant_text', text: options.text ?? 'hecho' }, snap('running'));
+    if (options.read === true) h.log.readMessages('conv-child', 0);
+    h.emit(result, snap('idle'));
+    return calls;
+  };
+  it('onTurnDone_resultadoEntregadoALaCreadora_true', () => {
+    expect(run()).toEqual([true]);
+  });
+  it('onTurnDone_turnoSinTexto_false', () => {
+    expect(run({ text: null })).toEqual([false]);
+  });
+  it('onTurnDone_creadoraCerradaYSinLeer_false', () => {
+    expect(run({ creatorAlive: false })).toEqual([false]);
+  });
+  it('onTurnDone_creadoraYaLoLeyo_true', () => {
+    expect(run({ creatorAlive: false, read: true })).toEqual([true]);
+  });
+  it('onTurnDone_esperaLaRespuestaDeSuCreadora_false', () => {
+    expect(run({ question: true })).toEqual([false]);
+  });
+  it('onTurnDone_sinGancho_noLanza', () => {
+    const { log, emit } = setup();
+    log.watch(CHILD);
+    emit({ kind: 'assistant_text', text: 'hecho' }, snap('running'));
+    expect(() => emit(result, snap('idle'))).not.toThrow();
   });
 });
 

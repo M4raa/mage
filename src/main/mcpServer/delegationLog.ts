@@ -3,6 +3,8 @@ import { sessionResultMessage } from '@shared/systemWrappers';
 import type { ConversationSnapshot } from '@shared/coordination';
 import type { MageEvent } from '@shared/events';
 import type { SequencedSessionEvent, SessionCoordinator } from '../coordination/sessionCoordinator';
+import type { HostCreateRequest } from '../host/hostProtocol';
+import type { OnDone } from './delegatedCloser';
 import type { CreatedBy, PublicMessage, SessionState } from './types';
 
 // Registro de delegaciones de main (D-M11): sigue a cada sesión que una conversación crea por el MCP y guarda,
@@ -28,6 +30,15 @@ export interface DelegatedSession {
   readonly creatorChain: readonly string[];
   // Id que recibió la creadora cuando la sesión esperaba a que el usuario la lanzara: la sigue nombrando con él.
   readonly launchId?: string;
+  // Con qué se lanzó, para reabrirla con `--resume` cuando se cierra por haber acabado (`mage_send` posterior).
+  readonly relaunch?: DelegatedRelaunch;
+}
+export interface DelegatedRelaunch {
+  readonly request: HostCreateRequest;
+  // El modo de permisos de Codex no va en el arranque: se fija tras lanzar.
+  readonly permissionMode: string;
+  readonly onDone: OnDone;
+  readonly resumeOnReset: boolean;
 }
 // Los estados públicos de `mage_get_status` son los de `SessionState` del núcleo MCP.
 export type McpState = SessionState;
@@ -38,10 +49,14 @@ export interface DelegationView {
   readonly turnCount: number;
   readonly lastEventAt: string;
   readonly closed: boolean;
+  // Cerrada a propósito (por acabar o con `mage_close_session`): cuenta como terminada y un envío la reabre.
+  readonly retired?: boolean;
 }
 export interface DelegationLogDeps {
   readonly coordinator: Pick<SessionCoordinator, 'subscribe' | 'snapshot' | 'announce' | 'ownerOf' | 'send'>;
   readonly now: () => number;
+  // Acabó un turno de una delegada; `resultDelivered` = su resultado ya está en manos de la creadora.
+  readonly onTurnDone?: (child: DelegatedSession, resultDelivered: boolean) => void;
 }
 interface Entry {
   readonly child: DelegatedSession;
@@ -51,6 +66,7 @@ interface Entry {
   lastEventAt: string;
   state: McpState;
   closed: boolean;
+  retired: boolean;
   lastAssistant: string | null;
   // Secuencia del último mensaje del asistente y hasta dónde lo leyó ya la creadora con mage_read_result (P-038 V13):
   // si ya lo leyó, el aviso de fin de turno sobra (le abría un turno de más).
@@ -66,9 +82,10 @@ const TURN_START_KINDS: ReadonlySet<MageEvent['kind']> = new Set(['request_start
 
 export function mcpStateOf(input: {
   readonly snapshot: ConversationSnapshot | null; readonly closed: boolean; readonly turnCount: number; readonly awaitingCreator?: boolean;
+  readonly retired?: boolean;
 }): McpState {
-  const { snapshot, closed, turnCount, awaitingCreator } = input;
-  if (closed || snapshot === null) return 'interrupted';
+  const { snapshot, closed, turnCount, awaitingCreator, retired } = input;
+  if (closed || snapshot === null) return retired === true ? 'done' : 'interrupted';
   if (snapshot.pending.some(isQuestionRequest)) return 'waiting_answer';
   if (snapshot.pending.length > 0) return 'permission_pending';
   if (awaitingCreator === true) return 'waiting_answer';
@@ -93,21 +110,46 @@ export class DelegationLog {
 
   watch(child: DelegatedSession): void {
     if (this.entries.has(child.sessionId)) throw new Error(`La sesión ya está en el registro de delegaciones: ${child.sessionId}`);
-    const { coordinator, now } = this.deps;
+    this.register(this.follow(child, { messages: [], nextSeq: 1, turnCount: 0, readUpTo: 0, lastAssistantSeq: 0 }));
+    this.evictOldest();
+  }
+
+  // Cerrada a propósito: se llama ANTES de pararla, para que su cierre cuente como terminada y no como interrumpida.
+  retire(sessionId: string): void {
+    this.require(sessionId).retired = true;
+  }
+
+  // Una cerrada a propósito vuelve a vivir en `newSessionId` (el mismo id en Claude; uno nuevo en Codex): conserva sus
+  // mensajes, su contador de turnos y lo que su creadora ya leyó.
+  reopen(sessionId: string, newSessionId: string): void {
+    const old = this.require(sessionId);
+    if (!old.closed || !old.retired) throw new Error(`Solo se reabre una sesión cerrada a propósito: ${sessionId}`);
+    const { messages, nextSeq, turnCount, readUpTo, lastAssistantSeq } = old;
+    this.entries.delete(sessionId);
+    this.register(this.follow({ ...old.child, sessionId: newSessionId }, { messages, nextSeq, turnCount, readUpTo, lastAssistantSeq }));
+  }
+
+  // Sigue a la sesión con una suscripción más del coordinador y arma su entrada con lo que se arrastra.
+  private follow(child: DelegatedSession, carried: Pick<Entry, 'messages' | 'nextSeq' | 'turnCount' | 'readUpTo' | 'lastAssistantSeq'>): Entry {
     const holder: { entry: Entry | null } = { entry: null };
-    const subscription = coordinator.subscribe(child.sessionId, {
+    const subscription = this.deps.coordinator.subscribe(child.sessionId, {
       sink: (event) => { if (holder.entry !== null) this.onEvent(holder.entry, event); },
       onClosed: () => { if (holder.entry !== null) this.onClosed(holder.entry); },
     });
     const entry: Entry = {
-      child, messages: [], nextSeq: 1, turnCount: 0, lastEventAt: new Date(now()).toISOString(),
-      state: mcpStateOf({ snapshot: subscription.snapshot, closed: false, turnCount: 0 }), closed: false, lastAssistant: null, lastAssistantSeq: 0, readUpTo: 0, awaiting: null, unsubscribe: subscription.unsubscribe,
+      child, ...carried, lastEventAt: new Date(this.deps.now()).toISOString(),
+      state: mcpStateOf({ snapshot: subscription.snapshot, closed: false, turnCount: carried.turnCount }), closed: false, retired: false, lastAssistant: null,
+      awaiting: null, unsubscribe: subscription.unsubscribe,
     };
     holder.entry = entry;
+    return entry;
+  }
+
+  private register(entry: Entry): void {
+    const { child } = entry;
     this.entries.set(child.sessionId, entry);
     this.byConversation.set(child.conversationId, entry);
     if (child.launchId !== undefined) this.byConversation.set(child.launchId, entry);
-    this.evictOldest();
   }
 
   recordInstruction(sessionId: string, text: string): void {
@@ -189,11 +231,20 @@ export class DelegationLog {
 
   private onResult(entry: Entry): void {
     entry.turnCount += 1;
-    if (entry.lastAssistant === null) return;
+    const delivered = this.deliverResult(entry);
+    // Una que espera la respuesta de su creadora (`mage_ask_creator`) no ha terminado: no se cierra.
+    this.deps.onTurnDone?.(entry.child, delivered && entry.awaiting === null);
+  }
+
+  // true si el resultado del turno ya está en manos de la creadora (se le entrega ahora, o ya lo había leído).
+  private deliverResult(entry: Entry): boolean {
+    if (entry.lastAssistant === null) return false;
     const text = entry.lastAssistant.slice(0, MAX_ANNOUNCED_TEXT_CHARS);
     entry.lastAssistant = null;
     this.announceToCreator(entry, { kind: 'delegation_message', fromId: entry.child.conversationId, toId: entry.child.creatorConversationId, messageKind: 'result', text });
-    if (entry.readUpTo < entry.lastAssistantSeq) this.deliverToCreator(entry, text);
+    const alreadyRead = entry.readUpTo >= entry.lastAssistantSeq;
+    if (!alreadyRead) this.deliverToCreator(entry, text);
+    return alreadyRead || this.deps.coordinator.ownerOf(entry.child.creatorSessionId) !== undefined;
   }
 
   // P-038 V13: la respuesta de la delegada le llega a la creadora como MENSAJE (a la cola si está trabajando; si no,
@@ -224,7 +275,7 @@ export class DelegationLog {
 
   private refreshState(entry: Entry, closed: boolean): void {
     const snapshot = closed ? null : this.deps.coordinator.snapshot(entry.child.sessionId);
-    const state = mcpStateOf({ snapshot, closed, turnCount: entry.turnCount, awaitingCreator: entry.awaiting !== null });
+    const state = mcpStateOf({ snapshot, closed, turnCount: entry.turnCount, awaitingCreator: entry.awaiting !== null, retired: entry.retired });
     if (state === entry.state) return;
     entry.state = state;
     this.announceToCreator(entry, { kind: 'delegation_state', childId: entry.child.conversationId, state });
@@ -263,5 +314,5 @@ export class DelegationLog {
 }
 
 function viewOf(entry: Entry): DelegationView {
-  return { child: entry.child, state: entry.state, turnCount: entry.turnCount, lastEventAt: entry.lastEventAt, closed: entry.closed };
+  return { child: entry.child, state: entry.state, turnCount: entry.turnCount, lastEventAt: entry.lastEventAt, closed: entry.closed, retired: entry.retired };
 }

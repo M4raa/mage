@@ -11,7 +11,9 @@ import { TrustRequiredError, UnknownAccountError } from '../host/hostErrors';
 import type { HostCreateRequest } from '../host/hostProtocol';
 import { resolveDelegatedSettings } from './delegatedSettings';
 import type { DelegatedSettings, SessionSettings } from './delegatedSettings';
-import type { DelegationLog, DelegationView } from './delegationLog';
+import { DEFAULT_ON_DONE } from './delegatedCloser';
+import type { DelegatedCloser } from './delegatedCloser';
+import type { DelegatedRelaunch, DelegationLog, DelegationView } from './delegationLog';
 import { sessionResultMessage } from '@shared/systemWrappers';
 import { supportsResumeOnReset } from '@shared/resumeOnReset';
 import type { UsageInfo } from '@shared/usage';
@@ -22,7 +24,7 @@ import { needsLaunchCard } from './launchCard';
 import type { CreatorFacts } from './launchCard';
 import type { LaunchChoice, PendingLaunches } from './pendingLaunches';
 import { MAX_SESSION_TITLE_CHARS } from './schemas';
-import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreatedBy, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput, UsageAccountEntry } from './types';
+import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CloseOutput, CreatedBy, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput, UsageAccountEntry } from './types';
 import type { CreateSessionCommand, CreationRequest, CreationTarget, MageSessionsPort, SessionMetadata } from './sessionsPort';
 
 // El puerto REAL del MCP en main: UNO por conexión, con la sesión que llama ya resuelta. Solo ve a sus
@@ -34,7 +36,7 @@ const CANCELLABLE_STATES: ReadonlySet<string> = new Set(['working', 'permission_
 
 export interface HostSessionsPortDeps {
   readonly caller: { readonly sessionId: string; readonly conversationId: string; readonly accountId: string };
-  readonly log: Pick<DelegationLog, 'watch' | 'get' | 'list' | 'messagesAfter' | 'readMessages' | 'recordInstruction' | 'recordQuestion' | 'settleQuestion'>;
+  readonly log: Pick<DelegationLog, 'watch' | 'get' | 'list' | 'messagesAfter' | 'readMessages' | 'recordInstruction' | 'recordQuestion' | 'settleQuestion' | 'reopen'>;
   readonly index: Pick<ConversationIndexStore, 'recordDelegation' | 'delegationOf' | 'nativeRefOf' | 'loadPrefs' | 'savePrefs'>;
   readonly coordinator: Pick<SessionCoordinator, 'subscribe' | 'snapshot' | 'send' | 'interrupt' | 'answerPermission' | 'announce' | 'ownerOf'>;
   // Cuentas de Claude y Codex de Mage (M-U4: también las de API).
@@ -42,7 +44,8 @@ export interface HostSessionsPortDeps {
   readonly projects: () => readonly { readonly id: string; readonly cwd: string | null }[];
   // Lanza por la frontera del host (`resolveHostLaunchParams` + `launchHostSession(…, 'mcp', createdBy)`); devuelve el sessionId.
   // `title` es el nombre de la subsesión (el que dio la creadora, o la primera línea del prompt).
-  readonly launch: (request: HostCreateRequest, createdBy: { readonly conversationId: string; readonly sessionId: string }, title: string) => string;
+  // Con `resumeSessionId` reanuda esa conversación (`--resume`) en vez de abrir una nueva.
+  readonly launch: (request: HostCreateRequest, createdBy: { readonly conversationId: string; readonly sessionId: string }, title: string, resumeSessionId?: string) => string;
   readonly setTimer: (fn: () => void, ms: number) => () => void;
   // Lo que main sabe de la creadora (`SessionSettingsRegistry`); null si no la tiene anotada.
   readonly creatorSettings: () => SessionSettings | null;
@@ -59,6 +62,8 @@ export interface HostSessionsPortDeps {
   readonly usage: UsageSource;
   // Enciende «Continuar al restablecerse» en la sesión recién lanzada.
   readonly setResumeOnReset: (sessionId: string, enabled: boolean) => void;
+  // Una sola para todas las conexiones: cierra las delegadas al acabar (o al pedirlo) según su política.
+  readonly closer: Pick<DelegatedCloser, 'register' | 'closeNow'>;
 }
 
 export interface UsageSource {
@@ -121,8 +126,9 @@ export class HostSessionsPort implements MageSessionsPort {
   async send(input: SendInput): Promise<SendOutput> {
     const parked = this.parked(input.conversationId);
     if (parked !== null) return { receipt: 'rejected', reason: parked.metadata.state === 'awaiting_launch' ? 'awaiting_launch' : 'session_closed' };
-    const view = this.descendant(input.conversationId);
-    if (view.closed) return { receipt: 'rejected', reason: 'session_closed' };
+    const found = this.descendant(input.conversationId);
+    const view = found.closed ? await this.reopen(found) : found;
+    if (view === null || view.closed) return { receipt: 'rejected', reason: 'session_closed' };
     const { sessionId } = view.child;
     const pending = this.deps.coordinator.snapshot(sessionId).pending;
     const question = pending.find(isQuestionPermission);
@@ -142,6 +148,15 @@ export class HostSessionsPort implements MageSessionsPort {
     return { cancelled: true };
   }
 
+  // Una que espera a lanzarse no tiene proceso que parar, y una ya cerrada tampoco: `closed: false`, sin error.
+  async closeSession(input: { readonly conversationId: string }): Promise<CloseOutput> {
+    if (this.parked(input.conversationId) !== null) return { closed: false };
+    const view = this.descendant(input.conversationId);
+    if (view.closed) return { closed: false };
+    this.deps.closer.closeNow(view.child.sessionId);
+    return { closed: true };
+  }
+
   // U26: solo una delegada (está en el registro) pregunta a su creadora; cualquier otra sesión, `not_delegated`.
   async askCreator(input: AskCreatorInput): Promise<AskCreatorOutput> {
     const { caller, log } = this.deps;
@@ -149,6 +164,28 @@ export class HostSessionsPort implements MageSessionsPort {
     if (view === null) throw new MagePolicyError(`not_delegated: ${caller.conversationId}`);
     if (log.recordQuestion(view.child.sessionId, input.text) === 'creator_closed') throw new MagePolicyError(`creator_closed: ${view.child.creatorConversationId}`);
     return { receipt: 'accepted' };
+  }
+
+  // Lo que se le pide a una sesión recién lanzada (o reabierta): «Continuar al restablecerse» y su política al acabar.
+  private prepareLaunched(sessionId: string, policy: Pick<DelegatedRelaunch, 'onDone' | 'resumeOnReset'>): void {
+    if (policy.resumeOnReset) this.deps.setResumeOnReset(sessionId, true);
+    this.deps.closer.register(sessionId, policy.onDone);
+  }
+
+  // Una cerrada a propósito vuelve a vivir con `--resume` por el camino de siempre; null si no se puede (no la cerramos
+  // nosotros, o no se sabe con qué se lanzó).
+  private async reopen(view: DelegationView): Promise<DelegationView | null> {
+    const { child } = view;
+    const { relaunch } = child;
+    const nativeId = this.deps.index.nativeRefOf(child.conversationId)?.nativeId;
+    if (view.retired !== true || relaunch === undefined || nativeId === undefined) return null;
+    const request = { ...relaunch.request, commandId: this.deps.newId() };
+    const sessionId = this.launchTranslated(request, { conversationId: child.creatorConversationId, sessionId: child.creatorSessionId }, child.title, nativeId);
+    if (child.provider === 'codex') this.setCodexMode(sessionId, relaunch.permissionMode);
+    this.prepareLaunched(sessionId, relaunch);
+    await this.waitForConversationId(sessionId);
+    this.deps.log.reopen(child.sessionId, sessionId);
+    return this.deps.log.get(child.conversationId);
   }
 
   // Rechazo ANTES de crear nada: la opción solo existe en Claude por suscripción (el error lleva lo recibido).
@@ -184,18 +221,20 @@ export class HostSessionsPort implements MageSessionsPort {
 
   // El camino de creación de siempre; devuelve el id real de la conversación. `launchId`: el que ya tiene la creadora.
   private async start(cmd: Delegation, settings: DelegatedSettings, launchId?: string): Promise<string> {
-    const { caller, coordinator, index, log, launch } = this.deps;
+    const { caller, coordinator, index, log } = this.deps;
     const { target, prompt, requestId } = cmd;
     const title = cmd.title ?? titleOf(prompt);
-    const sessionId = this.launchTranslated(launch, launchRequestOf(cmd, settings), title);
+    const request = launchRequestOf(cmd, settings);
+    const relaunch: DelegatedRelaunch = { request, permissionMode: settings.permissionMode, onDone: cmd.onDone ?? DEFAULT_ON_DONE, resumeOnReset: cmd.resumeOnReset === true };
+    const sessionId = this.launchTranslated(request, { conversationId: caller.conversationId, sessionId: caller.sessionId }, title);
     if (target.provider === 'codex') this.setCodexMode(sessionId, settings.permissionMode);
-    if (cmd.resumeOnReset === true) this.deps.setResumeOnReset(sessionId, true);
+    this.prepareLaunched(sessionId, relaunch);
     const conversationId = await this.waitForConversationId(sessionId);
     index.recordDelegation(conversationId, { createdBy: cmd.createdBy, creatorChain: cmd.creatorChain });
     log.watch({
       sessionId, conversationId, creatorSessionId: caller.sessionId, creatorConversationId: caller.conversationId, title,
       provider: target.provider, accountId: target.accountId, projectId: target.projectId, createdBy: cmd.createdBy, creatorChain: cmd.creatorChain,
-      ...(launchId === undefined ? {} : { launchId }),
+      relaunch, ...(launchId === undefined ? {} : { launchId }),
     });
     coordinator.send({ sessionId, text: prompt, commandId: requestId });
     log.recordInstruction(sessionId, prompt);
@@ -289,9 +328,10 @@ export class HostSessionsPort implements MageSessionsPort {
     }
   }
 
-  private launchTranslated(launch: HostSessionsPortDeps['launch'], request: HostCreateRequest, title: string): string {
+  // `creator`: la sesión que la creó (al reabrir una cerrada no es la llamante, que puede ser una antepasada).
+  private launchTranslated(request: HostCreateRequest, creator: { readonly conversationId: string; readonly sessionId: string }, title: string, resumeSessionId?: string): string {
     try {
-      return launch(request, { conversationId: this.deps.caller.conversationId, sessionId: this.deps.caller.sessionId }, title);
+      return resumeSessionId === undefined ? this.deps.launch(request, creator, title) : this.deps.launch(request, creator, title, resumeSessionId);
     } catch (error) {
       if (error instanceof TrustRequiredError) throw new MageValidationError(`trust_required: ${error.cwd}`, { cause: error });
       if (error instanceof UnknownAccountError) throw new MageValidationError(`unknown_account: ${error.accountId}`, { cause: error });
@@ -368,6 +408,7 @@ export class ExternalSessionsPort implements MageSessionsPort {
   cancel(): Promise<never> { return reject(); }
   askCreator(): Promise<never> { return reject(); }
   getUsage(): Promise<never> { return reject(); }
+  closeSession(): Promise<never> { return reject(); }
 }
 function reject(): Promise<never> {
   return Promise.reject(new MagePolicyError('mage_external_caller: las herramientas de Mage solo funcionan desde una sesión lanzada por Mage'));

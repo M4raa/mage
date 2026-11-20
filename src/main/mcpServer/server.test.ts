@@ -60,10 +60,10 @@ afterEach(async () => {
 });
 
 describe('Mage MCP server', () => {
-  it('listTools_conexionReal_ochoHerramientasConAmbosEsquemas', async () => {
+  it('listTools_conexionReal_nueveHerramientasConAmbosEsquemas', async () => {
     const { client } = await connect();
     const result = await client.listTools();
-    expect(result.tools.map((tool) => tool.name).sort()).toEqual(['mage_ask_creator', 'mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_get_usage', 'mage_list_sessions', 'mage_read_result', 'mage_send']);
+    expect(result.tools.map((tool) => tool.name).sort()).toEqual(['mage_ask_creator', 'mage_cancel', 'mage_close_session', 'mage_create_session', 'mage_get_status', 'mage_get_usage', 'mage_list_sessions', 'mage_read_result', 'mage_send']);
     for (const tool of result.tools) {
       expect(tool.inputSchema.type).toBe('object');
       expect(tool.inputSchema.additionalProperties).toBe(false);
@@ -76,6 +76,17 @@ describe('Mage MCP server', () => {
     const instructions = client.getInstructions() ?? '';
     expect(instructions).toContain('mage_get_usage');
     expect(instructions).toContain('resumeOnReset: true');
+  });
+  it('initialize_instrucciones_avisanDeQueSeCierranYComoEvitarlo', async () => {
+    const { client } = await connect();
+    expect(client.getInstructions() ?? '').toContain('Por defecto una sesión creada se cierra 5 minutos después de entregar su resultado; pasa onDone: "keepAlive" si vas a seguir trabajando con ella, y usa mage_close_session para cerrarla antes.');
+  });
+  it('listTools_createSession_documentaOnDoneYResumeOnReset', async () => {
+    const { client } = await connect();
+    const tool = (await client.listTools()).tools.find((item) => item.name === 'mage_create_session');
+    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['onDone', 'resumeOnReset']));
+    expect(tool?.inputSchema.required ?? []).not.toContain('onDone');
+    expect(tool?.description).toContain('onDone: "keepAlive"');
   });
   it('initialize_instrucciones_pidenModeloYEsfuerzoSinElUsuario', async () => {
     const { client } = await connect();
@@ -156,6 +167,58 @@ describe('Mage MCP server', () => {
     const result = await call('ask_creator', { requestId: REQUEST, text: '' });
     expect(result.isError).toBe(true);
     expect(port.questions).toEqual([]);
+  });
+  it('createInputSchema_onDone_closeKeepAliveOAusente', () => {
+    const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
+    expect(createInputSchema.safeParse({ ...base, onDone: 'close' }).success).toBe(true);
+    expect(createInputSchema.safeParse({ ...base, onDone: 'keepAlive' }).success).toBe(true);
+    const bad = createInputSchema.safeParse({ ...base, onDone: 'forever' });
+    expect(bad.success).toBe(false);
+    expect(JSON.stringify(bad)).toContain('onDone: valor recibido forever');
+  });
+  describe('mage_close_session', () => {
+    it('closeSession_sesionVisible_laCierra', async () => {
+      const { call, port } = await connect();
+      const result = await call('close_session', { requestId: REQUEST, conversationId: 'historical-id' });
+      expect(result.structuredContent).toEqual({ closed: true });
+      expect((await port.getStatus('historical-id')).state).toBe('done');
+    });
+    it('closeSession_yaCerrada_closedFalseSinError', async () => {
+      const { call } = await connect();
+      await call('close_session', { requestId: REQUEST, conversationId: 'historical-id' });
+      const again = await call('close_session', { requestId: SECOND, conversationId: 'historical-id' });
+      expect(again.isError).not.toBe(true);
+      expect(again.structuredContent).toEqual({ closed: false });
+    });
+    it('closeSession_mismoRequestId_idempotenteUnSoloCierre', async () => {
+      const port = makePort();
+      const effect = vi.spyOn(port, 'closeSession');
+      const { call } = await connect({ port });
+      const first = await call('close_session', { requestId: REQUEST, conversationId: 'historical-id' });
+      const second = await call('close_session', { requestId: REQUEST, conversationId: 'historical-id' });
+      expect(second).toEqual(first);
+      expect(effect).toHaveBeenCalledTimes(1);
+    });
+    it('closeSession_fueraDelAlcance_scopeDeniedSinCerrar', async () => {
+      const port = makePort();
+      const effect = vi.spyOn(port, 'closeSession');
+      const { call } = await connect({ port });
+      expect(JSON.stringify(await call('close_session', { requestId: REQUEST, conversationId: 'foreign' }))).toContain('scope_denied');
+      expect(JSON.stringify(await call('close_session', { requestId: SECOND, conversationId: 'private' }))).toContain('scope_denied');
+      expect(effect).not.toHaveBeenCalled();
+    });
+    it('closeSession_sinRequestId_isErrorConCampo', async () => {
+      const { call } = await connect();
+      const result = await call('close_session', { conversationId: 'historical-id' });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain('requestId');
+    });
+    it('closeSession_descripcionExplicaQueReabreUnSend', async () => {
+      const { client } = await connect();
+      const tool = (await client.listTools()).tools.find((item) => item.name === 'mage_close_session');
+      expect(tool?.description).toContain('mage_send');
+      expect(tool?.inputSchema.required).toEqual(expect.arrayContaining(['requestId', 'conversationId']));
+    });
   });
   describe('mage_get_usage', () => {
     const window5h = { percent: 42, resetsAt: '2026-11-19T15:00:00.000Z' };

@@ -68,6 +68,12 @@ export class WindowAttachments {
     return this.unsubscribers.has(keyOf(targetId, sessionId));
   }
 
+  // ¿Alguna ventana sigue esta sesión? (el usuario la tiene abierta como pestaña)
+  isAttachedAnywhere(sessionId: string): boolean {
+    const suffix = `:${sessionId}`;
+    return [...this.unsubscribers.keys()].some((key) => key.endsWith(suffix));
+  }
+
   // La sesión terminó: el coordinador ya vació sus listeners, solo hay que olvidar la clave.
   private forget(targetId: number, sessionId: string): void {
     this.unsubscribers.delete(keyOf(targetId, sessionId));

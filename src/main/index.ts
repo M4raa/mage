@@ -298,6 +298,7 @@ import { registerMentionsIpc } from './mentions/mentionsIpc';
 import { nodeReaddir, readHeadBytes, statBytes, walkFiles } from './mentions/walkFiles';
 import { SessionCoordinator } from './coordination/sessionCoordinator';
 import { ResumeOnReset } from './coordination/resumeOnReset';
+import { DelegatedCloser } from './mcpServer/delegatedCloser';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
 import { resolvedPath } from './os/resolvedPath';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
@@ -740,10 +741,10 @@ const sessionCoordinator = new SessionCoordinator({
     release: (sessionId) => getConversationLocks().releaseWhere((holder) => holder === `session:${sessionId}`),
   },
   // El navegador de Mage vive lo que su sesión: se cierra con ella (y su ventana propia), sin esperar al barrido.
-  onReleased: (sessionId) => { resumeOnReset.forget(sessionId); void browserRegistry.close(sessionId); },
+  onReleased: (sessionId) => { resumeOnReset.forget(sessionId); delegatedCloser.forget(sessionId); void browserRegistry.close(sessionId); },
   // «Continuar al restablecerse»: main reacciona a los `rate_limit` de cada sesión y a cualquier envío que se adelante.
   onSessionEvent: (sessionId, event) => resumeOnReset.onEvent(sessionId, event),
-  onSend: (sessionId) => resumeOnReset.onUserSend(sessionId),
+  onSend: (sessionId) => { resumeOnReset.onUserSend(sessionId); delegatedCloser.cancel(sessionId); },
   // A8: el corte pendiente de un rewind de Claude se borra en cuanto sale el siguiente mensaje.
   onUserMessageSent: (ref) => { if (ref.provider === 'claude') getRewindState().clearPendingCut(ref.nativeId); },
   // Keep-alive de la cache (F4.6). Para saber si una cuenta es de API basta su ficha: no se lee la clave de la boveda.
@@ -3063,7 +3064,20 @@ const browserPopouts = new BrowserPopouts({ registry: browserRegistry, placement
 const penSessions = new PenSessions({ registry: browserRegistry, imageDeps: electronImageDeps, newId: randomUUID });
 const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinator, eventChannel: EVENT_CHANNEL });
 // D-M11: registro de main de las delegadas del MCP (uno para todas las conexiones).
-const delegationLog = new DelegationLog({ coordinator: sessionCoordinator, now: Date.now });
+const delegationLog = new DelegationLog({ coordinator: sessionCoordinator, now: Date.now, onTurnDone: (child, resultDelivered) => delegatedCloser.turnDone(child.sessionId, resultDelivered) });
+// Cierra las delegadas al acabar (o a petición) según su `onDone`; una cerrada deja de ser adoptable hasta que un envío la reabra.
+const delegatedCloser = new DelegatedCloser({
+  now: Date.now,
+  setTimer: (fn, ms) => {
+    const timer = setTimeout(fn, ms);
+    return () => clearTimeout(timer);
+  },
+  retire: (sessionId) => delegationLog.retire(sessionId),
+  close: (sessionId) => { sessionCoordinator.stop(sessionId); adoptableSessions.remove(sessionId); },
+  excludeFromKeepAlive: (sessionId) => sessionCoordinator.excludeFromKeepAlive(sessionId),
+  hasWindowClient: (sessionId) => windowAttachments.isAttachedAnywhere(sessionId),
+  log: logBus.loggerFor('engine'),
+});
 // «Continuar al restablecerse» (solo Claude por suscripción): el booleano vive en el coordinador; esto programa el «continúa».
 const resumeOnReset = new ResumeOnReset({
   store: { get: (sessionId) => sessionCoordinator.resumeOnResetOf(sessionId), set: (sessionId, enabled) => sessionCoordinator.setResumeOnReset(sessionId, enabled) },
@@ -4764,7 +4778,8 @@ export function createHostSessionsPort(callerSessionId: string): HostSessionsPor
     accounts: () => listAllAccounts().filter((account) => (HOST_SESSION_PROVIDERS as readonly string[]).includes(account.providerId))
       .map((account) => ({ id: account.configDir, provider: account.providerId })),
     projects: () => getSettingsStore().load().chatProjects,
-    launch: (request, createdBy, title) => launchHostSession(resolveHostLaunchParams(deps, request, { cliDefaultModel: true }), 'mcp', createdBy, title),
+    launch: (request, createdBy, title, resumeSessionId) => launchHostSession(
+      { ...resolveHostLaunchParams(deps, request, { cliDefaultModel: true }), ...(resumeSessionId === undefined ? {} : { resumeSessionId }) }, 'mcp', createdBy, title),
     creatorSettings: () => sessionSettings.get(callerSessionId),
     modelCatalog: (accountDir) => getCommandCatalogStore().loadModels(accountDir),
     setPermissionMode: (sessionId, mode) => { sessionManager.setPermissionMode(sessionId, mode); sessionSettings.apply(sessionId, 'permissionMode', mode); },
@@ -4780,6 +4795,7 @@ export function createHostSessionsPort(callerSessionId: string): HostSessionsPor
       read: usageOfAccount,
     },
     setResumeOnReset: (sessionId, enabled) => resumeOnReset.set(sessionId, enabled),
+    closer: delegatedCloser,
   });
 }
 

@@ -1,4 +1,5 @@
-import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreatedBy, CreateInput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, SessionState, StatusOutput, UsageAccountEntry } from './types';
+import type { OnDone } from './delegatedCloser';
+import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CloseOutput, CreatedBy, CreateInput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, SessionState, StatusOutput, UsageAccountEntry } from './types';
 
 export type CreationRequest = Pick<CreateInput, 'provider' | 'accountId' | 'cwd'>;
 export interface CreationTarget {
@@ -28,6 +29,8 @@ export interface CreateSessionCommand {
   readonly title?: string;
   // «Continuar al restablecerse»: solo Claude por suscripción (el puerto rechaza el resto antes de crear nada).
   readonly resumeOnReset?: boolean;
+  // Qué hacer al acabar: `close` (por defecto) la cierra unos minutos después de entregar su resultado.
+  readonly onDone?: OnDone;
   readonly requestId: string;
   readonly createdBy?: CreatedBy;
   readonly creatorChain: readonly string[];
@@ -49,4 +52,7 @@ export interface MageSessionsPort {
   // Solo lectura: el uso de cada cuenta pedida que el puerto conoce (las desconocidas no salen), con el error de una
   // que falle dentro de su entrada. El alcance (`scope`) ya lo aplicó quien llama.
   getUsage(input: { readonly accountIds: readonly string[] }): Promise<readonly UsageAccountEntry[]>;
+  // Cierra ya la sesión (para su proceso; la conversación queda en el historial y un `send` posterior la reabre).
+  // `closed: false` = ya estaba cerrada o no tenía proceso que parar: no es un error.
+  closeSession(input: { readonly conversationId: string }): Promise<CloseOutput>;
 }
