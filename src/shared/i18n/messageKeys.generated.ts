@@ -189,9 +189,6 @@ export interface MessageValues {
   readonly "accountsUsage.refreshLoginBusy": never;
   readonly "accountsUsage.refreshLoginFailed": never;
   readonly "accountsUsage.refreshLoginTip": never;
-  readonly "accountsUsage.retryLogin": never;
-  readonly "accountsUsage.retryLoginFailed": never;
-  readonly "accountsUsage.retryLoginNoSession": never;
   readonly "accountsUsage.remaining.critical": never;
   readonly "accountsUsage.remaining.left": { readonly "pct": string | number };
   readonly "accountsUsage.remaining.used": { readonly "pct": string | number };
@@ -200,6 +197,9 @@ export interface MessageValues {
   readonly "accountsUsage.renameAria": { readonly "alias": string | number };
   readonly "accountsUsage.resetName": never;
   readonly "accountsUsage.resets": { readonly "when": string | number };
+  readonly "accountsUsage.retryLogin": never;
+  readonly "accountsUsage.retryLoginFailed": never;
+  readonly "accountsUsage.retryLoginNoSession": never;
   readonly "accountsUsage.rowLimits": { readonly "count": number };
   readonly "accountsUsage.rowWindows": { readonly "fiveHour": string | number; readonly "weekly": string | number };
   readonly "accountsUsage.save": never;

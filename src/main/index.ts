@@ -3404,6 +3404,17 @@ function registerEditIpc1(): void {
   );
 }
 
+// «Reintentar» y fin de turno: relee del disco el login de una cuenta de Claude por suscripción. Ni CLI ni endpoint:
+// recoge lo que haya escrito otra instalación. Una cuenta por clave de API no tiene login que releer.
+function reloadAccountLogin(configDir: unknown): AccountLoginState {
+  if (typeof configDir !== 'string') throw new Error(`Cuenta inválida al releer la sesión: ${JSON.stringify(configDir)}`);
+  if (getProviderAccounts().find('claude', configDir)?.authKind === 'api-key') {
+    throw new Error(`Una cuenta de Claude por clave de API no tiene sesión que releer: ${configDir}`);
+  }
+  const { status, expiresAt } = accountService.readLoginStatus(configDir);
+  return { loginStatus: status, expiresAt };
+}
+
 function registerAccountsIpc1(): void {
   // Cuentas: listar (datos seguros), crear (dir + enlaces + settings) y lanzar login interactivo
   // en terminal externa (headless no puede loguear). El binario se resuelve por SO.
@@ -3415,16 +3426,7 @@ function registerAccountsIpc1(): void {
     const models = await probeModelCatalog(MODEL_PROBE_DEPS, account.configDir);
     if (models !== null && models.length > 0) cacheModelCatalog(account.configDir, models);
   });
-  // «Reintentar»: relee del disco el login de una cuenta de Claude por suscripción. Ni CLI ni endpoint: recoge lo que
-  // haya escrito otra instalación. Una cuenta por clave de API no tiene login que releer.
-  ipcMain.handle(IpcChannel.AccountsReloadLogin, (_e, configDir: unknown): AccountLoginState => {
-    if (typeof configDir !== 'string') throw new Error(`Cuenta inválida al releer la sesión: ${JSON.stringify(configDir)}`);
-    if (getProviderAccounts().find('claude', configDir)?.authKind === 'api-key') {
-      throw new Error(`Una cuenta de Claude por clave de API no tiene sesión que releer: ${configDir}`);
-    }
-    const { status, expiresAt } = accountService.readLoginStatus(configDir);
-    return { loginStatus: status, expiresAt };
-  });
+  ipcMain.handle(IpcChannel.AccountsReloadLogin, (_e, configDir: unknown) => reloadAccountLogin(configDir));
   ipcMain.handle(IpcChannel.AccountsCodexConfirm, () => getCodexAccountCatalog().confirm(getProviderAccounts().list(accountService.listAccounts())));
   ipcMain.handle(IpcChannel.AccountsCreate, (_e, name: string): AccountInfo =>
     accountService.createAccount(name),
