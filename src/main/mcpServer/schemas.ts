@@ -1,7 +1,8 @@
 import { EFFORT_LEVELS } from '@shared/ipc';
 import { z } from 'zod';
 
-export const MAGE_MCP_CONTRACT_VERSION = 1;
+// 2: `awaiting_launch` (la sesión espera a que el usuario la lance desde su tarjeta).
+export const MAGE_MCP_CONTRACT_VERSION = 2;
 export const DEFAULT_MAX_RESULT_BYTES = 65_536;
 // Largo máximo del nombre de una sesión delegada (el `title` de mage_create_session y el que se deriva del prompt).
 export const MAX_SESSION_TITLE_CHARS = 80;
@@ -23,7 +24,7 @@ const requestId = z.string({ errorMap: diagnostic('requestId') }).min(1).max(MAX
 const provider = z.enum(['claude', 'codex'], { errorMap: diagnostic('provider') });
 const text = z.string({ errorMap: () => ({ message: 'Se requiere texto' }) });
 export const utcSchema = z.string().datetime({ offset: false });
-export const stateSchema = z.enum(['working', 'waiting_answer', 'permission_pending', 'done', 'interrupted']);
+export const stateSchema = z.enum(['awaiting_launch', 'working', 'waiting_answer', 'permission_pending', 'done', 'interrupted']);
 export const createdBySchema = z.object({ conversationId: id('conversationId'), requestId: requestId, at: utcSchema }).strict();
 export const publicMessageSchema = z.object({ seq: integer('seq'), role: id('role'), text }).strict();
 
@@ -49,7 +50,7 @@ export const askCreatorInputSchema = z.object({ requestId: requestId, text: text
 export const listOutputSchema =z.object({ sessions: z.array(z.object({
   conversationId: id('conversationId'), title: text, provider: id('provider'), state: stateSchema, createdBy: id('createdBy').optional(),
 }).strict()) }).strict();
-export const createOutputSchema = z.object({ conversationId: id('conversationId'), state: z.enum(['queued', 'running']) }).strict();
+export const createOutputSchema = z.object({ conversationId: id('conversationId'), state: z.enum(['queued', 'running', 'awaiting_launch']) }).strict();
 export const statusOutputSchema = z.object({ state: stateSchema, turnCount: integer('turnCount'), lastEventAt: utcSchema }).strict();
 export const readOutputSchema = z.object({
   messages: z.array(publicMessageSchema), nextSeq: integer('nextSeq'), truncated: z.boolean(),

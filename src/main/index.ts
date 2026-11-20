@@ -12,6 +12,9 @@ import { MAGE_MCP_OFF_NOTICE, mageMcpLaunch, mageMcpServer, withMageReadOnlyAllo
 import { McpRegistrationService, type McpRegistrationDeps } from './mcpServer/registrationService';
 import { DelegationLog } from './mcpServer/delegationLog';
 import { HostSessionsPort } from './mcpServer/hostSessionsPort';
+import type { CreatorFacts } from './mcpServer/launchCard';
+import { registerLaunchCardIpc } from './mcpServer/launchCardIpc';
+import { PendingLaunches } from './mcpServer/pendingLaunches';
 import { SessionSettingsRegistry, settingsOfLaunch } from './mcpServer/sessionSettingsRegistry';
 import { MemoryIdempotencyStore } from './mcpServer/idempotencyStore';
 import { createMcpConnector as createHostMcpConnector } from './mcpServer/mcpConnector';
@@ -3059,6 +3062,8 @@ const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinato
 const delegationLog = new DelegationLog({ coordinator: sessionCoordinator, now: Date.now });
 // Modelo, esfuerzo y modo de cada sesión viva: lo hereda una delegada (mage_create_session).
 const sessionSettings = new SessionSettingsRegistry();
+// Delegadas pedidas sin modelo o sin esfuerzo que esperan a la tarjeta «Lanzar» de su creadora (una para todas las conexiones).
+const pendingLaunches = new PendingLaunches();
 // D-M11: UN almacén de idempotencia para todas las conexiones MCP.
 const mcpIdempotency = new MemoryIdempotencyStore();
 
@@ -3263,7 +3268,16 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerMcpRegistrationIpc();
 }
 
+// Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
+function windowControlsSession(senderId: number, sessionId: string): boolean {
+  return canControlSession({
+    ownerOf: (id) => sessionCoordinator.ownerOf(id),
+    isMainWindow: (webContentsId) => windowManager.windowIdOf(webContentsId) === MAIN_WINDOW_ID,
+  }, senderId, sessionId);
+}
+
 function registerSessionIpc1(): void {
+  registerLaunchCardIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), pending: pendingLaunches, canControl: windowControlsSession });
   registerSessionIpc({
     handle: (channel, listener) => ipcMain.handle(channel, listener),
     sessions: trackedSessionCommands(),
@@ -3278,11 +3292,7 @@ function registerSessionIpc1(): void {
       attachments: windowAttachments,
       coordinator: { subscriberCount: (id) => sessionCoordinator.subscriberCount(id) - delegationLog.watchCount(id) - hostOwnership.watchCount(id), close: (id) => sessionCoordinator.close(id) },
     }, event.sender.id, sessionId),
-    // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
-    canControl: (senderId, sessionId) => canControlSession({
-      ownerOf: (id) => sessionCoordinator.ownerOf(id),
-      isMainWindow: (webContentsId) => windowManager.windowIdOf(webContentsId) === MAIN_WINDOW_ID,
-    }, senderId, sessionId),
+    canControl: windowControlsSession,
     // Carpeta scratch AISLADA por conversacion (subdir unico y vacio): asi crear un archivo nuevo
     // funciona a la primera, sin el "read first" de Claude Code por ficheros preexistentes.
     newScratchDir: () => {
@@ -4745,7 +4755,20 @@ export function createHostSessionsPort(callerSessionId: string): HostSessionsPor
       const timer = setTimeout(fn, ms);
       return () => clearTimeout(timer);
     },
+    creatorFacts: () => creatorFactsOf(callerSessionId, conversationId),
+    pending: pendingLaunches,
+    newId: randomUUID,
   });
+}
+
+// Lo que main sabe de una creadora para decidir la tarjeta «Lanzar»: el índice (tarea y cadena) y su arranque (Ultracode).
+function creatorFactsOf(sessionId: string, conversationId: string): CreatorFacts {
+  const index = getConversationIndexStore();
+  return {
+    isTaskRun: index.taskRunOf(conversationId) !== undefined,
+    creatorChain: index.delegationOf(conversationId).creatorChain,
+    ultracode: sessionSettings.get(sessionId)?.ultracode === true,
+  };
 }
 // Motivo por el que el host no arrancó (null si escucha): el renderer lo enseña como aviso persistente (H1, devolución 16).
 let hostFailure: Promise<LocalizedText | null> = Promise.resolve(null);

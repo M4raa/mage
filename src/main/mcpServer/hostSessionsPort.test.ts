@@ -15,13 +15,17 @@ import type { SessionListener } from '../coordination/sessionCoordinator';
 import { TrustRequiredError, UnknownAccountError } from '../host/hostErrors';
 import type { SessionSettings } from './delegatedSettings';
 import type { DelegatedSession, DelegationView } from './delegationLog';
-import { CONVERSATION_ID_TIMEOUT_MS, ExternalSessionsPort, HostSessionsPort, NO_PROJECT_ID } from './hostSessionsPort';
+import { CONVERSATION_ID_TIMEOUT_MS, ExternalSessionsPort, HostSessionsPort, NO_PROJECT_ID, NOT_LAUNCHED_TEXT } from './hostSessionsPort';
 import type { HostSessionsPortDeps } from './hostSessionsPort';
 import { MageToolHandlers } from './handlers';
 import { MemoryIdempotencyStore } from './idempotencyStore';
 import { MagePolicyError } from './errors';
 import { snapshotScope } from './scope';
 import type { CreateSessionCommand } from './sessionsPort';
+import type { ConversationPrefs, DelegationRecord } from '@shared/conversationIndex';
+import type { CreatorFacts } from './launchCard';
+import { PendingLaunches } from './pendingLaunches';
+import { sessionResultMessage } from '@shared/systemWrappers';
 
 const CWD = resolve('/work/proj');
 const FAKE_CODEX = fileURLToPath(new URL('../../../scripts/fake-codex-app-server.mjs', import.meta.url));
@@ -45,6 +49,7 @@ const view = (overrides: Partial<DelegationView> & { child?: DelegatedSession } 
 function setup(options: {
   views?: DelegationView[]; snapshot?: ConversationSnapshot; launch?: HostSessionsPortDeps['launch']; accounts?: HostSessionsPortDeps['accounts'];
   log?: Partial<HostSessionsPortDeps['log']>; creator?: SessionSettings | null; catalog?: readonly ProviderModel[];
+  facts?: CreatorFacts | null; pending?: PendingLaunches; index?: ReturnType<typeof fakeIndex>; ownerAlive?: boolean;
 } = {}) {
   const views = options.views ?? [view()];
   const listeners: SessionListener[] = [];
@@ -60,8 +65,9 @@ function setup(options: {
       recordQuestion: vi.fn((): 'recorded' | 'creator_closed' => 'recorded'), settleQuestion: vi.fn(() => false),
       ...options.log,
     },
-    index: { recordDelegation: vi.fn() },
+    index: options.index ?? fakeIndex(),
     coordinator: {
+      ownerOf: vi.fn(() => (options.ownerAlive === false ? undefined : 1)),
       subscribe: vi.fn((_id: string, listener: SessionListener) => { listeners.push(listener); return { snapshot: options.snapshot ?? snap(null), unsubscribe: vi.fn() }; }),
       snapshot: vi.fn(() => options.snapshot ?? snap('child-c')),
       send: vi.fn((): SendReceipt => ({ status: 'accepted', commandId: REQUEST })),
@@ -76,8 +82,23 @@ function setup(options: {
     creatorSettings: vi.fn(() => options.creator ?? null),
     modelCatalog: vi.fn(() => options.catalog ?? []),
     setPermissionMode: vi.fn(),
+    creatorFacts: vi.fn(() => options.facts ?? null),
+    pending: options.pending ?? new PendingLaunches(),
+    newId: vi.fn(() => 'pend-1'),
   };
   return { port: new HostSessionsPort(deps), deps, listeners, announced, answers, timers, cancelTimer };
+}
+// Índice en memoria: una conversación con preferencias guardadas por la tarjeta no tiene sesión nativa; las demás, sí.
+function fakeIndex() {
+  const records = new Map<string, DelegationRecord>();
+  const prefs = new Map<string, ConversationPrefs>();
+  return {
+    recordDelegation: vi.fn((id: string, record: DelegationRecord) => { records.set(id, record); }),
+    delegationOf: (id: string): DelegationRecord => records.get(id) ?? { createdBy: null, creatorChain: [] },
+    nativeRefOf: (id: string) => (prefs.has(id) ? null : { provider: 'claude', accountDir: 'acc1', nativeId: id }),
+    loadPrefs: (id: string) => prefs.get(id) ?? null,
+    savePrefs: vi.fn((id: string, value: ConversationPrefs) => { prefs.set(id, { ...prefs.get(id), ...value }); }),
+  };
 }
 const command = (overrides: Partial<CreateSessionCommand> = {}): CreateSessionCommand => ({
   target: { projectId: 'p1', accountId: 'acc1', provider: 'claude', cwd: CWD }, prompt: 'Haz algo\nsegunda línea', requestId: REQUEST,
@@ -419,5 +440,131 @@ describe('MageToolHandlers con el puerto de main', () => {
   });
   it('handlers_createWithCallerInOwnChain_cycle', async () => {
     await expect(handlersFor(['x', 'caller-c'], 5).create(input)).rejects.toThrow('delegation_cycle');
+  });
+});
+
+describe('HostSessionsPort tarjeta Lanzar', () => {
+  const HUMAN: CreatorFacts = { isTaskRun: false, creatorChain: [], ultracode: false };
+  const CATALOG: ProviderModel[] = [{ id: 'haiku', label: 'Haiku', supportedEfforts: ['low', 'high'] }, { id: 'sonnet', label: 'Sonnet', supportedEfforts: ['low', 'high'] }];
+  const creator = { provider: 'claude', model: 'sonnet', effort: 'high', permissionMode: 'default' };
+
+  it('createSession_sinModeloConUsuario_quedaPendienteSinArrancarElCli', async () => {
+    // Arrange
+    const { port, deps, announced } = setup({ facts: HUMAN, creator, catalog: CATALOG });
+    // Act
+    const result = await port.createSession(command({ title: 'Hija' }));
+    // Assert
+    expect(result).toEqual({ conversationId: 'pend-1', state: 'awaiting_launch' });
+    expect(deps.launch).not.toHaveBeenCalled();
+    expect(deps.coordinator.send).not.toHaveBeenCalled();
+    expect(announced).toEqual([{ sessionId: 'caller-s', event: {
+      kind: 'delegation_launch', childId: 'pend-1', title: 'Hija', provider: 'claude', accountId: 'acc1', model: 'sonnet', effort: 'high',
+      models: [{ id: 'haiku', label: 'Haiku', efforts: ['low', 'high'] }, { id: 'sonnet', label: 'Sonnet', efforts: ['low', 'high'] }],
+    } }]);
+    expect(await port.getStatus('pend-1')).toEqual({ state: 'awaiting_launch', turnCount: 0, lastEventAt: AT });
+    expect(await port.send({ ...sendInput(), conversationId: 'pend-1' })).toEqual({ receipt: 'rejected', reason: 'awaiting_launch' });
+    expect(await port.cancel({ conversationId: 'pend-1', scope: 'turn' })).toEqual({ cancelled: false });
+  });
+  it('createSession_conModeloYEsfuerzo_arrancaSinTarjeta', async () => {
+    const { port, deps } = setup({ facts: HUMAN, snapshot: snap('child-c') });
+    const result = await port.createSession(command({ model: 'haiku', effort: 'low' }));
+    expect(result).toEqual({ conversationId: 'child-c', state: 'running' });
+    expect(deps.launch).toHaveBeenCalledTimes(1);
+  });
+  it('createSession_creadoraTareaProgramada_arrancaSinTarjeta', async () => {
+    const { port, deps } = setup({ facts: { ...HUMAN, isTaskRun: true }, snapshot: snap('child-c') });
+    await port.createSession(command());
+    expect(deps.launch).toHaveBeenCalledTimes(1);
+  });
+  it('lanzar_conLoElegido_arrancaPorElCaminoDeSiempreYLoAnuncia', async () => {
+    // Arrange
+    const pending = new PendingLaunches();
+    const { port, deps, announced } = setup({ facts: HUMAN, creator, catalog: CATALOG, snapshot: snap('child-c'), pending });
+    await port.createSession(command());
+    // Act
+    await pending.launch('pend-1', { model: 'haiku', effort: 'low' });
+    // Assert
+    expect(deps.launch).toHaveBeenCalledWith(expect.objectContaining({ model: 'haiku', effort: 'low', permissionMode: 'default' }), expect.anything(), 'Haz algo');
+    expect(deps.log.watch).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'child-c', launchId: 'pend-1' }));
+    expect(deps.coordinator.send).toHaveBeenCalledWith({ sessionId: 'child-s', text: 'Haz algo\nsegunda línea', commandId: REQUEST });
+    expect(announced.map((entry) => entry.event)).toContainEqual({
+      kind: 'delegation_launch_settled', childId: 'pend-1', outcome: { launched: true, model: 'haiku', effort: 'low', conversationId: 'child-c' },
+    });
+    expect(pending.find('pend-1')).toBeNull();
+  });
+  it('lanzar_modeloFueraDelCatalogo_rechazaYSigueEsperando', async () => {
+    const pending = new PendingLaunches();
+    const { port, deps } = setup({ facts: HUMAN, creator, catalog: CATALOG, pending });
+    await port.createSession(command());
+    await expect(pending.launch('pend-1', { model: 'gpt-5' })).rejects.toThrow('invalid_model: gpt-5');
+    expect(deps.launch).not.toHaveBeenCalled();
+    expect(pending.find('pend-1')?.status).toBe('pending');
+  });
+  it('lanzar_esfuerzoNoAdmitido_rechaza', async () => {
+    const pending = new PendingLaunches();
+    const { port } = setup({ facts: HUMAN, creator, catalog: CATALOG, pending });
+    await port.createSession(command());
+    await expect(pending.launch('pend-1', { model: 'haiku', effort: 'max' })).rejects.toThrow('invalid_effort: max');
+  });
+  it('cancelar_entregaALaCreadoraQueNoSeLanzo', async () => {
+    // Arrange
+    const pending = new PendingLaunches();
+    const { port, deps, announced } = setup({ facts: HUMAN, creator, pending });
+    await port.createSession(command({ title: 'Hija' }));
+    // Act
+    pending.cancel('pend-1');
+    // Assert
+    expect(deps.coordinator.send).toHaveBeenCalledWith({ sessionId: 'caller-s', text: sessionResultMessage({ title: 'Hija', conversationId: 'pend-1', text: NOT_LAUNCHED_TEXT }) });
+    expect(announced.map((entry) => entry.event)).toContainEqual({ kind: 'delegation_launch_settled', childId: 'pend-1', outcome: { launched: false } });
+    expect(deps.launch).not.toHaveBeenCalled();
+    expect((await port.getStatus('pend-1')).state).toBe('interrupted');
+  });
+  it('cancelar_creadoraCerrada_noEnviaNada', async () => {
+    const pending = new PendingLaunches();
+    const { port, deps } = setup({ facts: HUMAN, creator, pending, ownerAlive: false });
+    await port.createSession(command());
+    pending.cancel('pend-1');
+    expect(deps.coordinator.send).not.toHaveBeenCalled();
+  });
+  it('cancelar_dosVeces_laSegundaLanza', async () => {
+    const pending = new PendingLaunches();
+    await setup({ facts: HUMAN, creator, pending }).port.createSession(command());
+    pending.cancel('pend-1');
+    expect(() => pending.cancel('pend-1')).toThrow('ya no espera a lanzarse (estado: cancelled)');
+  });
+  it('createSession_mismoRequestIdDosVeces_unaSolaTarjeta', async () => {
+    const { port, announced } = setup({ facts: HUMAN, creator });
+    const first = await port.createSession(command());
+    const second = await port.createSession(command());
+    expect([first, second]).toEqual([{ conversationId: 'pend-1', state: 'awaiting_launch' }, { conversationId: 'pend-1', state: 'awaiting_launch' }]);
+    expect(announced.filter((entry) => entry.event.kind === 'delegation_launch')).toHaveLength(1);
+  });
+  it('createHandler_mismoRequestIdDosVeces_unaSolaTarjeta', async () => {
+    const { port, deps } = setup({ facts: HUMAN, creator });
+    const scope = snapshotScope({ accountIds: ['acc1'], caller: { conversationId: 'caller-c', creatorChain: [] } });
+    const handlers = new MageToolHandlers({ port, scope, store: new MemoryIdempotencyStore(), now: () => AT });
+    const input = { requestId: REQUEST, provider: 'claude' as const, cwd: CWD, prompt: 'x' };
+    const results = [await handlers.create(input), await handlers.create(input)];
+    expect(results).toEqual([{ conversationId: 'pend-1', state: 'awaiting_launch' }, { conversationId: 'pend-1', state: 'awaiting_launch' }]);
+    expect(deps.newId).toHaveBeenCalledTimes(1);
+    expect(await handlers.status({ conversationId: 'pend-1' })).toEqual({ state: 'awaiting_launch', turnCount: 0, lastEventAt: AT });
+  });
+  it('reinicio_pendienteDeAntes_quedaInterrumpidaYNoArranca', async () => {
+    // Arrange: el mismo índice y un registro de pendientes nuevo (otro arranque de Mage).
+    const index = fakeIndex();
+    await setup({ facts: HUMAN, creator, index }).port.createSession(command());
+    const { port, deps } = setup({ facts: HUMAN, creator, index, views: [] });
+    // Act
+    const status = await port.getStatus('pend-1');
+    // Assert
+    expect(status).toEqual({ state: 'interrupted', turnCount: 0, lastEventAt: AT });
+    expect(await port.readResult({ conversationId: 'pend-1', afterSeq: 0 })).toEqual([]);
+    expect(deps.launch).not.toHaveBeenCalled();
+  });
+  it('getStatus_pendienteDeOtraCreadora_notFound', async () => {
+    const pending = new PendingLaunches();
+    const { port } = setup({ facts: HUMAN, creator, pending, views: [] });
+    await port.createSession(command({ createdBy: { conversationId: 'otra-c', requestId: REQUEST, at: AT }, creatorChain: ['otra-c'] }));
+    await expect(port.getStatus('pend-1')).rejects.toThrow('not_found: pend-1');
   });
 });

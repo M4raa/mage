@@ -89,6 +89,18 @@ describe('DelegationLog', () => {
     emit(result, snap('idle'));
     expect(sent).toEqual([{ sessionId: 'parent', text: sessionResultMessage({ title: 't', conversationId: 'conv-child', text: 'hola 7' }) }]);
   });
+  it('watch_lanzadaDesdeSuTarjeta_seEncuentraPorAmbosIdsYLaRespuestaLlevaElDeLaTarjeta', () => {
+    // Arrange
+    const { log, emit, sent } = setup();
+    log.watch({ ...CHILD, launchId: 'pend-1' });
+    // Act
+    emit({ kind: 'assistant_text', text: 'hola 7' }, snap('running'));
+    emit(result, snap('idle'));
+    // Assert
+    expect(log.get('pend-1')?.child.conversationId).toBe('conv-child');
+    expect(log.get('conv-child')?.child.launchId).toBe('pend-1');
+    expect(sent).toEqual([{ sessionId: 'parent', text: sessionResultMessage({ title: 't', conversationId: 'pend-1', text: 'hola 7' }) }]);
+  });
   it('watch_creadoraYaLeyoLaRespuesta_noLeMandaElAviso', () => {
     const { log, emit, sent } = setup();
     log.watch(CHILD);

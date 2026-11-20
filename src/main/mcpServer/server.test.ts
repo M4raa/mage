@@ -69,7 +69,19 @@ describe('Mage MCP server', () => {
       expect(tool.inputSchema.additionalProperties).toBe(false);
       expect(tool.outputSchema?.type).toBe('object');
     }
-    expect(client.getServerVersion()).toEqual({ name: 'mage', version: '1' });
+    expect(client.getServerVersion()).toEqual({ name: 'mage', version: '2' });
+  });
+  it('initialize_instrucciones_pidenModeloYEsfuerzoSinElUsuario', async () => {
+    const { client } = await connect();
+    const instructions = client.getInstructions() ?? '';
+    expect(instructions).toContain('Si trabajas sin el usuario (tarea programada, sesión delegada o Ultracode), pasa siempre model y effort en mage_create_session');
+  });
+  it('listTools_estadoAwaitingLaunch_documentado', async () => {
+    const { client } = await connect();
+    const tools = (await client.listTools()).tools;
+    const describedBy = (name: string) => tools.find((tool) => tool.name === name)?.description ?? '';
+    expect(describedBy('mage_create_session')).toContain('awaiting_launch');
+    expect(describedBy('mage_get_status')).toContain('awaiting_launch');
   });
   // P-038: sin instrucciones, «lanza dos sesiones nuevas» acababa en subagentes aun con el MCP cargado.
   it('initialize_sinNavegador_instruccionesDeSesionesSinLasDelNavegador', async () => {

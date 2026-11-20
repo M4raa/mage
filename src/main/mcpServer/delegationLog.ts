@@ -26,6 +26,8 @@ export interface DelegatedSession {
   readonly projectId: string;
   readonly createdBy: CreatedBy;
   readonly creatorChain: readonly string[];
+  // Id que recibió la creadora cuando la sesión esperaba a que el usuario la lanzara: la sigue nombrando con él.
+  readonly launchId?: string;
 }
 // Los estados públicos de `mage_get_status` son los de `SessionState` del núcleo MCP.
 export type McpState = SessionState;
@@ -104,6 +106,7 @@ export class DelegationLog {
     holder.entry = entry;
     this.entries.set(child.sessionId, entry);
     this.byConversation.set(child.conversationId, entry);
+    if (child.launchId !== undefined) this.byConversation.set(child.launchId, entry);
     this.evictOldest();
   }
 
@@ -199,7 +202,7 @@ export class DelegationLog {
   private deliverToCreator(entry: Entry, text: string): void {
     const { coordinator } = this.deps;
     if (coordinator.ownerOf(entry.child.creatorSessionId) === undefined) return;
-    coordinator.send({ sessionId: entry.child.creatorSessionId, text: sessionResultMessage({ title: entry.child.title, conversationId: entry.child.conversationId, text }) });
+    coordinator.send({ sessionId: entry.child.creatorSessionId, text: sessionResultMessage({ title: entry.child.title, conversationId: entry.child.launchId ?? entry.child.conversationId, text }) });
   }
 
   private onClosed(entry: Entry): void {
@@ -247,6 +250,7 @@ export class DelegationLog {
       if (!entry.closed) continue;
       this.entries.delete(sessionId);
       this.byConversation.delete(entry.child.conversationId);
+      if (entry.child.launchId !== undefined) this.byConversation.delete(entry.child.launchId);
       return;
     }
   }

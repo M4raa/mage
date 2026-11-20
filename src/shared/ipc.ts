@@ -126,6 +126,9 @@ export const IpcChannel = {
   // U17: sesiones del host (terminal/MCP) sin ventana, y adoptar una como pestaña.
   SessionsAdoptable: 'sessions:adoptable',
   SessionAttach: 'session:attach',
+  // Tarjeta «Lanzar» de una sesión delegada pedida sin modelo o sin esfuerzo: arrancarla con lo elegido o descartarla.
+  DelegationLaunch: 'delegation:launch',
+  DelegationCancelLaunch: 'delegation:cancelLaunch',
   SessionGetScratchDir: 'session:getScratchDir',
   // La RAIZ de los borradores, sin crear nada (a diferencia de la de arriba, que acuña una carpeta).
   SessionGetScratchRoot: 'session:getScratchRoot',
@@ -460,6 +463,12 @@ export interface CreateSessionParams {
   readonly forkFrom?: { readonly sessionId: string; readonly atUuid: string };
   // F8: id de la tarea cuya PRIMERA sesión es esta (lo manda `startTask`); main enlaza por él. Ausente = no es una tarea, o se reanuda (entonces enlaza `resumeSessionId`).
   readonly taskId?: string;
+}
+
+export interface LaunchDelegatedParams {
+  readonly conversationId: string;
+  readonly model?: string;
+  readonly effort?: string;
 }
 
 // Resultado de crear una sesion: el id y el config dir EFECTIVO con el que se lanzo (la cuenta o su
@@ -1117,6 +1126,10 @@ export interface MageApi {
   listAdoptableSessions(): Promise<readonly AdoptableSession[]>;
   // Adopta una sesión del host: suscribe esta ventana a sus eventos y devuelve la instantánea (U17).
   attachSession(sessionId: string): Promise<ConversationSnapshot>;
+  // Tarjeta «Lanzar»: arranca la sesión delegada que espera (`conversationId`, el id de su tarjeta) con el modelo y el
+  // esfuerzo elegidos (ausentes = los de la cuenta), o la descarta. Solo la ventana de la creadora.
+  launchDelegated(params: LaunchDelegatedParams): Promise<void>;
+  cancelDelegatedLaunch(conversationId: string): Promise<void>;
   // Aviso de una sesión del host nueva y adoptable; devuelve función para desuscribir (U17).
   onSessionAdoptable(listener: (session: AdoptableSession) => void): () => void;
   // Cuentas: descubrir en disco, crear una nueva, y lanzar el login interactivo (terminal externa).

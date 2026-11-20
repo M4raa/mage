@@ -12,6 +12,8 @@ export interface SessionSettings {
   readonly model?: string;
   readonly effort?: string;
   readonly permissionMode?: string;
+  // Ultracode es de arranque: cambiarlo relanza la sesión y se vuelve a anotar.
+  readonly ultracode?: boolean;
 }
 
 export interface DelegatedSettingsRequest {

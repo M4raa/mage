@@ -26,6 +26,7 @@ import {
   UPDATE_STATE_CHANNEL,
   CONVERSATION_LOCK_LOST_CHANNEL,
   type CloseAnswer,
+  type LaunchDelegatedParams,
 } from '@shared/ipc';
 import type { UpdateState } from '@shared/update';
 import type { ResolvedUiLanguage } from '@shared/i18n/language';
@@ -121,6 +122,8 @@ const api: MageApi = {
   getSessionIdleState: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionIdleState, sessionId),
   listAdoptableSessions: () => ipcRenderer.invoke(IpcChannel.SessionsAdoptable),
   attachSession: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionAttach, sessionId),
+  launchDelegated: (params: LaunchDelegatedParams) => ipcRenderer.invoke(IpcChannel.DelegationLaunch, params),
+  cancelDelegatedLaunch: (conversationId: string) => ipcRenderer.invoke(IpcChannel.DelegationCancelLaunch, conversationId),
   getScratchDir: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchDir),
   getScratchRoot: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoot),
   getScratchRoots: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoots),
