@@ -969,6 +969,13 @@ export interface MessageValues {
   readonly "dialogs.closeTab.remember": never;
   readonly "dialogs.closeTab.stop": never;
   readonly "dialogs.closeTab.title": never;
+  readonly "dialogs.hostPair.approve": never;
+  readonly "dialogs.hostPair.body": never;
+  readonly "dialogs.hostPair.kind.mcp": never;
+  readonly "dialogs.hostPair.kind.terminal": never;
+  readonly "dialogs.hostPair.kind.widget": never;
+  readonly "dialogs.hostPair.reject": never;
+  readonly "dialogs.hostPair.title": { readonly "kind": string | number; readonly "name": string | number };
   readonly "dialogs.mcpExtensionFilter": never;
   readonly "dialogs.newTab.accountLabel": never;
   readonly "dialogs.newTab.agyMissingEmphasis": never;
@@ -1173,6 +1180,9 @@ export interface MessageValues {
   readonly "errors.host.bypassPermissionsBlocked": never;
   readonly "errors.host.directoryNotPrivate": { readonly "directory": string | number; readonly "mode": string | number; readonly "owner": string | number; readonly "user": string | number };
   readonly "errors.host.notPaired": never;
+  readonly "errors.host.pairNoWindow": never;
+  readonly "errors.host.pairRejected": never;
+  readonly "errors.host.pairTimeout": never;
   readonly "errors.host.permissionAnswersDisabled": never;
   readonly "errors.host.socketPathTooLong": { readonly "address": string | number; readonly "bytes": string | number; readonly "max": string | number };
   readonly "errors.host.startFailedCleanup": { readonly "detail": string | number; readonly "reason": string | number };

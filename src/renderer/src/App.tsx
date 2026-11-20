@@ -19,6 +19,7 @@ import { TrustFolderDialog } from './workbench/components/TrustFolderDialog';
 // El de cierre tampoco: main espera su respuesta para cerrar, y un chunk que no cargara dejaria la X
 // sin efecto hasta recargar.
 import { CloseMageDialog } from './workbench/components/CloseMageDialog';
+import { HostPairDialog } from './workbench/components/HostPairDialog';
 import { CloseRunningTabDialog } from './workbench/components/CloseRunningTabDialog';
 
 // Los cuatro dialogos van en DIFERIDO (P15). Ya devolvian `null` cerrados, asi que la puerta de
@@ -324,6 +325,7 @@ export function App(): React.JSX.Element {
       <OnboardingWizard />
       <CloseMageDialog />
       <CloseRunningTabDialog />
+      <HostPairDialog />
       <TooltipLayer />
     </div>
   );

@@ -29,6 +29,7 @@ import {
   type LaunchDelegatedParams,
 } from '@shared/ipc';
 import type { UpdateState } from '@shared/update';
+import { HOST_PAIR_REQUESTS_CHANNEL, type HostPairAnswer, type HostPairRequestView } from '@shared/hostClients';
 import type { ResolvedUiLanguage } from '@shared/i18n/language';
 import type { GhPrUpdate } from '@shared/gh';
 import type {
@@ -374,6 +375,13 @@ const api: MageApi = {
     return () => ipcRenderer.removeListener(CLOSE_PROMPT_CHANNEL, handler);
   },
   answerClose: (answer: CloseAnswer) => ipcRenderer.invoke(IpcChannel.CloseAnswer, answer),
+  getHostPairRequests: () => ipcRenderer.invoke(IpcChannel.HostPairPending),
+  onHostPairRequests: (listener: (pending: readonly HostPairRequestView[]) => void) => {
+    const handler = (_: unknown, pending: readonly HostPairRequestView[]) => listener(pending);
+    ipcRenderer.on(HOST_PAIR_REQUESTS_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(HOST_PAIR_REQUESTS_CHANNEL, handler);
+  },
+  answerHostPair: (answer: HostPairAnswer) => ipcRenderer.invoke(IpcChannel.HostPairAnswer, answer),
   getUpdateState: () => ipcRenderer.invoke(IpcChannel.UpdateGetState),
   onUpdateState: (listener: (state: UpdateState) => void) => {
     const handler = (_: unknown, state: UpdateState) => listener(state);

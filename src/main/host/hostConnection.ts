@@ -11,7 +11,7 @@ import type { SessionLogFn } from '../engine/agentSession';
 import type { RewindCoordinator } from '../coordination/rewindCoordinator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { MAX_LINE_BYTES, NdjsonFramer } from './ndjsonFramer';
-import { BypassPermissionsBlockedError, NotPairedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
+import { BypassPermissionsBlockedError, NotPairedError, PairingRefusedError, PermissionAnswersDisabledError, TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
 import { accessFor, isMethodAllowed, type HostAccess } from './hostAccess';
 import type { HostControl } from './hostControl';
 import type { HostMode } from './hostServer';
@@ -38,6 +38,7 @@ import {
   type HostErrorBody,
   type HostMethod,
   type HostOptionKey,
+  type HostPairRequest,
   type RequestEnvelope,
   type RequestId,
 } from './hostProtocol';
@@ -102,12 +103,16 @@ export interface HostConnectionDeps {
   // La credencial MAGE_MCP_CALLER es de una sesión VIVA de Mage (`McpCallers.resolve`).
   readonly isMageCaller: (credential: string) => boolean;
   readonly clients: HostClientsPort;
+  // El diálogo de la ventana (`HostPairing`): se resuelve si el usuario autoriza.
+  readonly pairing: { ask(request: HostPairRequest): Promise<void> };
 }
 
-// Los clientes emparejados, vistos por una conexión.
+// Los clientes emparejados, vistos por una conexión (`HostClientStore` lo satisface).
 export interface HostClientsPort {
   // Id del cliente emparejado con ese token (y anota su último uso), o null si no hay ninguno.
   authenticate(clientToken: string): string | null;
+  add(request: { readonly name: string; readonly kind: HostPairRequest['clientKind'] }): { readonly clientId: string; readonly clientToken: string };
+  onRevoked(clientId: string, listener: () => void): () => void;
 }
 
 // Una conexión que no se identifica en este tiempo se cierra: no puede retener un socket sin dar el token.
@@ -124,6 +129,8 @@ export class HostConnection {
   private caller: string | null = null;
   // Lo que deja hacer la credencial con la que se presentó (`hostAccess.ts`); se decide en el `hello`.
   private access: HostAccess = 'read';
+  // Deja de escuchar la revocación del cliente emparejado de esta conexión.
+  private stopWatchingRevocation: (() => void) | null = null;
   private tunnel: McpTunnelHandle | null = null;
   // Idioma que pidió el cliente para los errores (1.6); null = castellano, como antes de 1.6.
   private errorTranslate: Translate | null = null;
@@ -229,8 +236,30 @@ export class HostConnection {
   private decideAccess(hello: HelloParams): HostAccess {
     const pairedClientId = hello.clientToken === undefined ? null : this.deps.clients.authenticate(hello.clientToken);
     if (hello.clientToken !== undefined && pairedClientId === null) this.deps.log('info', 'Un cliente del host presentó un token de cliente que no está emparejado', { client: hello.client.kind });
+    if (pairedClientId !== null) this.watchRevocation(pairedClientId);
     const liveMageCaller = this.caller !== null && this.deps.isMageCaller(this.caller);
     return accessFor({ clientKind: hello.client.kind, pairedClientId, liveMageCaller });
+  }
+
+  // Revocar el cliente en Configuración corta esta conexión con el error de «no emparejado».
+  private watchRevocation(clientId: string): void {
+    this.stopWatchingRevocation?.();
+    this.stopWatchingRevocation = this.deps.clients.onRevoked(clientId, () => {
+      this.deps.log('info', 'Se revocó un cliente del host: se corta su conexión', { clientId });
+      this.fail(null, toErrorBody(new NotPairedError(), this.errorTranslate));
+    });
+  }
+
+  // `host.pair` (1.8): si el usuario autoriza, esta misma conexión pasa a emparejada y el token se devuelve UNA vez.
+  // Si la conexión se cerró mientras se preguntaba, no se da de alta nada.
+  private async pair(request: HostPairRequest): Promise<{ clientId: string; clientToken: string }> {
+    await this.deps.pairing.ask(request);
+    if (this.phase !== 'ready') throw new Error('La conexión se cerró antes de emparejar');
+    const paired = this.deps.clients.add({ name: request.clientName, kind: request.clientKind });
+    this.access = 'full';
+    this.watchRevocation(paired.clientId);
+    this.deps.log('info', 'Cliente del host emparejado', { clientId: paired.clientId, kind: request.clientKind });
+    return { clientId: paired.clientId, clientToken: paired.clientToken };
   }
 
   private openTunnelIfAllowed(kind: HelloParams['client']['kind']): void {
@@ -264,7 +293,7 @@ export class HostConnection {
       return;
     }
     if (!isMethodAllowed(this.access, method)) {
-      this.reply(id, toErrorBody(new NotPairedError(method), this.errorTranslate));
+      this.reply(id, toErrorBody(new NotPairedError(), this.errorTranslate));
       return;
     }
     const schema: ZodTypeAny = HOST_METHOD_SCHEMAS[method];
@@ -353,6 +382,7 @@ export class HostConnection {
       }
       case 'host.stop': return this.stop((params as { force?: boolean } | undefined)?.force === true);
       case 'accounts.create': return { account: control.createApiAccount(params as HostAccountCreateRequest) };
+      case 'host.pair': return this.pair(params as HostPairRequest);
       case 'session.rewindPoints':
       case 'session.rewindPlan':
       case 'session.rewind': return this.runRewind(method, params);
@@ -457,6 +487,8 @@ export class HostConnection {
   private shutdown(): void {
     this.phase = 'closed';
     this.cancelHelloTimer();
+    this.stopWatchingRevocation?.();
+    this.stopWatchingRevocation = null;
     const tunnel = this.tunnel;
     this.tunnel = null;
     tunnel?.close();
@@ -485,6 +517,7 @@ const OWN_ERROR_CODES: readonly (readonly [abstract new (...args: never[]) => Er
   [BypassPermissionsBlockedError, HostErrorCode.PermissionModeBlocked],
   [PermissionAnswersDisabledError, HostErrorCode.PermissionAnswersDisabled],
   [NotPairedError, HostErrorCode.NotPaired],
+  [PairingRefusedError, HostErrorCode.PairingRefused],
 ];
 
 // Un UserFacingError lleva marca y JSON tras el castellano: al cliente solo le llega el texto limpio, en el idioma que pidió (1.6) o en castellano.

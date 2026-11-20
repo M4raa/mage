@@ -9,6 +9,7 @@ import { REWIND_POINT_SCHEMA } from '../coordination/rewindInput';
 import { ANSWER_PERMISSION_SCHEMA, SEND_MESSAGE_SCHEMA, SESSION_ID_SCHEMA, MAX_ID_CHARS, MAX_MESSAGE_CHARS, MAX_MODE_CHARS } from '@shared/sessionInput';
 import { CHALLENGE_NONCE_BYTES } from './hostToken';
 import { CLIENT_TOKEN_PATTERN } from './hostAccess';
+import { HOST_CLIENT_KINDS } from '@shared/hostClients';
 
 // Protocolo del host local (F2.6): JSON-RPC 2.0 sobre NDJSON.
 // Una línea = un mensaje. El primero de cada conexión tiene que ser `hello` con el token y la versión, salvo un
@@ -67,7 +68,7 @@ export type RequestId = string | number;
 
 export const HELLO_PARAMS_SCHEMA = z.object({
   protocol: z.string().regex(/^\d+\.\d+$/, 'se esperaba «major.minor»'),
-  client: z.object({ kind: z.enum(['terminal', 'mcp', 'widget']), version: z.string().max(MAX_VERSION_CHARS) }).strict(),
+  client: z.object({ kind: z.enum(HOST_CLIENT_KINDS), version: z.string().max(MAX_VERSION_CHARS) }).strict(),
   token: z.string().min(1).max(MAX_TOKEN_CHARS),
   // Credencial MCP_CALLER de la sesion que lanzo a un cliente `mcp` (D-M6); los demas clientes no la mandan.
   caller: z.string().regex(/^[0-9a-f]{64}$/).optional(),
@@ -132,6 +133,13 @@ const UPDATE_QUEUED_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, queuedId: 
 // Un mensaje JSON-RPC de MCP dentro del túnel (1.5): lo valida el transporte del servidor MCP, no el host.
 const MCP_MESSAGE_SCHEMA = z.object({ message: z.record(z.unknown()) }).strict();
 export const CLIENT_LANGUAGE_SCHEMA = z.object({ language: z.enum(UI_LANGUAGES) }).strict();
+// El nombre sale tal cual en el diálogo de la ventana: corto y en una línea (sin caracteres de control).
+export const MAX_CLIENT_NAME_CHARS = 64;
+const PAIR_SCHEMA = z.object({
+  clientName: z.string().trim().min(1).max(MAX_CLIENT_NAME_CHARS).regex(/^[^\p{Cc}\p{Zl}\p{Zp}]+$/u, 'sin saltos de línea ni caracteres de control'),
+  clientKind: z.enum(HOST_CLIENT_KINDS),
+}).strict();
+export type HostPairRequest = z.infer<typeof PAIR_SCHEMA>;
 
 // Esquema de los parámetros de cada método posterior al `hello`.
 export const HOST_METHOD_SCHEMAS = {
@@ -158,6 +166,7 @@ export const HOST_METHOD_SCHEMAS = {
   'accounts.create': ACCOUNTS_CREATE_SCHEMA,
   'mcp.message': MCP_MESSAGE_SCHEMA,
   'client.setLanguage': CLIENT_LANGUAGE_SCHEMA,
+  'host.pair': PAIR_SCHEMA,
 } as const;
 export type HostMethod = keyof typeof HOST_METHOD_SCHEMAS;
 

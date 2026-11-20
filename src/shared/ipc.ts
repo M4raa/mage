@@ -3,6 +3,7 @@
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
 import type { UsageHistory } from './usageHistory';
+import type { HostPairAnswer, HostPairRequestView } from './hostClients';
 import type { BrowserBounds, BrowserEntryState, BrowserPenCapture, BrowserPenResult, BrowserPenStroke, BrowserZoomStep } from './browser';
 import type { ConversationLockParams, ConversationLockRef, ConversationLockStatus } from './conversationLock';
 import type { ResolvedUiLanguage } from './i18n/language';
@@ -352,6 +353,9 @@ export const IpcChannel = {
   WindowsDropTab: 'windows:dropTab',
   // Grupo B: la respuesta del dialogo propio de cierre (lo pide main por CLOSE_PROMPT_CHANNEL).
   CloseAnswer: 'close:answer',
+  // Emparejamiento del host local: las peticiones pendientes (para una ventana que carga tarde) y la respuesta.
+  HostPairPending: 'host:pairPending',
+  HostPairAnswer: 'host:pairAnswer',
   // Estado de la actualizacion (para una ventana que carga tarde) e instalarla ya descargada.
   UpdateGetState: 'update:getState',
   UpdateInstall: 'update:install',
@@ -1437,6 +1441,10 @@ export interface MageApi {
   onClosePrompt(listener: () => void): () => void;
   // Respuesta al dialogo de cierre. Lanza si esta ventana no tenia una pregunta pendiente.
   answerClose(answer: CloseAnswer): Promise<void>;
+  // Emparejamiento del host local: lo pendiente ahora, sus cambios (la lista entera) y la respuesta del diálogo.
+  getHostPairRequests(): Promise<readonly HostPairRequestView[]>;
+  onHostPairRequests(listener: (pending: readonly HostPairRequestView[]) => void): () => void;
+  answerHostPair(answer: HostPairAnswer): Promise<void>;
   getUpdateState(): Promise<UpdateState>;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
   // main pide a ESTA ventana el dialogo de «lista para instalar» de la version dada.

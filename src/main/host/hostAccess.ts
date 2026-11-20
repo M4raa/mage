@@ -16,6 +16,7 @@ type MethodClass = 'read' | 'tunnel' | 'write';
 
 // Criterio de `read`: no cambia nada en Mage ni gasta uso. Un método nuevo no compila sin su fila.
 // - `client.setLanguage` solo cambia el idioma de los errores de ESTA conexión.
+// - `host.pair` no concede nada por sí mismo: lo concede el usuario en la ventana.
 // - `session.resume` hoy solo busca una sesión VIVA; si algún día lanzara una cerrada, pasa a `write`.
 // - `session.rewindPoints` y `session.rewindPlan` calculan sin aplicar (el que aplica es `session.rewind`).
 const METHOD_CLASS: Readonly<Record<HostMethod, MethodClass>> = {
@@ -30,6 +31,7 @@ const METHOD_CLASS: Readonly<Record<HostMethod, MethodClass>> = {
   'session.rewindPoints': 'read',
   'session.rewindPlan': 'read',
   'client.setLanguage': 'read',
+  'host.pair': 'read',
   'mcp.message': 'tunnel',
   'session.send': 'write',
   'session.interrupt': 'write',

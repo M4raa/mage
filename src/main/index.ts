@@ -302,7 +302,10 @@ import { ResumeOnReset } from './coordination/resumeOnReset';
 import { DelegatedCloser } from './mcpServer/delegatedCloser';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
 import { resolvedPath } from './os/resolvedPath';
-import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
+import { readSnapshot, writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
+import { HOST_CLIENTS_FILE, HostClientStore } from './host/hostClients';
+import { HostPairing, parseHostPairAnswer } from './host/hostPairing';
+import { HOST_PAIR_REQUESTS_CHANNEL } from '@shared/hostClients';
 import { SettingsStore } from './state/settingsStore';
 import { INSTALLER_LANGUAGE_FILE, readInstallerLanguage } from './i18n/installerLanguage';
 import { UiLanguageService } from './i18n/uiLanguageService';
@@ -3006,6 +3009,37 @@ const hostOwnership = new HostOwnership({
 });
 // D-M6: credencial por sesion que identifica al hijo ante `mage mcp`.
 const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordinator.ownerOf(id) !== undefined });
+// Clientes emparejados del host (la terminal) y las peticiones de emparejar que esperan respuesta en la ventana.
+const hostClientStore = new HostClientStore({
+  readFile: () => readSnapshot(fileSystemDeps(), hostClientsFile()),
+  writeFile: (content) => writeAtomic(fileSystemDeps(), hostClientsFile(), content),
+  randomBytes,
+  newId: randomUUID,
+  now: () => new Date().toISOString(),
+  log: mainLog,
+});
+const hostPairing = new HostPairing({
+  canAsk: showWindowForPairing,
+  // A todas: cualquier ventana puede contestar, y las demás tienen que cerrar su diálogo.
+  publish: (pending) => windowManager.broadcast(HOST_PAIR_REQUESTS_CHANNEL, pending),
+  setTimer: (fn, ms) => {
+    const timer = setTimeout(fn, ms);
+    return () => clearTimeout(timer);
+  },
+  newId: randomUUID,
+});
+
+function hostClientsFile(): string {
+  return join(app.getPath('userData'), HOST_CLIENTS_FILE);
+}
+
+// Sin interfaz no hay dónde autorizar. Con ella, la ventana principal sale al frente (recreada si estaba en la bandeja):
+// quien pide emparejar está en la terminal y el diálogo tiene que verse.
+function showWindowForPairing(): boolean {
+  if (runsHeadless) return false;
+  focusMainWindow();
+  return true;
+}
 // Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel o, sin panel, en la de aparcamiento (D-S3, Z01).
 const viewPlacement = new ViewPlacement<PopoutWindow>(createParkingHost(createParkingWindow));
 // El visor de artifacts es una entrada más del registro, con su id reservado (ver `artifactViewer.ts`).
@@ -3648,6 +3682,11 @@ function registerDialogIpc1(): void {
   ipcMain.handle(IpcChannel.UiLanguageGet, () => getUiLanguageService().current());
   // Grupo B: dialogos propios de cierre y de actualizacion.
   ipcMain.handle(IpcChannel.CloseAnswer, (event, answer: unknown) => answerClosePrompt(event, answer));
+  ipcMain.handle(IpcChannel.HostPairPending, () => hostPairing.pending());
+  ipcMain.handle(IpcChannel.HostPairAnswer, (_event, answer: unknown) => {
+    const { requestId, approve } = parseHostPairAnswer(answer);
+    hostPairing.answer(requestId, approve);
+  });
   ipcMain.handle(IpcChannel.UpdateGetState, () => getUpdateState());
   ipcMain.handle(IpcChannel.UpdateInstall, () => installUpdate());
   ipcMain.handle(IpcChannel.UpdateCheck, () => checkForUpdatesNow());
@@ -4864,8 +4903,8 @@ function startHost(mode: HostMode): Promise<void> {
       log: mainLog,
     }),
     isMageCaller: (credential) => mcpCallers.resolve(credential) !== null,
-    // ponytail: sin almacén de clientes todavía, ningún token de cliente es válido.
-    clients: { authenticate: () => null },
+    clients: hostClientStore,
+    pairing: hostPairing,
     hostVersion: app.getVersion(),
     log: mainLog,
     newId: randomUUID,
