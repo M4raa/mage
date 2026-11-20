@@ -31,10 +31,22 @@ function parseLine(line, { stderr, messages }) {
   }
 }
 
+// Host 1.8: sin la credencial de una sesión viva de Mage (ni emparejamiento) el túnel no se abre y cada mensaje se
+// rechazaría sin respuesta. Se sale con el motivo en vez de dejar colgado al cliente MCP. Un host anterior no dice `access`.
+function tunnelAllowed(hello) {
+  return hello.access === undefined || hello.access === 'tunnel' || hello.access === 'full';
+}
+
 export async function runMcpRelay(context) {
   const { stdin, stdout, stderr, messages, exit } = context;
   const link = await connectOrExit(context);
   if (link === null) return;
+  if (!tunnelAllowed(link.hello)) {
+    stderr.write(`${messages.mcpNotMageSession()}\n`);
+    link.rpc.close();
+    exit(EXIT_ERROR);
+    return;
+  }
   const { rpc, socket } = link;
   let finished = false;
 

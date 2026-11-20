@@ -16,7 +16,7 @@ describe('messages', () => {
     const en = Object.keys(createMessages('en')).sort();
 
     expect(en).toEqual(es);
-    expect(es).toHaveLength(76);
+    expect(es).toHaveLength(81);
   });
 
   it('createMessages_permissionAsk_sinDescripcion_noPoneParentesis', () => {

@@ -182,15 +182,28 @@ describe('createRpc.notify', () => {
 
 describe('connectVerified — cliente mcp', () => {
   const CALLER = 'cd'.repeat(32);
-  const helloOf = async (client) => {
+  const helloOf = async (client, clientToken) => {
     const socket = new FakeSocket();
     socket.respond = (request) => {
       if (request.method === 'host.challenge') socket.reply({ jsonrpc: '2.0', id: request.id, result: { proof: computeProof(TOKEN, request.params.nonce) } });
       else socket.reply({ jsonrpc: '2.0', id: request.id, result: HELLO_RESULT });
     };
-    await connectVerified({ userDataDir: 'C:\\perfil', clientVersion: 't', deps: deps(socket), client });
+    await connectVerified({ userDataDir: 'C:\\perfil', clientVersion: 't', deps: deps(socket), client, clientToken });
     return JSON.parse(socket.writes[1]).params;
   };
+
+  it('connectVerified_conTokenDeCliente_viajaEnElHello', async () => {
+    const params = await helloOf({ kind: 'terminal' }, 'e'.repeat(64));
+
+    expect(params.clientToken).toBe('e'.repeat(64));
+    expect(params.token).toBe(TOKEN);
+  });
+
+  it.each(['XYZ', undefined])('connectVerified_tokenDeClienteMalo_seOmite_%s', async (clientToken) => {
+    const params = await helloOf({ kind: 'terminal' }, clientToken);
+
+    expect(params).not.toHaveProperty('clientToken');
+  });
 
   it('connectVerified_mcpClientWithCaller_helloHasCaller', async () => {
     const params = await helloOf({ kind: 'mcp', caller: CALLER });
