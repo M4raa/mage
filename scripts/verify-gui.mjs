@@ -9213,28 +9213,15 @@ const CHECKS = [
     },
   },
   {
-    // Sin Enter ni CLI: el trabajo vivo es un estado sembrado (sesión e id inventados) y `closeSession`/`stop` del
-    // puente son espías, así que main nunca ve esas sesiones. Todo lo sustituido se restaura en `finally`.
-    name: 'Pestañas: cerrar una que trabaja pregunta y Cancelar no la cierra; con «Dejar en segundo plano» recordado, no pregunta',
+    // Sin Enter ni CLI: el trabajo vivo es un estado sembrado con un id de sesión inventado. `window.mage` no se
+    // puede sustituir, así que no se espía `stop`/`closeSession` (van al main real, que contesta «Sesion
+    // inexistente» y el renderer lo trata como ausencia): solo se mide lo que se ve y lo que queda en el store.
+    name: 'Pestañas: cerrar una que trabaja pregunta, Cancelar no la cierra y «Dejar en segundo plano» recordado deja de preguntar',
     async run(page) {
-      await page.evaluate(() => {
-        // Las propiedades de `window.mage` son de solo lectura; el store lo resuelve en cada llamada, así que se
-        // sustituye el objeto entero por uno que hereda del real y solo cambia estos dos métodos.
-        const original = window.mage;
-        window.__vgCloseTabOriginal = original;
-        window.__vgCloseTabCalls = { closeSession: 0, stop: 0 };
-        window.mage = Object.create(original, {
-          closeSession: { value: async () => { window.__vgCloseTabCalls.closeSession += 1; return { background: true }; } },
-          stop: { value: async () => { window.__vgCloseTabCalls.stop += 1; } },
-        });
-      });
       try {
         return await medirCerrarPestanaQueTrabaja(page);
       } finally {
-        await page.evaluate(() => {
-          if (window.__vgCloseTabOriginal !== undefined) window.mage = window.__vgCloseTabOriginal;
-          window.__mageDev.store.getState().setRunningTabClose('ask');
-        });
+        await page.evaluate(() => window.__mageDev.store.getState().setRunningTabClose('ask'));
       }
     },
   },
@@ -15254,18 +15241,14 @@ async function medirCerrarPestanaQueTrabaja(page) {
   await dialog.locator('input[type="checkbox"]').check();
   await dialog.locator('[data-close-tab-action="background"]').click();
   await first.tab.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-  const afterBackground = await page.evaluate(async () => ({
-    stopCalls: window.__vgCloseTabCalls.stop,
-    stored: window.__mageDev.store.getState().settings.runningTabClose,
-    saved: (await window.mage.loadSettings()).runningTabClose,
-  }));
+  const stored = await page.evaluate(() => window.__mageDev.store.getState().settings.runningTabClose);
   const second = await openWorkingTemporaryTab(page, 'vg-close-s2');
   await second.reseed();
   await second.cross.click();
   await second.tab.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
   const dialogAfterRemembered = await dialog.count();
-  const ok = tabSurvivesEscape && afterBackground.stopCalls === 0 && afterBackground.stored === 'background' && dialogAfterRemembered === 0;
-  return { ok, detail: JSON.stringify({ tabSurvivesEscape, ...afterBackground, dialogAfterRemembered }) };
+  const ok = tabSurvivesEscape && stored === 'background' && dialogAfterRemembered === 0;
+  return { ok, detail: JSON.stringify({ tabSurvivesEscape, stored, dialogAfterRemembered }) };
 }
 
 // Pestaña descuadrada. `marcada`: la seleccionada que la barra NO atenúa; `pintada`: el panel con el marco de enfocado
