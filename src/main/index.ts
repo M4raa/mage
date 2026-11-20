@@ -249,7 +249,7 @@ import { UsageHistoryService, type TranscriptRoot } from './usage/usageHistorySe
 import { listTranscriptsOf, parseUsageHistoryCache, readRange } from './usage/usageHistoryFs';
 import type { UsageInfo } from '@shared/usage';
 import { StatusService } from './status/statusService';
-import { claudeUserAgent } from './os/claudeVersion';
+import { claudeUserAgent, resolveClaudeVersion } from './os/claudeVersion';
 import { LogBus } from './debug/logBus';
 import { DebugWindowController } from './debug/debugWindow';
 import { TranscriptService, type BranchReadOptions } from './transcripts/transcriptService';
@@ -258,6 +258,9 @@ import { MemoryService, resolveMemoryDir } from './memory/memoryService';
 import { WorkspaceStore } from './state/workspaceStore';
 import { CommandCatalogStore } from './state/commandCatalogStore';
 import { openArtifactWindow } from './artifacts/artifactWindow';
+import { FrameClient } from './artifacts/frameClient';
+import { ArtifactsService, artifactAccountIds } from './artifacts/artifactsService';
+import { registerArtifactsIpc } from './artifacts/artifactsIpc';
 import { InstructionsService } from './instructions/instructionsService';
 import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type BridgeFs, type BridgeSpec } from './instructions/instructionsBridge';
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
@@ -1477,6 +1480,18 @@ const usageService = new UsageService({
   // Dev no añade otro renovador de Mage a los tokens de HOME compartidos con la instalada.
   refreshSession: isDev ? undefined : (configDir) => tokenRefreshService.refresh(configDir),
 });
+// Artifacts de las cuentas de Claude por suscripcion (lista y lectura), con la misma credencial y renovacion que el
+// uso. El token solo sale de main en la cabecera hacia api.anthropic.com; con el HOME de prueba, la red esta cerrada.
+const frameClient = new FrameClient({
+  fetch: accountsFetch,
+  readAccessToken: (configDir) => readAccessToken(configDir),
+  refreshSession: isDev ? undefined : (configDir) => tokenRefreshService.refresh(configDir),
+  get cliVersion() {
+    return resolveClaudeVersion();
+  },
+  sessionId: randomUUID(),
+});
+const artifactsService = new ArtifactsService({ client: frameClient, now: () => Date.now() });
 const apiUsageStore = new ApiUsageStore({
   read: () => {
     const path = join(app.getPath('userData'), 'api-usage.json');
@@ -3190,6 +3205,11 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerSettingsIpc1(deps);
   registerThinkingIpc1();
   registerArtifactIpc1(deps);
+  registerArtifactsIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    service: artifactsService,
+    accountIds: () => artifactAccountIds(listAllAccounts()),
+  });
   registerProjectIpc1(deps);
   registerSharedIpc1();
   registerPromptIpc1(deps);

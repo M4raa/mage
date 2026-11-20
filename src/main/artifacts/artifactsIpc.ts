@@ -1,0 +1,60 @@
+// Frontera IPC de la lista de artifacts: valida con Zod lo que manda el renderer y delega. Solo atiende a cuentas
+// que main ya considera de la lista (`artifactAccountIds`): un configDir arbitrario haria que main leyera las
+// credenciales de CUALQUIER ruta y usara ese token (mismo motivo que la guarda de `UsageGet`).
+import { z } from 'zod';
+import { IpcChannel } from '@shared/ipc';
+import type { AccountArtifacts, ArtifactPage } from '@shared/artifactLibrary';
+import type { ArtifactsService } from './artifactsService';
+
+export interface ArtifactsIpcDeps {
+  readonly handle: (channel: string, listener: (event: unknown, arg: unknown) => unknown) => void;
+  readonly service: Pick<ArtifactsService, 'page' | 'listAll'>;
+  // Las cuentas con lista, en este momento (las cuentas cambian mientras Mage corre).
+  readonly accountIds: () => readonly string[];
+}
+
+const MAX_ACCOUNT_CHARS = 1024;
+// El medido tenia 144 caracteres; el tope solo evita que el renderer mande un megabyte.
+const MAX_PAGE_TOKEN_CHARS = 2048;
+const MAX_PREVIEW_CHARS = 200;
+
+const relSchema = z.union([z.literal('mine'), z.literal('shared')]);
+const listSchema = z.object({ refresh: z.boolean() }).strict();
+const moreSchema = z
+  .object({
+    accountId: z.string().min(1).max(MAX_ACCOUNT_CHARS),
+    rel: relSchema,
+    pageToken: z.string().min(1).max(MAX_PAGE_TOKEN_CHARS),
+  })
+  .strict();
+
+function parseWith<T>(schema: z.ZodType<T>, raw: unknown): T {
+  const result = schema.safeParse(raw);
+  if (result.success) return result.data;
+  const preview = (JSON.stringify(raw) ?? String(raw)).slice(0, MAX_PREVIEW_CHARS);
+  throw new Error(`Petición de artifacts inválida (${result.error.issues.map((i) => i.message).join('; ')}): ${preview}`);
+}
+
+// Lanza si la cuenta no es una de las que tienen lista. La exporta el paso que abre un artifact.
+export function requireArtifactAccount(deps: Pick<ArtifactsIpcDeps, 'accountIds'>, accountId: string): string {
+  if (!deps.accountIds().includes(accountId)) {
+    throw new Error(`Cuenta sin lista de artifacts (no es de Claude por suscripción con sesión): ${accountId}`);
+  }
+  return accountId;
+}
+
+export function listArtifacts(deps: ArtifactsIpcDeps, raw: unknown): Promise<readonly AccountArtifacts[]> {
+  const { refresh } = parseWith(listSchema, raw);
+  return deps.service.listAll(deps.accountIds(), refresh);
+}
+
+export function moreArtifacts(deps: ArtifactsIpcDeps, raw: unknown): Promise<ArtifactPage> {
+  const { accountId, rel, pageToken } = parseWith(moreSchema, raw);
+  requireArtifactAccount(deps, accountId);
+  return deps.service.page(accountId, rel, { pageToken, refresh: false });
+}
+
+export function registerArtifactsIpc(deps: ArtifactsIpcDeps): void {
+  deps.handle(IpcChannel.ArtifactsList, (_event, arg) => listArtifacts(deps, arg));
+  deps.handle(IpcChannel.ArtifactsMore, (_event, arg) => moreArtifacts(deps, arg));
+}
