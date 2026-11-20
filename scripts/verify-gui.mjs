@@ -3516,6 +3516,71 @@ const CHECKS = [
     },
   },
   {
+    // Una sesión pedida con `mage_create_session` sin modelo ni esfuerzo espera a la tarjeta «Lanzar» de su creadora. Se
+    // siembra el bloque de la herramienta y el evento `delegation_launch` que manda main (por el reductor real), se mide la
+    // tarjeta con lo heredado en sus dos selectores y se pulsa «Cancelar» con el IPC sustituido por un espía: tiene que
+    // llegarle el id de la sesión y la tarjeta queda como «No lanzada». Sin Enter, sin CLI y sin llegar nada a main.
+    name: 'Delegación: sin modelo ni esfuerzo sale la tarjeta Lanzar y Cancelar la descarta',
+    state: { tabs: 1 },
+    async run(page, { runDir }) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        window.__vgLaunchIpc = { ...window.__mageDev.launchCardIpc };
+        window.__vgLaunchCalls = [];
+        window.__mageDev.launchCardIpc.cancel = (id) => { window.__vgLaunchCalls.push(['cancel', id]); return Promise.resolve(); };
+        window.__mageDev.launchCardIpc.launch = (params) => { window.__vgLaunchCalls.push(['launch', params]); return Promise.resolve(); };
+        return { blocksByChat: s.blocksByChat, launchCards: s.launchCards };
+      });
+      try {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const s = store.getState();
+          const herramienta = {
+            kind: 'tool', id: 'vglanzar-t0', toolUseId: 'u-vglanzar-0', tool: 'mcp__mage__mage_create_session', toolClass: 'command', command: '', meta: 'ok',
+            isError: false, output: [], filePath: null, diff: null, writtenContent: null, artifact: null, artifactDraft: null,
+            delegation: { title: 'VG lanzar', conversationId: 'vglanzar-pend' }, delegationDraft: { title: 'VG lanzar' }, parentToolUseId: null,
+          };
+          const evento = {
+            kind: 'delegation_launch', childId: 'vglanzar-pend', title: 'VG lanzar', provider: 'claude', accountId: s.activeAccountId, model: 'sonnet', effort: 'high',
+            models: [{ id: 'haiku', label: 'Haiku', efforts: ['low', 'high'] }, { id: 'sonnet', label: 'Sonnet', efforts: ['low', 'high'] }],
+          };
+          store.setState({ blocksByChat: { ...s.blocksByChat, [s.activeTabId]: [herramienta] } });
+          store.setState((actual) => window.__mageDev.reduceEvent(actual, actual.activeTabId, evento));
+        });
+        const tarjeta = page.locator('[data-launch-card="vglanzar-pend"]');
+        await tarjeta.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await tarjeta.evaluate((n) => ({
+          tarjetas: document.querySelectorAll('[data-launch-card]').length,
+          modelo: n.querySelector('[data-launch-model]')?.getAttribute('data-launch-model') ?? null,
+          modeloTexto: n.querySelector('[data-launch-model]')?.textContent?.trim() ?? null,
+          esfuerzo: n.querySelector('[data-launch-effort]')?.getAttribute('data-launch-effort') ?? null,
+          esfuerzoTexto: n.querySelector('[data-launch-effort]')?.textContent?.trim() ?? null,
+          botones: [n.querySelector('[data-launch-go]')?.textContent?.trim() ?? null, n.querySelector('[data-launch-cancel]')?.textContent?.trim() ?? null],
+          tarjetaSubsesion: document.querySelectorAll('[data-delegation-card="vglanzar-pend"]').length,
+        }));
+        await page.screenshot({ path: path.join(runDir, 'delegacion-tarjeta-lanzar.png') });
+        await tarjeta.locator('[data-launch-cancel]').click();
+        await page.locator('[data-launch-card="vglanzar-pend"][data-launch-outcome="cancelled"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.llamadas = await page.evaluate(() => window.__vgLaunchCalls);
+        medido.linea = ((await tarjeta.textContent()) ?? '').trim();
+        medido.formularioFuera = await page.locator('[data-launch-card="vglanzar-pend"] [data-launch-go]').count();
+        await page.screenshot({ path: path.join(runDir, 'delegacion-tarjeta-no-lanzada.png') });
+        const ok = medido.tarjetas === 1 && medido.modelo === 'sonnet' && medido.modeloTexto === 'Sonnet' && medido.esfuerzo === 'high' && medido.esfuerzoTexto === 'high'
+          && medido.botones.join('|') === `${ui('chat.launchCard.launch')}|${ui('chat.launchCard.cancel')}` && medido.tarjetaSubsesion === 0
+          && JSON.stringify(medido.llamadas) === JSON.stringify([['cancel', 'vglanzar-pend']])
+          && medido.linea.endsWith(ui('chat.launchCard.notLaunched')) && medido.formularioFuera === 0;
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => {
+          window.__mageDev.store.setState(estado);
+          Object.assign(window.__mageDev.launchCardIpc, window.__vgLaunchIpc);
+          delete window.__vgLaunchIpc;
+          delete window.__vgLaunchCalls;
+        }, previo);
+      }
+    },
+  },
+  {
     // La medida es el numero de colores DISTINTOS entre los <span> de token. Si el resaltado muriera
     // (gramatica que no carga, tema importado sin reglas, shiki que lanza), `useHighlightedCode`
     // devuelve null y el bloque cae a texto plano: 0 spans y un solo color heredado. Contar "spans > 0"
