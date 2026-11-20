@@ -6224,6 +6224,28 @@ const CHECKS = [
       return { ok, detail: `seccion=${JSON.stringify(measured)}` };
     },
   },
+  {
+    // Bloque de solo lectura con las reglas `ask` que Mage pasa siempre a Claude. Abre y cierra su diálogo.
+    name: 'Permisos: Ajustes enseña las acciones que siempre preguntan',
+    state: { tabs: 1 },
+    async run(page) {
+      await page.keyboard.press('Control+Comma');
+      await page.locator(MODAL).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await openSection(page, uiRegExp('settings.sections.hooksPermissions.nav'));
+      const block = page.locator('[data-external-action-ask="true"]');
+      await block.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await block.scrollIntoViewIfNeeded();
+      const measured = await block.evaluate((node, heading) => ({
+        filas: [...node.querySelectorAll('li')].map((li) => li.textContent),
+        cabecera: node.querySelector('h3')?.textContent === heading,
+      }), ui('settings.hooks.externalAsk.heading'));
+      measured.bloques = await block.count();
+      await closeDialog(page);
+      const ok = measured.bloques === 1 && measured.cabecera
+        && measured.filas.includes('Bash(git push:*)') && measured.filas.includes('Artifact');
+      return { ok, detail: `bloque=${JSON.stringify(measured)}` };
+    },
+  },
   // --- Fase E (2.7 y 2.12.1). NINGUNA pulsa `Enter`, y hay una que deliberadamente NO existe: medir
   // "Enter dentro de una lista no envia" obligaria a pulsar Enter con texto, y si el codigo estuviera
   // mal eso dispara un TURNO REAL. Esa decision vive en `enterAction`, con 12 tests, y la confirma el

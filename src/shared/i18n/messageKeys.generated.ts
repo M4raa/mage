@@ -2205,6 +2205,8 @@ export interface MessageValues {
   readonly "settings.groups.security": never;
   readonly "settings.hooks.editableHeading": { readonly "origin": string | number };
   readonly "settings.hooks.editableTip": never;
+  readonly "settings.hooks.externalAsk.heading": never;
+  readonly "settings.hooks.externalAsk.note": never;
   readonly "settings.hooks.hooksHeading": { readonly "count": string | number };
   readonly "settings.hooks.hostAnswers.hint": never;
   readonly "settings.hooks.hostAnswers.label": never;
