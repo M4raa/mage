@@ -62,7 +62,7 @@ import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
 import { classifyTextFit, collectTextFit } from './lib/textFit.mjs';
 import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
-import { seededAppSettings, seedTestAccounts } from './lib/profileSeed.mjs';
+import { seededAppSettings, seedTestAccounts, TEST_ACCOUNT_DIRS } from './lib/profileSeed.mjs';
 import { ui, uiIn, uiPlural, uiPrefix, uiRegExp, uiSegment, escapeRegExp, cssAttr, getUiLanguage, setUiLanguage, parseUiLangArg } from './lib/uiText.mjs';
 
 // Línea resumen del dock de subagentes (agentsDock.ts): «N en ejecución · M terminados», sin la parte que vale cero.
@@ -2296,6 +2296,56 @@ const CHECKS = [
       const closed = await closeDialog(page);
       const ok = antes && !despues && texto.includes(uiPrefix('accounts.add.agy.hint')) && texto.includes(uiSegment('accounts.add.agy.hint', 1)) && closed === 0;
       return { ok, detail: JSON.stringify({ antes, despues, perfilPropio: texto.includes(uiPrefix('accounts.add.agy.hint')), cerrado: closed === 0 }) };
+    },
+  },
+  {
+    // «Reintentar» relee del disco el login de una cuenta de Claude sin sesión (no renueva nada). Se escribe en el HOME de
+    // prueba el fichero que deja el CLI al fallar un refresh (bloque vacío) y luego uno válido con tokens falsos, como si
+    // otra instalación lo hubiera renovado. No pulsa «Iniciar sesión» ni spawnea ningún CLI. Restaura el fichero.
+    name: 'Cuentas: una cuenta sin sesión ofrece Reintentar y recoge una sesión escrita después',
+    async run(page) {
+      if (HARNESS_HOME === os.homedir()) return { ok: false, notRunnable: true, detail: 'HOME real: no se escribe en él' };
+      const cuenta = path.join(HARNESS_HOME, TEST_ACCOUNT_DIRS[1]);
+      const fichero = path.join(cuenta, '.credentials.json');
+      const original = fs.readFileSync(fichero, 'utf-8');
+      const escribir = (oauth) => fs.writeFileSync(fichero, JSON.stringify({ claudeAiOauth: { ...oauth, scopes: [] } }), 'utf-8');
+      const loginDe = () => page.evaluate((id) => window.__mageDev.store.getState().accounts.find((a) => a.id === id)?.loginStatus ?? null, cuenta);
+      const medido = {};
+      try {
+        escribir({ accessToken: '', refreshToken: '', expiresAt: 0 });
+        await page.evaluate(() => window.__mageDev.store.getState().refreshAccounts());
+        medido.antes = await loginDe();
+        await page.locator('[data-usage-summary]').first().click();
+        const dialogo = page.locator('[data-accounts-usage]');
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialogo.locator(`[data-account-row="${cssAttr(cuenta)}"]`).click();
+        const ficha = dialogo.locator(`[data-account-card="${cssAttr(cuenta)}"]`);
+        await ficha.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const reintentar = ficha.locator(`[data-retry-login="${cssAttr(cuenta)}"]`);
+        medido.iniciar = await ficha.getByRole('button', { name: ui('accountsUsage.login'), exact: true }).count();
+        medido.reintentar = await reintentar.count();
+        // Sin nada nuevo en el disco: sigue sin sesión y lo dice bajo los botones.
+        await reintentar.click();
+        const aviso = ficha.locator(`[data-retry-login-result="${cssAttr(cuenta)}"]`);
+        await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.aviso = (await aviso.textContent())?.trim() === ui('accountsUsage.retryLoginNoSession');
+        // Otra instalación renueva: tokens falsos que caducan dentro de una hora.
+        escribir({ accessToken: 'x', refreshToken: 'x', expiresAt: Date.now() + 60 * 60 * 1000 });
+        await reintentar.click();
+        await reintentar.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        medido.despues = await loginDe();
+        medido.botonesDespues = await ficha.locator('[data-retry-login], [data-retry-login-result]').count();
+      } finally {
+        fs.writeFileSync(fichero, original, 'utf-8');
+        await page.evaluate(async () => {
+          const store = window.__mageDev.store.getState();
+          store.closeAccountsUsage();
+          await store.refreshAccounts();
+        });
+      }
+      const ok = medido.antes === 'logged_out' && medido.iniciar === 1 && medido.reintentar === 1 && medido.aviso === true
+        && medido.despues === 'logged_in' && medido.botonesDespues === 0;
+      return { ok, detail: JSON.stringify(medido) };
     },
   },
   {
