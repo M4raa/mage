@@ -26,6 +26,8 @@ export interface CreateSessionCommand {
   readonly permissionMode?: string;
   // Nombre de la subsesión; ausente = la primera línea del prompt.
   readonly title?: string;
+  // «Continuar al restablecerse»: solo Claude por suscripción (el puerto rechaza el resto antes de crear nada).
+  readonly resumeOnReset?: boolean;
   readonly requestId: string;
   readonly createdBy?: CreatedBy;
   readonly creatorChain: readonly string[];

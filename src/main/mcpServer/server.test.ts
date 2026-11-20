@@ -136,6 +136,15 @@ describe('Mage MCP server', () => {
     const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
     expect(createInputSchema.safeParse({ ...base, effort: 'high' }).success).toBe(true);
   });
+  it('createInputSchema_resumeOnReset_opcionalYBooleano', () => {
+    const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
+    expect(createInputSchema.safeParse(base).success).toBe(true);
+    expect(createInputSchema.safeParse({ ...base, resumeOnReset: true }).success).toBe(true);
+    expect(createInputSchema.safeParse({ ...base, resumeOnReset: false }).success).toBe(true);
+    const bad = createInputSchema.safeParse({ ...base, resumeOnReset: 'sí' });
+    expect(bad.success).toBe(false);
+    expect(JSON.stringify(bad)).toContain('resumeOnReset: valor recibido sí');
+  });
   it('callTool_askCreator_memoryPort_acceptedYRegistrada', async () => {
     const { call, port } = await connect();
     const result = await call('ask_creator', { requestId: REQUEST, text: 'hola' });

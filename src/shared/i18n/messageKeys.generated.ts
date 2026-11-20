@@ -842,6 +842,9 @@ export interface MessageValues {
   readonly "chat.references.planTitle": never;
   readonly "chat.references.planTitleNumbered": { readonly "number": string | number };
   readonly "chat.restarting": { readonly "attempt": string | number; readonly "seconds": string | number };
+  readonly "chat.resumeOnReset.scheduled": { readonly "time": string | number };
+  readonly "chat.resumeOnReset.unknownReset": never;
+  readonly "chat.resumeOnReset.weekly": never;
   readonly "chat.retry.action": never;
   readonly "chat.retry.confirm": never;
   readonly "chat.retry.title": never;

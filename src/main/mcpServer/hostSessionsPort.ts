@@ -13,6 +13,7 @@ import { resolveDelegatedSettings } from './delegatedSettings';
 import type { DelegatedSettings, SessionSettings } from './delegatedSettings';
 import type { DelegationLog, DelegationView } from './delegationLog';
 import { sessionResultMessage } from '@shared/systemWrappers';
+import { supportsResumeOnReset } from '@shared/resumeOnReset';
 import type { UsageInfo } from '@shared/usage';
 import { failedUsageEntry, usageEntryOf } from './accountUsage';
 import type { UsageAccount } from './accountUsage';
@@ -56,6 +57,8 @@ export interface HostSessionsPortDeps {
   readonly newId: () => string;
   // Cuentas con su forma de pago y el uso de cada una (`usageOfAccount` de main: lanza si no se puede leer).
   readonly usage: UsageSource;
+  // Enciende «Continuar al restablecerse» en la sesión recién lanzada.
+  readonly setResumeOnReset: (sessionId: string, enabled: boolean) => void;
 }
 
 export interface UsageSource {
@@ -84,6 +87,7 @@ export class HostSessionsPort implements MageSessionsPort {
   async createSession(cmd: CreateSessionCommand): Promise<CreateOutput> {
     const { caller } = this.deps;
     if (cmd.createdBy === undefined) throw new Error(`createdBy es obligatorio para delegar desde ${caller.conversationId}`);
+    if (cmd.resumeOnReset === true) this.assertResumeSupported(cmd.target);
     const delegation: Delegation = { ...cmd, createdBy: cmd.createdBy };
     const requested = { model: cmd.model, effort: cmd.effort };
     const settings = this.settingsFor(delegation, requested);
@@ -147,6 +151,14 @@ export class HostSessionsPort implements MageSessionsPort {
     return { receipt: 'accepted' };
   }
 
+  // Rechazo ANTES de crear nada: la opción solo existe en Claude por suscripción (el error lleva lo recibido).
+  private assertResumeSupported(target: CreationTarget): void {
+    const billing = this.deps.usage.accounts().find((account) => account.id === target.accountId)?.billing;
+    if (!supportsResumeOnReset(target.provider, billing)) {
+      throw new MageValidationError(`resume_on_reset_unsupported: ${target.provider}/${billing ?? 'unknown'}`);
+    }
+  }
+
   // Una cuenta que falla al leerse sale con su error y sin ventanas; las demás no se enteran. Orden: el pedido.
   async getUsage(input: { readonly accountIds: readonly string[] }): Promise<readonly UsageAccountEntry[]> {
     const known = new Map(this.deps.usage.accounts().map((account) => [account.id, account]));
@@ -177,6 +189,7 @@ export class HostSessionsPort implements MageSessionsPort {
     const title = cmd.title ?? titleOf(prompt);
     const sessionId = this.launchTranslated(launch, launchRequestOf(cmd, settings), title);
     if (target.provider === 'codex') this.setCodexMode(sessionId, settings.permissionMode);
+    if (cmd.resumeOnReset === true) this.deps.setResumeOnReset(sessionId, true);
     const conversationId = await this.waitForConversationId(sessionId);
     index.recordDelegation(conversationId, { createdBy: cmd.createdBy, creatorChain: cmd.creatorChain });
     log.watch({

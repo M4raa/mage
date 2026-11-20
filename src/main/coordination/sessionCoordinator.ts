@@ -93,6 +93,11 @@ export interface SessionCoordinatorDeps {
   readonly isApiKeyAccount?: (accountDir: string) => boolean;
   // Un keep-alive acabo: lo que midio, si su rewind salio bien y el uuid del mensaje oculto (el corte pendiente).
   readonly onKeepAliveDone?: (nativeRef: NativeSessionRef, sample: KeepAliveSample, rewound: boolean, kaUuid: string) => void;
+  // Cada evento que sale a los clientes (ya con su secuencia), para quien necesita reaccionar en main sin ser un cliente
+  // más (un suscriptor contaría en `subscriberCount`). No recibe los eventos internos (directos, respuestas del motor, keep-alive).
+  readonly onSessionEvent?: (sessionId: string, event: MageEvent) => void;
+  // Un envio aceptado (de quien sea: el usuario, la creadora de una delegada o el propio main) a la sesion.
+  readonly onSend?: (sessionId: string) => void;
 }
 
 export interface ConversationHold {
@@ -174,6 +179,8 @@ interface Tracked {
   contextTokens: number | null;
   // Último coste ACUMULADO (el CLI suma desde que arrancó el proceso) que dio un `result`. Con él sale lo que costó un keep-alive (U49).
   lastCumulativeCostMicroUsd: number | null;
+  // «Continuar al restablecerse»: el único sitio donde vive el booleano de la sesión (lo programado vive en `ResumeOnReset`).
+  resumeOnReset: boolean;
 }
 
 // Lo que necesita el rewind de una sesion viva (`rewindContext`).
@@ -201,7 +208,7 @@ export class SessionCoordinator {
       sessionId: '', provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, conversationId: null, nativeRef: null, lastSeq: 0, state: 'starting',
       queue: [], receipts: new Map(), pending: new Map(), prGuard: false, steering: new Map(), notSteerable: null, cancelExpiry: null, ownerId: ownerId ?? null,
       listeners: new Set([{ sink, onClosed: () => undefined }]), historyMode: null, engineWaiters: new Map(), idleWaiters: new Set(), emit: () => undefined,
-      keepAlive: null, keepAliveDisabled: false, cancelKeepAlive: null, lastRequestStartMs: null, lastRealRequestStartMs: null, cacheTtlMs: null, contextTokens: null, lastCumulativeCostMicroUsd: null,
+      keepAlive: null, keepAliveDisabled: false, cancelKeepAlive: null, lastRequestStartMs: null, lastRealRequestStartMs: null, cacheTtlMs: null, contextTokens: null, lastCumulativeCostMicroUsd: null, resumeOnReset: false,
     };
     tracked.emit = (event) => this.relay(tracked, { sessionId: tracked.sessionId, event });
     const sessionId = this.deps.sessions.create(params, (payload) => this.relay(tracked, payload), ownerId);
@@ -210,6 +217,23 @@ export class SessionCoordinator {
     const nativeId = initialNativeId(params, sessionId);
     if (nativeId !== null) this.bind(tracked, nativeId);
     return sessionId;
+  }
+
+  // «Continuar al restablecerse» de la sesion. Una que ya no se sigue cuenta como apagada (no lanza).
+  resumeOnResetOf(sessionId: string): boolean {
+    return this.tracked.get(sessionId)?.resumeOnReset ?? false;
+  }
+
+  setResumeOnReset(sessionId: string, enabled: boolean): void {
+    this.require(sessionId).resumeOnReset = enabled;
+  }
+
+  // La sesion no se mantiene caliente (keep-alive): las delegadas que se cierran solas al acabar. Cancela el que hubiera.
+  excludeFromKeepAlive(sessionId: string): void {
+    const tracked = this.require(sessionId);
+    tracked.keepAliveDisabled = true;
+    tracked.cancelKeepAlive?.();
+    tracked.cancelKeepAlive = null;
   }
 
   // Quien puede dar ordenes: el id del webContents que creo la sesion, null si no tiene, undefined si no se sigue.
@@ -297,6 +321,7 @@ export class SessionCoordinator {
     if (previous !== undefined) return previous;
     const receipt = this.route(tracked, commandId, params);
     remember(tracked.receipts, commandId, receipt);
+    this.observe(tracked, 'onSend', () => this.deps.onSend?.(tracked.sessionId));
     return receipt;
   }
 
@@ -477,6 +502,7 @@ export class SessionCoordinator {
     if (isAtRest(tracked.state)) this.releaseIdleWaiters(tracked);
     tracked.lastSeq += 1;
     this.fanOut(tracked, { ...payload, conversationId: tracked.conversationId, seq: tracked.lastSeq, at: this.deps.now() });
+    this.observe(tracked, 'onSessionEvent', () => this.deps.onSessionEvent?.(tracked.sessionId, event));
     if (event.kind === 'conversation_reset') this.rebind(tracked, event.newSessionId);
     if (event.kind === 'result') {
       tracked.prGuard = false;
@@ -635,6 +661,15 @@ export class SessionCoordinator {
       return;
     }
     this.deps.log('info', 'Keep-alive enviado', { sessionId: tracked.sessionId, contextTokens: tracked.contextTokens, cacheTtlMs: tracked.cacheTtlMs });
+  }
+
+  // Un observador de main que lanza no corta el envio ni el evento: queda en el log.
+  private observe(tracked: Tracked, hook: string, call: () => void): void {
+    try {
+      call();
+    } catch (err) {
+      this.deps.log('warn', `${hook} fallo`, { sessionId: tracked.sessionId, error: describe(err) });
+    }
   }
 
   // A todos los clientes, sobre una COPIA de la lista (un cliente puede soltarse mientras recibe). Un sumidero que

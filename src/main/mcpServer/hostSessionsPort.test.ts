@@ -19,7 +19,7 @@ import { CONVERSATION_ID_TIMEOUT_MS, ExternalSessionsPort, HostSessionsPort, NO_
 import type { HostSessionsPortDeps } from './hostSessionsPort';
 import { MageToolHandlers } from './handlers';
 import { MemoryIdempotencyStore } from './idempotencyStore';
-import { MagePolicyError } from './errors';
+import { MagePolicyError, MageValidationError } from './errors';
 import { snapshotScope } from './scope';
 import type { CreateSessionCommand } from './sessionsPort';
 import type { ConversationPrefs, DelegationRecord } from '@shared/conversationIndex';
@@ -86,6 +86,7 @@ function setup(options: {
     pending: options.pending ?? new PendingLaunches(),
     newId: vi.fn(() => 'pend-1'),
     usage: options.usage ?? { accounts: () => [], read: vi.fn(async () => null) },
+    setResumeOnReset: vi.fn(),
   };
   return { port: new HostSessionsPort(deps), deps, listeners, announced, answers, timers, cancelTimer };
 }
@@ -138,6 +139,49 @@ describe('HostSessionsPort.getUsage', () => {
   it('getUsage_resetsAtEnIso', async () => {
     const { port } = setup({ usage: { accounts: () => accounts, read: async () => info(10) } });
     expect((await port.getUsage({ accountIds: ['acc1'] }))[0]?.fiveHour?.resetsAt).toBe('2026-11-19T15:00:00.000Z');
+  });
+});
+
+describe('HostSessionsPort.createSession: resumeOnReset', () => {
+  const accounts = [
+    { id: 'acc1', provider: 'claude', name: '.claude', billing: 'subscription' as const },
+    { id: 'api1', provider: 'claude', name: 'api', billing: 'api-key' as const },
+    { id: 'acc2', provider: 'codex', name: '.codex', billing: 'subscription' as const },
+  ];
+  const withAccounts = { accounts: () => accounts, read: async () => null };
+  const target = (accountId: string, provider: 'claude' | 'codex') => ({ projectId: 'p1', accountId, provider, cwd: CWD });
+  it('createSession_claudePorSuscripcion_enciendeLaOpcionEnLaSesionLanzada', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), usage: withAccounts });
+    await port.createSession(command({ model: 'm1', resumeOnReset: true }));
+    expect(deps.setResumeOnReset).toHaveBeenCalledWith('child-s', true);
+  });
+  it('createSession_sinResumeOnReset_noTocaLaOpcion', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), usage: withAccounts });
+    await port.createSession(command({ model: 'm1' }));
+    await port.createSession(command({ model: 'm1', requestId: 'otra', resumeOnReset: false }));
+    expect(deps.setResumeOnReset).not.toHaveBeenCalled();
+  });
+  it.each([
+    ['codex', target('acc2', 'codex'), 'codex/subscription'],
+    ['cuenta de API', target('api1', 'claude'), 'claude/api-key'],
+    ['cuenta desconocida', target('nope', 'claude'), 'claude/unknown'],
+  ])('createSession_%s_rechazaAntesDeLanzar', async (_name, creation, received) => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), usage: withAccounts });
+    await expect(port.createSession(command({ target: creation, model: 'm1', resumeOnReset: true }))).rejects.toThrow(`resume_on_reset_unsupported: ${received}`);
+    expect(deps.launch).not.toHaveBeenCalled();
+    expect(deps.setResumeOnReset).not.toHaveBeenCalled();
+  });
+  it('createSession_rechazo_esUnErrorDeValidacionQueNoGastaElRequestId', async () => {
+    const { port } = setup({ usage: withAccounts });
+    await expect(port.createSession(command({ target: target('acc2', 'codex'), resumeOnReset: true }))).rejects.toBeInstanceOf(MageValidationError);
+  });
+  it('createSession_sinModeloConElUsuarioDelante_laOpcionSeAplicaAlLanzarDesdeLaTarjeta', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), usage: withAccounts, facts: { isTaskRun: false, creatorChain: [], ultracode: false } });
+    const held = await port.createSession(command({ resumeOnReset: true }));
+    expect(held.state).toBe('awaiting_launch');
+    expect(deps.setResumeOnReset).not.toHaveBeenCalled();
+    await deps.pending.launch(held.conversationId, { model: 'm1', effort: 'low' });
+    expect(deps.setResumeOnReset).toHaveBeenCalledWith('child-s', true);
   });
 });
 
