@@ -68,7 +68,7 @@
     "@lingui/vite-plugin": "6.10.1",
     "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "^4.0.0",
-    "@types/node": "^24.19.0",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
