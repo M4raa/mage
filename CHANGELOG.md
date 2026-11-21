@@ -35,7 +35,7 @@ versión.
 - El host local ya no acepta, en ningún proveedor, modos con acceso total sin preguntar desde la terminal.
 - El token de arranque del host solo deja leer; escribir exige un cliente emparejado.
 - Los secretos de los servidores MCP ya no viajan en el entorno del CLI de Claude, donde el agente podía leerlos con un comando: van al fichero de configuración MCP de la cuenta.
-- Dependencias de producción sin avisos altos (excepción declarada: GHSA-mrhx-c7xc-m3w5 de zod 3, hasta pasar a zod 4); Dependabot activado y un SBOM CycloneDX en cada versión.
+- Dependencias de producción sin avisos altos: Mage pasa a zod 4, que cierra el último (GHSA-mrhx-c7xc-m3w5); Dependabot activado y un SBOM CycloneDX en cada versión.
 
 ### Limitaciones conocidas
 - Una conversación que nace en «Omitir permisos» no añade las acciones que siempre preguntan si después se cambia de modo sin reabrirla.

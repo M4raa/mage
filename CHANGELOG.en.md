@@ -33,7 +33,7 @@ What changes from one version to the next, written for the people who use the ap
 - The local host no longer accepts, for any provider, full-access modes that never ask from the terminal.
 - The host's startup token only allows reading; writing requires a paired client.
 - MCP server secrets no longer travel in Claude's CLI environment, where the agent could read them with a command: they go to the account's MCP config file.
-- Production dependencies without high advisories (declared exception: GHSA-mrhx-c7xc-m3w5 in zod 3, until moving to zod 4); Dependabot enabled and a CycloneDX SBOM with every version.
+- Production dependencies without high advisories: Mage moves to zod 4, which closes the last one (GHSA-mrhx-c7xc-m3w5); Dependabot enabled and a CycloneDX SBOM with every version.
 
 ### Known limitations
 - A conversation started in "Bypass permissions" doesn't add the always-ask actions if its mode changes later without reopening it.

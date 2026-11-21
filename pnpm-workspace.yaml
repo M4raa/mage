@@ -20,10 +20,3 @@ overrides:
   browserslist@<4.28.7: ^4.28.7
   fast-uri@<3.1.7: ^3.1.7
   body-parser@>=2.0.0 <2.4.0: ^2.4.0
-
-# Excepción declarada: GHSA-mrhx-c7xc-m3w5 (zod <4.6.6 puede agotar memoria validando colecciones con
-# restricciones demasiado grandes). Mage valida con zod lo que le llega de procesos locales del usuario; el
-# parche solo existe en zod 4, que necesita su propia migración. Quitar al pasar a zod 4.
-auditConfig:
-  ignoreGhsas:
-    - GHSA-mrhx-c7xc-m3w5

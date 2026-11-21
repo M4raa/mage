@@ -77,6 +77,13 @@ describe('host 1.2 — capacidades y esquemas', () => {
     expect(HOST_METHOD_SCHEMAS['session.create'].safeParse(CREATE).success).toBe(true);
   });
 
+  // El cliente es externo: un GUID sin la variante RFC pasaba con zod 3 y sigue pasando.
+  it('sessionCreate_commandIdGuidSinVarianteRfc_pasa', () => {
+    const params = { ...CREATE, commandId: '11111111-1111-1111-1111-111111111111' };
+
+    expect(HOST_METHOD_SCHEMAS['session.create'].safeParse(params).success).toBe(true);
+  });
+
   it.each([
     ['commandIdNoUuid', { commandId: 'no-uuid' }],
     ['proveedorAgy', { provider: 'agy' }],

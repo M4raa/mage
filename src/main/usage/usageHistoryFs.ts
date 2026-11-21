@@ -113,23 +113,23 @@ const count = z.number().int().min(0);
 const pct = z.number().min(0).max(100).nullable();
 const modelUsage = z.object({ inputTokens: count, outputTokens: count, cacheReadTokens: count, cacheWrite5mTokens: count, cacheWrite1hTokens: count, turns: count });
 const dayDetail = z.object({
-  byModel: z.record(modelUsage),
+  byModel: z.record(z.string(), modelUsage),
   limits: z.object({ fiveHour: count, weekly: count, other: count }),
   hours: z.array(count).length(HOURS_PER_DAY),
-  tools: z.record(count),
+  tools: z.record(z.string(), count),
   peaks: z.object({ fiveHourMax: pct, sevenDayMax: pct }).optional(),
 });
 const CacheSchema = z.object({
   version: z.literal(USAGE_HISTORY_CACHE_VERSION),
-  files: z.record(z.object({
+  files: z.record(z.string(), z.object({
     offset: count,
     mtimeMs: z.number().optional(),
     sessionId: z.string().min(1),
     ownerAccountId: z.string().min(1).optional(),
     state: z.object({ recentIds: z.array(z.string()), cwd: z.string().optional(), model: z.string().optional(), atLimit: z.boolean().optional() }),
-    days: z.record(dayDetail),
+    days: z.record(z.string(), dayDetail),
   })),
-  windows: z.record(z.record(z.object({ fiveHourMax: pct, sevenDayMax: pct }))),
+  windows: z.record(z.string(), z.record(z.string(), z.object({ fiveHourMax: pct, sevenDayMax: pct }))),
 });
 
 // La caché es nuestra: si no casa (versión vieja, fichero roto), se empieza de cero y se dice. No es un dato del

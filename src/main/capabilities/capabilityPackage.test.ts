@@ -213,8 +213,10 @@ describe('parseCapabilityPackage', () => {
       message = (err as Error).message;
     }
     // Assert
+    // Se mide solo la vista previa del valor: el largo de los mensajes por defecto de zod cambia entre versiones.
+    const preview = message.slice(message.indexOf('): ') + '): '.length);
     expect(message.length).toBeGreaterThan(0);
-    expect(message.length).toBeLessThan(600);
+    expect(preview.length).toBeLessThanOrEqual(301);
     expect(message.endsWith('…')).toBe(true);
   });
 });

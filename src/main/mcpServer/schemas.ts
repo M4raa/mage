@@ -9,21 +9,25 @@ export const DEFAULT_MAX_RESULT_BYTES = 65_536;
 export const MAX_SESSION_TITLE_CHARS = 80;
 
 // Solo estos campos tienen diagnóstico con valor; nunca objetos, prompts ni textos.
-function diagnostic(field: string): z.ZodErrorMap {
-  return (_issue, context) => {
-    const value = context.data;
-    const safe = value === undefined ? 'undefined' : String(value);
-    const received = value === null || ['string', 'number', 'boolean'].includes(typeof value) ? safe : `<${typeof value}>`;
-    return { message: `${field}: valor recibido ${received}` };
+// En zod 4 el `error` del tipo no cubre sus checks (`.min`, `.int`…): cada check lo recibe también.
+function diagnostic(field: string): { error: z.core.$ZodErrorMap } {
+  return {
+    error: (issue) => {
+      const value = issue.input;
+      const safe = value === undefined ? 'undefined' : String(value);
+      const received = value === null || ['string', 'number', 'boolean'].includes(typeof value) ? safe : `<${typeof value}>`;
+      return { message: `${field}: valor recibido ${received}` };
+    },
   };
 }
-const id = (field: string) => z.string({ errorMap: diagnostic(field) }).min(1);
-const integer = (field: string) => z.number({ errorMap: diagnostic(field) }).int().nonnegative();
+const id = (field: string) => z.string(diagnostic(field)).min(1, diagnostic(field));
+const integer = (field: string) => z.number(diagnostic(field)).int(diagnostic(field)).nonnegative(diagnostic(field));
 // Clave de idempotencia del llamante (V6: los modelos no siempre mandan un UUID): cualquier texto no vacío y acotado.
 export const MAX_REQUEST_ID_CHARS = 128;
-const requestId = z.string({ errorMap: diagnostic('requestId') }).min(1).max(MAX_REQUEST_ID_CHARS);
-const provider = z.enum(['claude', 'codex'], { errorMap: diagnostic('provider') });
-const text = z.string({ errorMap: () => ({ message: 'Se requiere texto' }) });
+const requestId = z.string(diagnostic('requestId')).min(1, diagnostic('requestId')).max(MAX_REQUEST_ID_CHARS, diagnostic('requestId'));
+const provider = z.enum(['claude', 'codex'], diagnostic('provider'));
+const TEXT_REQUIRED = { error: () => ({ message: 'Se requiere texto' }) };
+const text = z.string(TEXT_REQUIRED);
 export const utcSchema = z.string().datetime({ offset: false });
 export const stateSchema = z.enum(['awaiting_launch', 'working', 'waiting_answer', 'permission_pending', 'done', 'interrupted']);
 export const createdBySchema = z.object({ conversationId: id('conversationId'), requestId: requestId, at: utcSchema }).strict();
@@ -32,26 +36,26 @@ export const publicMessageSchema = z.object({ seq: integer('seq'), role: id('rol
 export const listInputSchema = z.object({ projectId: id('projectId').optional(), includeFinished: z.boolean().optional() }).strict();
 export const createInputSchema = z.object({
   requestId: requestId, provider, accountId: id('accountId').optional(), cwd: id('cwd'), prompt: text, model: id('model').optional(),
-  effort: z.enum(EFFORT_LEVELS, { errorMap: diagnostic('effort') }).optional(), permissionMode: id('permissionMode').optional(),
-  title: z.string({ errorMap: diagnostic('title') }).trim().min(1).max(MAX_SESSION_TITLE_CHARS).optional(),
-  resumeOnReset: z.boolean({ errorMap: diagnostic('resumeOnReset') }).optional(),
-  onDone: z.enum(['close', 'keepAlive'], { errorMap: diagnostic('onDone') }).optional(),
+  effort: z.enum(EFFORT_LEVELS, diagnostic('effort')).optional(), permissionMode: id('permissionMode').optional(),
+  title: z.string(diagnostic('title')).trim().min(1, diagnostic('title')).max(MAX_SESSION_TITLE_CHARS, diagnostic('title')).optional(),
+  resumeOnReset: z.boolean(diagnostic('resumeOnReset')).optional(),
+  onDone: z.enum(['close', 'keepAlive'], diagnostic('onDone')).optional(),
 }).strict();
 export const closeInputSchema = z.object({ requestId: requestId, conversationId: id('conversationId') }).strict();
 export const closeOutputSchema = z.object({ closed: z.boolean() }).strict();
 export const statusInputSchema = z.object({ conversationId: id('conversationId') }).strict();
 export const readInputSchema = z.object({
   conversationId: id('conversationId'), afterSeq: integer('afterSeq').optional(),
-  maxBytes: z.number({ errorMap: diagnostic('maxBytes') }).int().min(1).max(DEFAULT_MAX_RESULT_BYTES).optional(),
+  maxBytes: z.number(diagnostic('maxBytes')).int(diagnostic('maxBytes')).min(1, diagnostic('maxBytes')).max(DEFAULT_MAX_RESULT_BYTES, diagnostic('maxBytes')).optional(),
 }).strict();
 export const sendInputSchema = z.object({
   requestId: requestId, conversationId: id('conversationId'), text,
-  mode: z.enum(['direct', 'queue'], { errorMap: diagnostic('mode') }),
+  mode: z.enum(['direct', 'queue'], diagnostic('mode')),
 }).strict();
 export const cancelInputSchema = z.object({
-  conversationId: id('conversationId'), scope: z.literal('turn', { errorMap: diagnostic('scope') }),
+  conversationId: id('conversationId'), scope: z.literal('turn', diagnostic('scope')),
 }).strict();
-export const askCreatorInputSchema = z.object({ requestId: requestId, text: text.min(1) }).strict();
+export const askCreatorInputSchema = z.object({ requestId: requestId, text: text.min(1, TEXT_REQUIRED) }).strict();
 export const listOutputSchema =z.object({ sessions: z.array(z.object({
   conversationId: id('conversationId'), title: text, provider: id('provider'), state: stateSchema, createdBy: id('createdBy').optional(),
 }).strict()) }).strict();
