@@ -50,7 +50,7 @@ jobs:
         run: |
           $version = node -p "require('./package.json').version"
           pnpm dlx @cyclonedx/cdxgen@12.9.1 -t js --no-recurse -o "release/mage-$version-sbom.cdx.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-installers
           path: |
@@ -85,7 +85,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm dist:linux
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-packages
           path: release/*.{AppImage,deb,rpm}
@@ -102,7 +102,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm dist:mac
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos-dmg
           path: release/*.dmg
